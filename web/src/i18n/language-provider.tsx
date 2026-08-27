@@ -211,8 +211,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   );
 }
 
+export function useOptionalLanguage(): LanguageContextValue | null {
+  return useContext(LanguageContext);
+}
+
 export function useLanguage(): LanguageContextValue {
-  const context = useContext(LanguageContext);
+  const context = useOptionalLanguage();
   if (!context) {
     throw new Error("useLanguage must be used within LanguageProvider");
   }

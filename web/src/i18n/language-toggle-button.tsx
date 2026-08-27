@@ -3,10 +3,15 @@
 import { Languages } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipWrapper } from "@/components/ui/tooltip";
-import { useLanguage } from "@/i18n/language-provider";
+import { useOptionalLanguage } from "@/i18n/language-provider";
 
 export function LanguageToggleButton() {
-  const { locale, toggleLocale } = useLanguage();
+  const language = useOptionalLanguage();
+  if (!language) {
+    return null;
+  }
+
+  const { locale, toggleLocale } = language;
   const switchLabel =
     locale === "zh-CN" ? "Switch to English" : "切换为简体中文";
 
