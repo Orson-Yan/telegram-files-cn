@@ -17,6 +17,8 @@ public final class Argon2idPasswordHasher {
     static final int PARALLELISM = 1;
     static final int SALT_BYTES = 16;
     static final int HASH_BYTES = 32;
+    static final int MIN_PASSWORD_LENGTH = 8;
+    static final int MAX_PASSWORD_LENGTH = 256;
 
     private final SecureRandom secureRandom;
 
@@ -88,8 +90,16 @@ public final class Argon2idPasswordHasher {
     }
 
     private static void validatePassword(char[] password) {
-        if (password == null || password.length < 12 || password.length > 256) {
-            throw new IllegalArgumentException("Password must contain between 12 and 256 characters");
+        if (password == null
+                || password.length < MIN_PASSWORD_LENGTH
+                || password.length > MAX_PASSWORD_LENGTH) {
+            throw new IllegalArgumentException(
+                    "Password must contain between "
+                    + MIN_PASSWORD_LENGTH
+                    + " and "
+                    + MAX_PASSWORD_LENGTH
+                    + " characters"
+            );
         }
     }
 
