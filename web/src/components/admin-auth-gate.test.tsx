@@ -64,6 +64,8 @@ describe("AdminAuthGate", () => {
       screen.queryByText("Private Telegram files"),
     ).not.toBeInTheDocument();
 
+    expect(screen.getByLabelText("Password")).not.toHaveAttribute("minlength");
+
     fireEvent.change(screen.getByLabelText("Username"), {
       target: { value: "owner" },
     });
@@ -104,6 +106,11 @@ describe("AdminAuthGate", () => {
     expect(
       screen.getByRole("img", { name: "Telegram Files logo" }),
     ).toBeVisible();
+    expect(screen.getByLabelText("Password")).toHaveAttribute(
+      "minlength",
+      "8",
+    );
+    expect(screen.getByText("Use at least 8 characters.")).toBeVisible();
   });
 
   it("locks the UI immediately when a session is revoked", async () => {

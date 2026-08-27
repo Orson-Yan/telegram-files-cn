@@ -20,6 +20,8 @@ public final class AdminAuthService {
 
     private static final Pattern USERNAME = Pattern.compile("[a-z0-9][a-z0-9._-]{2,63}");
 
+    private static final int MIN_PASSWORD_LENGTH = 8;
+
     private static final String ACTIVE = "ACTIVE";
 
     private static final String BOOTSTRAP_ID = "current";
@@ -645,6 +647,13 @@ public final class AdminAuthService {
     }
 
     private Future<Argon2idPasswordHasher.PasswordHash> hashPassword(char[] password) {
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            return Future.failedFuture(new AuthException(
+                    400,
+                    "ADMIN_PASSWORD_TOO_SHORT",
+                    "Password must be at least " + MIN_PASSWORD_LENGTH + " characters"
+            ));
+        }
         return vertx.executeBlocking(() -> passwordHasher.hash(password));
     }
 
