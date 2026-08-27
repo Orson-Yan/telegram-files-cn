@@ -76,6 +76,7 @@ docker compose up -d
 ## 安全说明
 
 - 管理 API、文件预览和 WebSocket 都需要管理员会话。
+- 新建、修改或重置管理员密码时至少需要 8 个字符；登录会兼容已有密码，不额外要求 8 位。
 - 对公网提供服务时应启用 HTTPS，并正确配置 `HTTP_ALLOWED_ORIGINS`。
 - 反向代理需要保留 `X-Real-IP`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`；仓库附带的 Nginx 配置已经处理这些请求头。
 - 本地密码恢复会撤销所有现有会话：

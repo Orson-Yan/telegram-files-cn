@@ -4,6 +4,10 @@ import { translateText } from "@/i18n/messages";
 describe("translateText", () => {
   it("translates exact UI messages while preserving whitespace", () => {
     expect(translateText("  Download  ", "zh-CN")).toBe("  下载  ");
+    expect(translateText("Media", "zh-CN")).toBe("媒体");
+    expect(translateText("Photo -> Video -> Audio -> File", "zh-CN")).toBe(
+      "图片 → 视频 → 音频 → 文件",
+    );
   });
 
   it("translates dynamic counts", () => {

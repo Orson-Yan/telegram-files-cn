@@ -175,6 +175,39 @@ class AdminAuthServiceTest {
     }
 
     @Test
+    void rejectsNewAdministratorPasswordShorterThanEightCharacters(
+            Vertx vertx,
+            VertxTestContext context
+    ) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1)
+        );
+        AdminAuthService service = new AdminAuthService(vertx, pool);
+
+        createSchema(pool)
+                .compose(_ -> service.initialize())
+                .compose(bootstrap -> service.bootstrap(
+                                bootstrap.oneTimeToken(),
+                                "owner",
+                                "short".toCharArray(),
+                                true
+                        )
+                        .map(_ -> false)
+                        .recover(failure -> Future.succeededFuture(
+                                failure instanceof AdminAuthModels.AuthException auth
+                                && auth.statusCode() == 400
+                                && "ADMIN_PASSWORD_TOO_SHORT".equals(auth.errorCode())
+                        )))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(rejected -> context.verify(() -> {
+                    assertTrue(rejected);
+                    context.completeNow();
+                })));
+    }
+
+    @Test
     void rejectsRemoteBootstrapAndInvalidCredentials(
             Vertx vertx,
             VertxTestContext context

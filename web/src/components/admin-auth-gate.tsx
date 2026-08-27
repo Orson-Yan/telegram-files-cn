@@ -144,12 +144,17 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
                 autoComplete={
                   bootstrapMode ? "new-password" : "current-password"
                 }
-                minLength={12}
+                minLength={bootstrapMode ? 8 : undefined}
                 maxLength={256}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 required
               />
+              {bootstrapMode && (
+                <p className="text-xs text-muted-foreground">
+                  Use at least 8 characters.
+                </p>
+              )}
             </div>
             {error && (
               <p role="alert" className="text-sm text-destructive">
