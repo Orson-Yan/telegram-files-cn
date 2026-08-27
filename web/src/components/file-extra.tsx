@@ -18,8 +18,10 @@ import { type TelegramFile } from "@/lib/types";
 import { type RowHeight } from "@/components/table-row-height-switch";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { formatDistanceToNow } from "date-fns";
+import { zhCN } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import useIsMobile from "@/hooks/use-is-mobile";
+import { useLanguage } from "@/i18n/language-provider";
 
 interface FileExtraProps {
   file: TelegramFile;
@@ -44,7 +46,7 @@ function FileName({ file, rowHeight, ellipsis }: FileExtraProps) {
             (rowHeight !== "l" || ellipsis) && "line-clamp-1",
           )}
         >
-          {file.fileName}
+          <span translate="no">{file.fileName}</span>
         </span>
       </p>
     </SpoiledWrapper>
@@ -71,13 +73,14 @@ function FileCaption({ file, rowHeight, ellipsis }: FileExtraProps) {
                 "overflow-hidden text-wrap px-1 text-start text-sm",
               )}
             >
-              {file.caption}
+              <span translate="no">{file.caption}</span>
             </p>
           </div>
         </TooltipTrigger>
         <TooltipContent>
           <p
             className="no-scrollbar max-h-96 max-w-80 overflow-auto text-wrap rounded p-2"
+            translate="no"
             dangerouslySetInnerHTML={{
               __html: file.caption.replaceAll("\n", "<br />"),
             }}
@@ -113,13 +116,16 @@ function FilePath({ file, ellipsis, rowHeight }: FileExtraProps) {
               )}
               onClick={() => !isMobile && copyToClipboard(file.localPath)}
             >
-              {file.localPath.split("/").pop()}
+              <span translate="no">{file.localPath.split("/").pop()}</span>
               <Copy className="ml-1 inline-flex h-4 w-4 opacity-0 group-hover:opacity-100" />
             </p>
           </div>
         </TooltipTrigger>
         <TooltipContent>
-          <div className="max-w-80 overflow-y-scroll text-wrap rounded">
+          <div
+            className="max-w-80 overflow-y-scroll text-wrap rounded"
+            translate="no"
+          >
             {file.localPath}
           </div>
         </TooltipContent>
@@ -130,6 +136,8 @@ function FilePath({ file, ellipsis, rowHeight }: FileExtraProps) {
 
 function FileTime({ file }: FileExtraProps) {
   const isMobile = useIsMobile();
+  const { locale } = useLanguage();
+  const dateLocale = locale === "zh-CN" ? zhCN : undefined;
   return (
     <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap">
       <Tooltip>
@@ -139,13 +147,14 @@ function FileTime({ file }: FileExtraProps) {
             <span className="rounded px-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800">
               {formatDistanceToNow(new Date(file.date * 1000), {
                 addSuffix: true,
+                locale: dateLocale,
               })}
             </span>
           </p>
         </TooltipTrigger>
         <TooltipContent>
           <div className="max-w-80 text-wrap rounded p-2">
-            {`Message received at ${new Date(file.date * 1000).toLocaleString()}`}
+            {`Message received at ${new Date(file.date * 1000).toLocaleString(locale)}`}
           </div>
         </TooltipContent>
       </Tooltip>
@@ -157,13 +166,14 @@ function FileTime({ file }: FileExtraProps) {
               <span className="rounded px-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800">
                 {formatDistanceToNow(new Date(file.completionDate), {
                   addSuffix: true,
+                  locale: dateLocale,
                 })}
               </span>
             </p>
           </TooltipTrigger>
           <TooltipContent>
             <div className="max-w-80 text-wrap rounded p-2">
-              {`File downloaded at ${new Date(file.completionDate).toLocaleString()}`}
+              {`File downloaded at ${new Date(file.completionDate).toLocaleString(locale)}`}
             </div>
           </TooltipContent>
         </Tooltip>

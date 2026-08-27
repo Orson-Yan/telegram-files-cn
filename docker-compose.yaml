@@ -1,7 +1,7 @@
 services:
   telegram-files:
     container_name: telegram-files
-    image: ghcr.io/jarvis2f/telegram-files:${IMAGE_TAG:-latest}
+    image: ghcr.io/orson-yan/telegram-files-cn:${IMAGE_TAG:-latest}
     restart: always
     depends_on:
       telegram-files-postgres:

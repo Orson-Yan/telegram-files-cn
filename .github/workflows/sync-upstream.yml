@@ -1,0 +1,42 @@
+name: Upstream Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge upstream/main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the Chinese fork
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/jarvis2f/telegram-files.git
+          git fetch --prune upstream main
+
+      - name: Merge and push upstream changes
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "The fork already contains upstream/main."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-edit upstream/main
+          git push origin HEAD:main

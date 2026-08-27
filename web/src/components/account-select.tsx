@@ -31,7 +31,7 @@ export default function AccountSelect({
                 <AvatarFallback>{account.name[0]}</AvatarFallback>
               </Avatar>
               <span className="max-w-[170px] overflow-hidden truncate">
-                {account.name}
+                <span translate="no">{account.name}</span>
               </span>
             </div>
           ) : (
@@ -53,7 +53,7 @@ export default function AccountSelect({
                 <AvatarFallback>{account.name[0]}</AvatarFallback>
               </Avatar>
               <div className="flex flex-col">
-                <span className="font-medium">{account.name}</span>
+                <span className="font-medium"><span translate="no">{account.name}</span></span>
                 <span className="text-xs text-muted-foreground">
                   {account.phoneNumber}
                 </span>

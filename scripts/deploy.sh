@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Telegram Files Docker One-Line Deployment & Management Script
-# GitHub: https://github.com/jarvis2f/telegram-files
+# GitHub: https://github.com/Orson-Yan/telegram-files-cn
 #
 
 set -e
@@ -91,8 +91,8 @@ ensure_files() {
     # Auto-save management script to working directory if not present
     if [ ! -f "deploy.sh" ] && [ ! -f "scripts/deploy.sh" ]; then
         echo -e "${YELLOW}Saving deploy.sh to current directory for future management...${NC}"
-        if curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/${ref}/scripts/deploy.sh" -o deploy.sh 2>/dev/null || \
-           curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/main/scripts/deploy.sh" -o deploy.sh 2>/dev/null; then
+        if curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/${ref}/scripts/deploy.sh" -o deploy.sh 2>/dev/null || \
+           curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/main/scripts/deploy.sh" -o deploy.sh 2>/dev/null; then
             chmod +x deploy.sh 2>/dev/null || true
             echo -e "${GREEN}deploy.sh saved successfully.${NC}"
         fi
@@ -100,9 +100,9 @@ ensure_files() {
 
     if [ ! -f "docker-compose.yaml" ] && [ ! -f "docker-compose.yml" ]; then
         echo -e "${YELLOW}docker-compose.yaml not found in current directory. Downloading from GitHub (ref: ${ref})...${NC}"
-        if ! curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/${ref}/docker-compose.yaml" -o docker-compose.yaml; then
+        if ! curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/${ref}/docker-compose.yaml" -o docker-compose.yaml; then
             echo -e "${YELLOW}Failed to download docker-compose.yaml from ref '${ref}', falling back to 'main'...${NC}"
-            curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/main/docker-compose.yaml" -o docker-compose.yaml || {
+            curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/main/docker-compose.yaml" -o docker-compose.yaml || {
                 echo -e "${RED}Failed to download docker-compose.yaml.${NC}"
                 exit 1
             }
@@ -111,8 +111,8 @@ ensure_files() {
     fi
 
     if [ ! -f ".env.example" ]; then
-        curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/${ref}/.env.example" -o .env.example 2>/dev/null || \
-        curl -fsSL "https://raw.githubusercontent.com/jarvis2f/telegram-files/main/.env.example" -o .env.example 2>/dev/null || true
+        curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/${ref}/.env.example" -o .env.example 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/main/.env.example" -o .env.example 2>/dev/null || true
     fi
 }
 
@@ -203,8 +203,8 @@ configure_env() {
 
     # 1. Version / Tag Selection
     echo -e "${CYAN}1. Version / Image Tag Selection${NC}"
-    echo "1) Stable Latest (ghcr.io/jarvis2f/telegram-files:latest) [Default]"
-    echo "2) Development (ghcr.io/jarvis2f/telegram-files:dev - dev branch)"
+    echo "1) Stable Latest (ghcr.io/orson-yan/telegram-files-cn:latest) [Default]"
+    echo "2) Development (ghcr.io/orson-yan/telegram-files-cn:dev - dev branch)"
     echo "3) Custom Tag / Release Version (e.g., 0.4.0)"
     ver_choice=$(read_tty "Select version option [1-3, Default: 1]: ")
 

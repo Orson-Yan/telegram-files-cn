@@ -1,285 +1,152 @@
-<p align="center">
-    <img src="./web/public/favicon.svg" align="center" width="30%">
-</p>
-<p align="center"><h1 align="center">Telegram Files</h1></p>
-<p align="center">
-	<em><code>A self-hosted Telegram file downloader for continuous, stable, and unattended downloads.</code></em>
-</p>
-<p align="center">
-	<img src="https://img.shields.io/github/license/jarvis2f/telegram-files?style=default&logo=opensourceinitiative&logoColor=white&color=0080ff" alt="license">
-	<img src="https://img.shields.io/github/last-commit/jarvis2f/telegram-files?style=default&logo=git&logoColor=white&color=0080ff" alt="last-commit">
-	<img src="https://img.shields.io/github/v/release/jarvis2f/telegram-files?style=default&logo=git&logoColor=white&color=0080ff" alt="release">
-    <a href="https://codecov.io/gh/jarvis2f/telegram-files" > 
-        <img src="https://codecov.io/gh/jarvis2f/telegram-files/graph/badge.svg?token=Y4YN2W8ARV"/> 
-    </a>
-</p>
-<br>
+# Telegram Files 中文增强版
 
-## 🔗 Table of Contents
+这是 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 的简体中文增强 fork。项目保留完整英文界面，在不改变后端协议和核心业务逻辑的前提下增加简体中文、本地语言记忆、中文日期显示，以及面向本 fork 的镜像和上游同步流程。
 
-- [📍 Overview](#-overview)
-- [🧩 Screenshots](#-screenshots)
-- [🚀 Getting Started](#-getting-started)
-- [⌨️ Development](#️-development)
-    - [☑️ Prerequisites](#-prerequisites)
-    - [⚙️ Installation](#-installation)
-- [📌 Project Roadmap](#-project-roadmap)
-- [🔰 Contributing](#-contributing)
-- [🎗 License](#-license)
-- [🆗 FAQs](#-faqs)
+> 本仓库只维护中文增强内容；原项目功能、问题和路线图请同时参考[上游仓库](https://github.com/jarvis2f/telegram-files)。
 
----
+## 中文界面
 
-## 📍 Overview
+- 首次访问时根据浏览器语言自动选择：中文环境使用简体中文，其他环境使用英文。
+- 登录页和主界面都提供语言切换按钮。
+- 手动选择保存在浏览器本地，刷新或重新打开后继续使用。
+- 文件名、聊天名、账号名、路径和自定义标签等用户内容不会被当作界面文案修改。
+- 中文文案集中维护在 `web/src/i18n/messages.ts`，新增上游界面文案时只需补充此文件。
 
-* Seamless file downloads from Telegram channels and groups
-* Support for multiple Telegram accounts to manage and download files simultaneously
-* Pause and resume downloads anytime, with automatic file transfer to designated destinations
-* Instant preview of downloaded videos and images
-* Fully responsive design with mobile-friendly access, Progressive Web App (PWA) support, and offline capabilities
-* Easily fetch files from Telegram shared links
+## 主要功能
 
----
+- 从 Telegram 频道、群组和聊天持续下载文件
+- 同时管理多个 Telegram 账号
+- 暂停、继续、取消下载，并按规则自动转存
+- 图片和视频预览
+- 文件搜索、筛选、标签和统计
+- 自动预加载、自动下载和自动转存
+- 响应式 Web 界面、PWA 与移动端访问
+- 从 Telegram 分享链接定位文件
+- 可选的 telegram-seed / qBittorrent 分享能力
 
-## 🧩 Screenshots
+## 快速部署
 
-<div align="center">
-    <img src="./misc/preview-files-pc.gif" width="70%">
-    <img src="./misc/preview-files-mobile.gif" width="17.6%">
-</div>
+使用前需要在 [Telegram API](https://my.telegram.org/apps) 申请 `TELEGRAM_API_ID` 和 `TELEGRAM_API_HASH`。
 
-<details closed>
-<summary>More Screenshots</summary>
-<div align="center">
-    <img src="./misc/screenshot-3.png" align="center" style="width: 300px; height: 500px;">
-    <img src="./misc/screenshot-4.png" align="center" style="width: 300px; height: 500px;">
-</div>
+### 一键部署（Linux amd64 / arm64）
 
-<div align="center">
-    <img src="./misc/screenshot.png" align="center" width="40%">
-    <img src="./misc/screenshot-2.png" align="center" width="40%">
-</div>
-</details>
-
-## 🚀 Getting Started
-
-Before getting started with telegram-files, you should apply a telegram api id and hash. You can apply for it on
-the [Telegram API](https://my.telegram.org/apps) page.
-
-**⚡ Docker Script (Recommended)**
-
-Run the interactive script to install, configure, stop, or update `telegram-files` (Supported OS: Linux amd64/arm64):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/jarvis2f/telegram-files/main/scripts/deploy.sh | bash
+```bash
+curl -fsSL https://raw.githubusercontent.com/Orson-Yan/telegram-files-cn/main/scripts/deploy.sh | bash
 ```
 
-<details closed>
-<summary>Script Command Usages</summary>
+脚本可重复用于管理服务：
 
-You can also run subcommands directly:
-
-```sh
-./scripts/deploy.sh start    # Install & start service
-./scripts/deploy.sh stop     # Stop service
-./scripts/deploy.sh update   # Pull latest image & restart
-./scripts/deploy.sh restart  # Restart service
-./scripts/deploy.sh status   # Check container status
-./scripts/deploy.sh logs     # View live logs
-./scripts/deploy.sh config   # Modify environment configuration
+```bash
+./scripts/deploy.sh start
+./scripts/deploy.sh stop
+./scripts/deploy.sh update
+./scripts/deploy.sh restart
+./scripts/deploy.sh status
+./scripts/deploy.sh logs
+./scripts/deploy.sh config
 ```
 
-</details>
+### Docker Compose
 
-<br>
+复制本仓库的 `docker-compose.yaml` 和 `.env.example`，将后者保存为 `.env` 并填写 Telegram API 凭据，然后运行：
 
-**Using `docker`**
-&nbsp; [<img align="center" src="https://img.shields.io/badge/Docker-2CA5E0.svg?style={badge_style}&logo=docker&logoColor=white" />](https://www.docker.com/)
-
-```shell
-docker run -d \
-  --name telegram-files \
-  --restart always \
-  -e APP_ENV=${APP_ENV:-prod} \
-  -e APP_ROOT=${APP_ROOT:-/app/data} \
-  -e HTTP_SECURE_COOKIES=${HTTP_SECURE_COOKIES:-false} \
-  -e TELEGRAM_API_ID=${TELEGRAM_API_ID} \
-  -e TELEGRAM_API_HASH=${TELEGRAM_API_HASH} \
-  -p 6543:80 \
-  -v ./data:/app/data \
-  ghcr.io/jarvis2f/telegram-files:latest
+```bash
+docker compose up -d
 ```
 
-**Using `docker-compose`**
+Compose 默认使用中文 fork 镜像：
 
-Copy [docker-compose.yaml](docker-compose.yaml) and [.env.example](.env.example) to your project directory and run the following command:
-
-```sh
-docker-compose up -d
+```text
+ghcr.io/orson-yan/telegram-files-cn:latest
 ```
 
-**Install on unRaid**
+`main` 分支更新后会构建 `main` 和 `latest` 镜像；正式 release 也会更新 `latest`。如需锁定版本，可在 `.env` 中设置 `IMAGE_TAG`。
 
-On unRaid, install from the Community Repositories by searching for `telegram-files`.
+### 从源码构建
 
-> **Security note:** Management APIs, file previews, and WebSockets require an administrator session. Use HTTPS,
-> configure `HTTP_ALLOWED_ORIGINS`, and complete the first-administrator bootstrap before exposing the service.
+```bash
+git clone https://github.com/Orson-Yan/telegram-files-cn.git
+cd telegram-files-cn
+docker build -t ghcr.io/orson-yan/telegram-files-cn:latest .
+docker compose up -d
+```
 
-On the first start, the API prints a 15-minute one-time bootstrap code. Open the UI from loopback or the same private
-LAN and create the first administrator before exposing the service. A reverse proxy must preserve
-`X-Real-IP`, `X-Forwarded-Host`, and `X-Forwarded-Proto`; the bundled Nginx configuration already does this.
+首次启动时，API 日志会输出一个有效期为 15 分钟的一次性引导代码。请从本机或同一私有局域网打开界面并创建首位管理员，再将服务暴露到公网。
 
-Password recovery is local-only and revokes every active session:
+## 安全说明
 
-```sh
+- 管理 API、文件预览和 WebSocket 都需要管理员会话。
+- 对公网提供服务时应启用 HTTPS，并正确配置 `HTTP_ALLOWED_ORIGINS`。
+- 反向代理需要保留 `X-Real-IP`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`；仓库附带的 Nginx 配置已经处理这些请求头。
+- 本地密码恢复会撤销所有现有会话：
+
+```bash
 java -cp api/build/libs/telegram-files.jar telegram.files.Maintain admin reset-password owner
 java -cp api/build/libs/telegram-files.jar telegram.files.Maintain admin apply-reset owner
 ```
 
----
+更多配置项请查看 [`.env.example`](.env.example)。
 
-## ⌨️ Development
+## 与上游同步
 
-### ☑️ Prerequisites
+本 fork 使用 [`.github/workflows/sync-upstream.yml`](.github/workflows/sync-upstream.yml) 每天自动获取并合并 `jarvis2f/telegram-files:main`，也可以在 GitHub Actions 中手动运行 **Upstream Sync**。
 
-Before getting started with telegram-files, ensure your runtime environment meets the following requirements:
+同步采用普通 Git merge，不会重置或强制覆盖中文提交：
 
-- **Programming Language:** JDK23,TypeScript
-- **Package Manager:** Gradle,Npm
-- **Container Runtime:** Docker
+1. 上游没有新提交时直接结束。
+2. 可以自动合并时，将合并结果推送到本仓库 `main`。
+3. 出现冲突时工作流失败且不会推送半成品，需要人工解决冲突。
+4. 同步后的 `main` 会运行原项目 CI，并重新构建中文 Docker 镜像。
 
-### ⚙️ Installation
+本地也可以手动同步：
 
-Install telegram-files using one of the following methods:
-
-**Build from source:**
-
-1. Clone the telegram-files repository:
-
-```sh
-git clone https://github.com/jarvis2f/telegram-files
+```bash
+git remote add upstream https://github.com/jarvis2f/telegram-files.git
+git fetch upstream
+git checkout main
+git merge upstream/main
+git push origin main
 ```
 
-2. Navigate to the project directory:
+为减少冲突，中文翻译集中在独立目录 `web/src/i18n/`；对上游现有代码的修改仅限语言 Provider、切换入口、中文日期、用户内容保护以及 fork 部署地址。任何长期维护的 fork 都无法保证上游发生同区域改动时永不冲突，因此同步工作流会在冲突时安全停止，而不是覆盖代码。
 
-```sh
-cd telegram-files
-```
+## 开发与检查
 
-3. Install the project dependencies:
+要求：
 
-**Using `npm`**
-&nbsp; [<img align="center" src="https://img.shields.io/badge/npm-CB3837.svg?style={badge_style}&logo=npm&logoColor=white" />](https://www.npmjs.com/)
+- JDK 23
+- Node.js 22
+- npm
+- Docker（容器构建时需要）
 
-```sh
+前端：
+
+```bash
 cd web
-npm install
+npm ci
+npm run check
+npm run build
 ```
 
-**Using `gradle`**
-&nbsp; [<img align="center" src="https://img.shields.io/badge/Gradle-02303A.svg?style={badge_style}&logo=gradle&logoColor=white" />](https://gradle.org/)
+后端：
 
-```sh
+```bash
 cd api
-gradle build
+./gradlew build
 ```
 
-**Using `docker`**
-&nbsp; [<img align="center" src="https://img.shields.io/badge/Docker-2CA5E0.svg?style={badge_style}&logo=docker&logoColor=white" />](https://www.docker.com/)
+CI 会运行 ESLint、TypeScript 类型检查、单元测试、Playwright 端到端测试、Next.js 构建，以及后端 Gradle 测试。
 
-```sh
-docker build -t jarvis2f/telegram-files .
-```
+## 汉化维护约定
 
-## 📌 Project Roadmap
+- 英文是与上游对齐的源文案，中文通过独立字典映射。
+- 新增或修改上游界面文案后，在 `web/src/i18n/messages.ts` 中补充对应翻译。
+- 动态计数和状态文案使用集中规则处理。
+- 用户生成内容使用 `translate="no"` 或 `data-i18n-skip` 标记保护。
+- 提交前至少运行 `cd web && npm run check && npm run build`。
 
-- ✅ **`Task 1`**: Automatically download files based on set rules.
-- ✅ **`Task 2`**: Download statistics and reports.
-- ✅ **`Task 3`**: Improve Telegram’s login functionality.
-- ✅ **`Task 4`**: Support auto transfer files to other destinations.
-- ✅ **`Task 5`**: File table is optimized using virtual lists.
-- ✅ **`Task 6`**: Preload file information to support responsible searches.
+## 致谢与许可
 
----
+核心项目由 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 提供。本 fork 仅增加中文界面及相关维护能力。
 
-## 🔰 Contributing
-
-- **💬 [Join the Discussions](https://github.com/jarvis2f/telegram-files/discussions)**: Share your insights, provide
-  feedback, or ask questions.
-- **🐛 [Report Issues](https://github.com/jarvis2f/telegram-files/issues)**: Submit bugs found or log feature requests
-  for the `telegram-files` project.
-- **💡 [Submit Pull Requests](https://github.com/jarvis2f/telegram-files/blob/main/CONTRIBUTING.md)**: Review open PRs,
-  and submit your own PRs.
-
-<details closed>
-<summary>Contributing Guidelines</summary>
-
-1. **Fork the Repository**: Start by forking the project repository to your github account.
-2. **Clone Locally**: Clone the forked repository to your local machine using a git client.
-   ```sh
-   git clone https://github.com/jarvis2f/telegram-files
-   ```
-3. **Create a New Branch**: Always work on a new branch, giving it a descriptive name.
-   ```sh
-   git checkout -b new-feature-x
-   ```
-4. **Make Your Changes**: Develop and test your changes locally.
-5. **Commit Your Changes**: Commit with a clear message describing your updates.
-   ```sh
-   git commit -m 'Implemented new feature x.'
-   ```
-6. **Push to github**: Push the changes to your forked repository.
-   ```sh
-   git push origin new-feature-x
-   ```
-7. **Submit a Pull Request**: Create a PR against the original project repository. Clearly describe the changes and
-   their motivations.
-8. **Review**: Once your PR is reviewed and approved, it will be merged into the main branch. Congratulations on your
-   contribution!
-
-</details>
-
----
-
-## 🎗 License
-
-This project is protected under the MIT License. For more details,
-refer to the [LICENSE](LICENSE) file.
-
----
-
-## 🆗 FAQs
-
-**Q.** Web's spoiler is static, how to solve it?
-
-**A.** 1. Because `CSS Houdini Paint API` is not supported by all browsers. 2. It is only supported on https.
-<details closed>
-<summary>Use in http environment, you can use the following method to solve it</summary>
-
-Open the `chrome://flags` page, search for `Insecure origins treated as secure`, and add the address of the web page to
-the list.
-</details>
-
-**Q.** How to use the telegram-files maintenance tool?
-
-**A.** You can use the following command to run the maintenance tool(**before running the command, you should stop telegram-files container**):
-<details closed>
-<summary>Command</summary>
-
-```shell
-docker run --rm \
-  --entrypoint tfm \
-  -v $(pwd)/data:/app/data \
-  -e APP_ROOT=${APP_ROOT:-/app/data} \
-  -e TELEGRAM_API_ID=${TELEGRAM_API_ID} \
-  -e TELEGRAM_API_HASH=${TELEGRAM_API_HASH} \
-  ghcr.io/jarvis2f/telegram-files:latest ${Maintenance Command}
-```
-
-**Maintenance Command:**
-
-- `album-caption`: Fixed issue with missing caption for album messages before `0.1.15`.
-- `thumbnail`: Fixed issue with missing clear thumbnail.
-- `admin reset-password <username>`: Issue a one-time local administrator recovery code and revoke active sessions.
-- `admin apply-reset <username>`: Apply the recovery code and set a new administrator password interactively.
-</details>
+项目继续使用 [MIT License](LICENSE)。
