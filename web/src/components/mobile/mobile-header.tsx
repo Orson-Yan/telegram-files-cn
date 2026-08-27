@@ -39,6 +39,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useTelegramChat } from "@/hooks/use-telegram-chat";
 import { useSettings } from "@/hooks/use-settings";
+import { LanguageToggleButton } from "@/i18n/language-toggle-button";
 
 const HEADER_HIDE_DISTANCE = 108;
 const HEADER_SHOW_DISTANCE = 16;
@@ -273,6 +274,7 @@ function MenuDrawer() {
                 </div>
 
                 <ThemeToggleButton />
+                <LanguageToggleButton />
                 <SettingsDialog />
               </div>
             </div>

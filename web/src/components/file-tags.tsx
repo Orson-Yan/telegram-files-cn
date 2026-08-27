@@ -185,7 +185,7 @@ export default function FileTags({
                   className="flex items-center gap-1 rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-xs font-medium text-white shadow-lg outline-none backdrop-blur-md transition hover:bg-white/30 focus:outline-none focus-visible:outline-none focus-visible:ring-0 active:scale-95"
                 >
                   <span className="text-white/70">#</span>
-                  <span>{tag}</span>
+                  <span translate="no">{tag}</span>
                 </button>
               ))
             ) : (
@@ -239,7 +239,7 @@ export default function FileTags({
                     ) : (
                       <Plus className="h-3 w-3 text-white/50" />
                     )}
-                    <span>{tag}</span>
+                    <span translate="no">{tag}</span>
                   </button>
                 );
               })}
@@ -311,7 +311,7 @@ export default function FileTags({
                   ) : (
                     <Plus className="h-3 w-3 text-white/50" />
                   )}
-                  <span>{tag}</span>
+                  <span translate="no">{tag}</span>
                 </button>
               );
             })}
@@ -398,7 +398,7 @@ export function BatchFileTags({ files, onTagsUpdate }: BatchFileTagsProps) {
                   ) : (
                     <Plus className="h-3 w-3 text-white/50" />
                   )}
-                  <span>{tag}</span>
+                  <span translate="no">{tag}</span>
                 </button>
               );
             })}

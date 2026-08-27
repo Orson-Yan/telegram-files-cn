@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminSession } from "@/hooks/use-admin-session";
 import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
+import { LanguageToggleButton } from "@/i18n/language-toggle-button";
 
 export function AdminAuthGate({ children }: { children: ReactNode }) {
   const { status, session, sessionExpired, login, bootstrap } =
@@ -71,6 +72,9 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
 
   return (
     <main className="grid min-h-screen place-items-center bg-muted/30 px-4">
+      <div className="fixed right-4 top-4 z-50">
+        <LanguageToggleButton />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader>
           <div className="flex justify-center pb-2">

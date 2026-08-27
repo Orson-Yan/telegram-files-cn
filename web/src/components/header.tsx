@@ -26,6 +26,7 @@ import AccountSelect from "@/components/account-select";
 import { useSearchParams } from "next/navigation";
 import { useSettings } from "@/hooks/use-settings";
 import { PlatformBindingShortcut } from "@/components/platform-binding-shortcut";
+import { LanguageToggleButton } from "@/i18n/language-toggle-button";
 
 export function Header() {
   const useTelegramAccountProps = useTelegramAccount();
@@ -129,6 +130,7 @@ export function Header() {
             )}
 
             <ThemeToggleButton />
+            <LanguageToggleButton />
 
             <PlatformBindingShortcut />
 

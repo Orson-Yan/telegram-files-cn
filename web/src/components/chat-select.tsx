@@ -60,7 +60,9 @@ export default function ChatSelect({ disabled }: { disabled: boolean }) {
               {selectedChat.name?.[0] ?? selectedChat.id[0]}
             </AvatarFallback>
           </Avatar>
-          <span className="min-w-0 truncate">{selectedChatName}</span>
+          <span className="min-w-0 truncate" translate="no">
+            {selectedChatName}
+          </span>
         </div>
       ) : (
         <span className="text-muted-foreground">Select chat ...</span>
@@ -137,7 +139,7 @@ export default function ChatSelect({ disabled }: { disabled: boolean }) {
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex min-w-0 flex-col">
-                  <span className="truncate font-medium">
+                  <span className="truncate font-medium" translate="no">
                     {(chat.name ?? "").length > 0 ? chat.name : chat.id}
                   </span>
                   <span className="text-xs text-muted-foreground">

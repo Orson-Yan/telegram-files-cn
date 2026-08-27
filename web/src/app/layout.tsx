@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { LocalStorageProvider } from "@/hooks/use-local-storage";
 import { AdminSessionProvider } from "@/hooks/use-admin-session";
 import { AdminAuthGate } from "@/components/admin-auth-gate";
+import { LanguageProvider } from "@/i18n/language-provider";
 
 export const metadata: Metadata = {
   title: "Telegram Files",
@@ -59,20 +60,22 @@ export default async function RootLayout({
             defaultTheme="light"
             disableTransitionOnChange
           >
-            <AdminSessionProvider>
-              <AdminAuthGate>
-                <SWRProvider>
-                  <WebSocketProvider>
-                    <SettingsProvider>
-                      <TelegramAccountProvider>
-                        {children}
-                      </TelegramAccountProvider>
-                    </SettingsProvider>
-                  </WebSocketProvider>
-                </SWRProvider>
-              </AdminAuthGate>
-            </AdminSessionProvider>
-            <Toaster />
+            <LanguageProvider>
+              <AdminSessionProvider>
+                <AdminAuthGate>
+                  <SWRProvider>
+                    <WebSocketProvider>
+                      <SettingsProvider>
+                        <TelegramAccountProvider>
+                          {children}
+                        </TelegramAccountProvider>
+                      </SettingsProvider>
+                    </WebSocketProvider>
+                  </SWRProvider>
+                </AdminAuthGate>
+              </AdminSessionProvider>
+              <Toaster />
+            </LanguageProvider>
           </ThemeProvider>
         </LocalStorageProvider>
       </body>
