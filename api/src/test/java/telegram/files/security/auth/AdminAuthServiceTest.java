@@ -152,7 +152,7 @@ class AdminAuthServiceTest {
                             return service.applyPasswordRecovery(
                                     "owner",
                                     recovery.oneTimeToken(),
-                                    "new recovery password value".toCharArray()
+                                    "12345678".toCharArray()
                             );
                         })
                         .compose(_ -> service.applyPasswordRecovery(
@@ -166,7 +166,7 @@ class AdminAuthServiceTest {
                     context.verify(() -> assertTrue(replayRejected));
                     return service.login(
                             "owner",
-                            "new recovery password value".toCharArray(),
+                            "12345678".toCharArray(),
                             "127.0.0.1"
                     );
                 })

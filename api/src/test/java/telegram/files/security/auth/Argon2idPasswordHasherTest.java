@@ -20,12 +20,16 @@ class Argon2idPasswordHasherTest {
     }
 
     @Test
-    void rejectsWeakPasswordsAndMalformedParameters() {
+    void acceptsEightCharactersAndRejectsShorterPasswords() {
         Argon2idPasswordHasher hasher = new Argon2idPasswordHasher();
+        char[] minimumLengthPassword = "12345678".toCharArray();
 
+        Argon2idPasswordHasher.PasswordHash hash = hasher.hash(minimumLengthPassword);
+
+        assertTrue(hasher.verify(minimumLengthPassword, hash));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> hasher.hash("too-short".toCharArray())
+                () -> hasher.hash("1234567".toCharArray())
         );
         assertFalse(hasher.verify(
                 "correct horse battery staple".toCharArray(),
