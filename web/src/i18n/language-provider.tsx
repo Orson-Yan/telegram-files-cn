@@ -170,19 +170,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     }
 
     const root = document.body;
-    let observer: MutationObserver;
-
-    const observe = () => {
-      observer.observe(root, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: [...TRANSLATED_ATTRIBUTES],
-      });
-    };
-
-    observer = new MutationObserver((records) => {
+    const observer = new MutationObserver((records) => {
       observer.disconnect();
       for (const record of records) {
         if (record.type === "characterData") {
@@ -195,6 +183,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       }
       observe();
     });
+
+    const observe = () => {
+      observer.observe(root, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: [...TRANSLATED_ATTRIBUTES],
+      });
+    };
 
     localizeSubtree(root, locale);
     observe();
