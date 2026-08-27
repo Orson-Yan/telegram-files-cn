@@ -6,6 +6,7 @@ on:
     - cron: "17 3 * * *"
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -30,9 +31,11 @@ jobs:
           git fetch --prune upstream main
 
       - name: Merge and push upstream changes
+        id: merge
         run: |
           if git merge-base --is-ancestor upstream/main HEAD; then
             echo "The fork already contains upstream/main."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -40,3 +43,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git merge --no-edit upstream/main
           git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify and publish the synchronized revision
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml --ref main
+          gh workflow run docker-publish.yml --ref main
