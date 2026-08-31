@@ -521,6 +521,50 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
     }
 
     @Override
+    public Future<Boolean> claimStaleDownloadRetry(String uniqueId,
+                                                   long expectedStartDate,
+                                                   long retryStartDate) {
+        return SqlTemplate
+                .forUpdate(sqlClient, """
+                        UPDATE file_record
+                        SET start_date = #{retryStartDate},
+                            completion_date = NULL
+                        WHERE unique_id = #{uniqueId}
+                          AND download_status = 'downloading'
+                          AND (start_date = #{expectedStartDate}
+                               OR (start_date IS NULL AND #{expectedStartDate} = 0))
+                        """)
+                .execute(Map.of(
+                        "uniqueId", uniqueId,
+                        "expectedStartDate", expectedStartDate,
+                        "retryStartDate", retryStartDate
+                ))
+                .map(result -> result.rowCount() == 1)
+                .onFailure(err -> log.error("Failed to claim stale download retry {}: {}", uniqueId, err.getMessage()));
+    }
+
+    @Override
+    public Future<Boolean> releaseStaleDownloadRetry(String uniqueId,
+                                                     long expectedStartDate) {
+        return SqlTemplate
+                .forUpdate(sqlClient, """
+                        UPDATE file_record
+                        SET download_status = 'idle',
+                            start_date = 0,
+                            completion_date = NULL
+                        WHERE unique_id = #{uniqueId}
+                          AND download_status = 'downloading'
+                          AND start_date = #{expectedStartDate}
+                        """)
+                .execute(Map.of(
+                        "uniqueId", uniqueId,
+                        "expectedStartDate", expectedStartDate
+                ))
+                .map(result -> result.rowCount() == 1)
+                .onFailure(err -> log.error("Failed to release stale download retry {}: {}", uniqueId, err.getMessage()));
+    }
+
+    @Override
     public Future<JsonObject> countWithType(long telegramId, long chatId) {
         String whereClause = "type != 'thumbnail'";
         Map<String, Object> params = new HashMap<>();
@@ -578,11 +622,19 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                         return Future.succeededFuture(null);
                     }
 
+                    long startDate = record.startDate();
+                    if (downloadStatusUpdated && downloadStatus == FileRecord.DownloadStatus.downloading) {
+                        startDate = System.currentTimeMillis();
+                    } else if (downloadStatusUpdated && downloadStatus == FileRecord.DownloadStatus.idle) {
+                        startDate = 0L;
+                    }
+
                     return SqlTemplate
                             .forUpdate(sqlClient, """
                                     UPDATE file_record SET id = #{fileId},
                                                            local_path = #{localPath},
                                                            download_status = #{downloadStatus},
+                                                           start_date = #{startDate},
                                                            completion_date = #{completionDate}
                                     WHERE unique_id = #{uniqueId}
                                     """)
@@ -590,6 +642,7 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                                     MapUtil.entry("uniqueId", uniqueId),
                                     MapUtil.entry("localPath", pathUpdated ? localPath : record.localPath()),
                                     MapUtil.entry("downloadStatus", downloadStatusUpdated ? downloadStatus.name() : record.downloadStatus()),
+                                    MapUtil.entry("startDate", startDate),
                                     MapUtil.entry("completionDate", completionDate)
                             ))
                             .onFailure(err ->

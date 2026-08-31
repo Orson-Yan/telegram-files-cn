@@ -37,6 +37,13 @@ public interface FileRepository {
 
     Future<List<FileRecord>> getByDownloadStatus(long telegramId, FileRecord.DownloadStatus downloadStatus);
 
+    Future<Boolean> claimStaleDownloadRetry(String uniqueId,
+                                            long expectedStartDate,
+                                            long retryStartDate);
+
+    Future<Boolean> releaseStaleDownloadRetry(String uniqueId,
+                                              long expectedStartDate);
+
     Future<JsonObject> countWithType(long telegramId, long chatId);
 
     Future<JsonObject> updateDownloadStatus(int fileId,
