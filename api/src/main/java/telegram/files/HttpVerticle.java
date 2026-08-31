@@ -1504,8 +1504,18 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleFilesCount(RoutingContext ctx) {
-        DataVerticle.fileRepository.getDownloadStatistics()
-                .onSuccess(ctx::json)
+        Future.all(
+                        DataVerticle.fileRepository.getDownloadStatistics(),
+                        DataVerticle.settingRepository.<Integer>getByKey(SettingKey.autoDownloadLimit)
+                )
+                .onSuccess(result -> {
+                    JsonObject statistics = result.resultAt(0);
+                    Integer configuredLimit = result.resultAt(1);
+                    statistics.put("downloadLimit", configuredLimit == null
+                            ? AutoDownloadVerticle.DEFAULT_LIMIT
+                            : configuredLimit);
+                    ctx.json(statistics);
+                })
                 .onFailure(ctx::fail);
     }
 

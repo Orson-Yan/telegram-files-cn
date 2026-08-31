@@ -21,6 +21,9 @@
 - 文件搜索、筛选、标签和统计
 - 自动预加载、自动下载和自动转存
 - 自动回收 TDLib 已停止但数据库仍为下载中的僵尸任务
+- 持续填充自动下载并发槽位，避免小文件批次之间长时间空等
+- 首页实时显示总速率、流量、队列、预计时间和逐文件下载进度
+- 防止本地文件仍存在时被 TDLib 缓存更新误标为待下载
 - 使用 Telegram 消息发送时间作为文件修改时间，方便相册按时间排序
 - 响应式 Web 界面、PWA 与移动端访问
 - 从 Telegram 分享链接定位文件
@@ -80,6 +83,24 @@ docker compose exec telegram-files tfm file-time rollback file-time-YYYYMMDD-HHM
 ```
 
 回滚只会处理仍在数据库中且当前时间仍等于本次回填目标时间的文件，避免覆盖之后被其他程序修改的文件。
+
+### 恢复被误标为空闲的历史文件
+
+如果旧版本把仍在磁盘上的已完成文件误标为“空闲”，请先升级到修复版本，并把故障前的 SQLite 备份放到 `DATA_DIR`。停止主服务后先只读扫描：
+
+```bash
+docker compose stop telegram-files
+docker compose run --rm telegram-files tfm download-status scan data-before-recovery.db
+```
+
+扫描只会把以下记录列为可恢复：当前状态为 `idle`、备份状态为 `completed`、备份路径位于 `APP_ROOT` 内、实体文件仍存在，而且数据库与磁盘字节大小完全一致。确认 `recoverable` 数量后执行：
+
+```bash
+docker compose run --rm telegram-files tfm download-status apply data-before-recovery.db
+docker compose up -d telegram-files
+```
+
+恢复只修改索引中的本地路径、下载状态、开始时间和完成时间，不会移动或重新下载文件；审计文件写入 `/app/data/maintenance-audits/`。
 
 ### 从源码构建
 
