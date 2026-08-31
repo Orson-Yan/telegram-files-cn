@@ -15,6 +15,7 @@ describe("translateText", () => {
     expect(translateText("Download 4 selected files", "zh-CN")).toBe(
       "下载已选中的 4 个文件",
     );
+    expect(translateText("12 queued", "zh-CN")).toBe("12 个待下载");
   });
 
   it("does not alter English or unknown user content", () => {

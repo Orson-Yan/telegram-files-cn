@@ -371,7 +371,10 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                 .forQuery(sqlClient, """
                         SELECT COUNT(CASE WHEN download_status = 'downloading' THEN 1 END)                  AS downloading,
                                COUNT(CASE WHEN download_status = 'completed' THEN 1 END)                    AS completed,
-                               SUM(CASE WHEN download_status = 'completed' THEN size ELSE 0 END)            AS downloaded_size
+                               COUNT(CASE WHEN download_status = 'idle' THEN 1 END)                         AS queued,
+                               SUM(CASE WHEN download_status = 'completed' THEN size ELSE 0 END)            AS downloaded_size,
+                               SUM(CASE WHEN download_status = 'idle' THEN size ELSE 0 END)                 AS queued_size,
+                               SUM(CASE WHEN download_status = 'downloading' THEN size ELSE 0 END)          AS active_size
                         FROM file_record
                         WHERE type != 'thumbnail'
                         """)
@@ -379,7 +382,10 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                     JsonObject result = JsonObject.of();
                     result.put("downloading", row.getInteger("downloading"));
                     result.put("completed", row.getInteger("completed"));
+                    result.put("queued", row.getInteger("queued"));
                     result.put("downloadedSize", Objects.requireNonNullElse(row.getLong("downloaded_size"), 0));
+                    result.put("queuedSize", Objects.requireNonNullElse(row.getLong("queued_size"), 0));
+                    result.put("activeSize", Objects.requireNonNullElse(row.getLong("active_size"), 0));
                     return result;
                 })
                 .execute(Map.of())

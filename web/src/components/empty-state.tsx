@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Check,
   Download,
+  Gauge,
   HardDrive,
   Loader2,
   LogOut,
@@ -26,6 +27,13 @@ import useIsMobile from "@/hooks/use-is-mobile";
 import { useAdminSession } from "@/hooks/use-admin-session";
 import { PlatformBindingShortcut } from "@/components/platform-binding-shortcut";
 import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
+import { DownloadMonitor } from "@/components/download-monitor";
+import { useWebsocket } from "@/hooks/use-websocket";
+import { useSettings } from "@/hooks/use-settings";
+import {
+  type DownloadOverviewStatistics,
+  normalizeDownloadOverview,
+} from "@/lib/download-activity";
 
 interface EmptyStateProps {
   isLoadingAccount?: boolean;
@@ -147,14 +155,12 @@ export function EmptyState({
   );
 }
 
-interface FileCount {
-  downloading: number;
-  completed: number;
-  downloadedSize: number;
-}
+type FileCount = DownloadOverviewStatistics;
 
 function AllFiles() {
   const router = useRouter();
+  const { downloadActivity } = useWebsocket();
+  const { settings } = useSettings();
   const { data, error, isLoading } = useSWR<FileCount, Error>(`/files/count`);
 
   if (error) {
@@ -179,53 +185,74 @@ function AllFiles() {
     );
   }
 
+  const statistics = normalizeDownloadOverview(data);
+
   return (
-    <Card className="mx-auto mb-8 max-w-5xl">
-      <CardContent className="flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between">
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <Check className="text-green-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Downloaded
-            </span>
-            <span className="text-sm font-medium">{data.completed}</span>
+    <>
+      <Card className="mx-auto mb-4 max-w-5xl">
+        <CardContent className="flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+            <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
+              <Check className="text-green-500" />
+              <span className="hidden text-sm font-medium md:inline-block">
+                Downloaded
+              </span>
+              <span className="text-sm font-medium">
+                {statistics.completed}
+              </span>
+            </div>
+            <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
+              <Download className="text-blue-500" />
+              <span className="hidden text-sm font-medium md:inline-block">
+                Downloading
+              </span>
+              <span className="text-sm font-medium">
+                {statistics.downloading} / {statistics.downloadLimit}
+              </span>
+            </div>
+            <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
+              <Gauge className="text-orange-500" />
+              <span className="hidden text-sm font-medium md:inline-block">
+                Speed
+              </span>
+              <span className="text-sm font-medium">
+                {prettyBytes(downloadActivity.speed, {
+                  bits: settings?.speedUnits === "bits",
+                })}
+                /s
+              </span>
+            </div>
+            <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
+              <HardDrive className="text-purple-500" />
+              <span className="hidden text-sm font-medium md:inline-block">
+                Size
+              </span>
+              <span className="text-sm font-medium">
+                {prettyBytes(statistics.downloadedSize)}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <Download className="text-blue-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Downloading
-            </span>
-            <span className="text-sm font-medium">{data.downloading}</span>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push("/automations")}
+            >
+              <Workflow data-icon="inline-start" />
+              Automations
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push("/files")}
+            >
+              Files
+              <ArrowRight data-icon="inline-end" />
+            </Button>
           </div>
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <HardDrive className="text-purple-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Size
-            </span>
-            <span className="text-sm font-medium">
-              {prettyBytes(data.downloadedSize)}
-            </span>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push("/automations")}
-          >
-            <Workflow data-icon="inline-start" />
-            Automations
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push("/files")}
-          >
-            Files
-            <ArrowRight data-icon="inline-end" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+      <DownloadMonitor statistics={statistics} />
+    </>
   );
 }

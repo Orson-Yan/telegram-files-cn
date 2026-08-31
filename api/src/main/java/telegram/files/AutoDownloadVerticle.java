@@ -32,15 +32,15 @@ public class AutoDownloadVerticle extends AbstractVerticle {
 
     private static final Log log = LogFactory.get();
 
-    private static final int DEFAULT_LIMIT = 5;
+    static final int DEFAULT_LIMIT = 5;
 
-    private static final int HISTORY_SCAN_INTERVAL = 2 * 60 * 1000;
+    static final int HISTORY_SCAN_INTERVAL = 10 * 1000;
 
     private static final int MAX_HISTORY_SCAN_TIME = 10 * 1000;
 
-    private static final int MAX_WAITING_LENGTH = 30;
+    static final int MAX_WAITING_LENGTH = 100;
 
-    private static final int DOWNLOAD_INTERVAL = 10 * 1000;
+    static final int DOWNLOAD_INTERVAL = 1000;
 
     private static final List<String> DEFAULT_FILE_TYPE_ORDER = List.of("photo", "video", "audio", "file");
 
@@ -223,8 +223,9 @@ public class AutoDownloadVerticle extends AbstractVerticle {
             callback.accept(new ScanResult(nextFileType, nextFromMessageId, false));
             return;
         }
-        if (isExceedLimit(telegramId)) {
-            log.debug("Scan history exceed per telegram account limit! TelegramId: %d ChatId: %d".formatted(telegramId, chatId));
+        int scanCapacity = getScanCapacity(telegramId);
+        if (scanCapacity <= 0) {
+            log.debug("History download buffer is full! TelegramId: %d ChatId: %d".formatted(telegramId, chatId));
             callback.accept(new ScanResult(nextFileType, nextFromMessageId, false));
             return;
         }
@@ -238,7 +239,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         searchChatMessages.query = rule.v1;
         searchChatMessages.chatId = chatId;
         searchChatMessages.fromMessageId = nextFromMessageId;
-        searchChatMessages.limit = Math.min(MAX_WAITING_LENGTH, 100);
+        searchChatMessages.limit = Math.min(scanCapacity, 100);
         searchChatMessages.filter = TdApiHelp.getSearchMessagesFilter(nextFileType);
         searchChatMessages.topicId = params.messageThreadId > 0 ? new TdApi.MessageTopicThread(params.messageThreadId) : null;
         String finalNextFileType = nextFileType;
@@ -290,10 +291,27 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                         if (CollUtil.isEmpty(messages)) {
                             params.nextFromMessageId = foundChatMessages.nextFromMessageId;
                             addHistoryMessage(params, callback, currentTimeMillis);
-                        } else if (addWaitingDownloadMessages(telegramId, messages, false, true)) {
-                            params.nextFromMessageId = foundChatMessages.nextFromMessageId;
-                            addHistoryMessage(params, callback, currentTimeMillis);
+                        } else {
+                            if (addWaitingDownloadMessages(telegramId, messages, false, true)) {
+                                params.nextFromMessageId = foundChatMessages.nextFromMessageId;
+                                addHistoryMessage(params, callback, currentTimeMillis);
+                            } else {
+                                callback.accept(new ScanResult(
+                                        finalNextFileType,
+                                        nextFromMessageId,
+                                        false
+                                ));
+                            }
                         }
+                    })
+                    .onFailure(error -> {
+                        log.warn("Failed to check existing history files for {}: {}",
+                                uniqueKey, error.getMessage());
+                        callback.accept(new ScanResult(
+                                finalNextFileType,
+                                nextFromMessageId,
+                                false
+                        ));
                     });
         }
     }
@@ -335,9 +353,21 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         }
     }
 
-    private boolean isExceedLimit(long telegramId) {
+    private int getScanCapacity(long telegramId) {
         List<MessageWrapper> waitingMessages = this.waitingDownloadMessages.get(telegramId);
-        return getSurplusSize(telegramId) <= 0 || (waitingMessages != null && waitingMessages.size() > limit);
+        Integer downloading = Future.await(DataVerticle.fileRepository.countByStatus(
+                telegramId, FileRecord.DownloadStatus.downloading));
+        return getScanCapacity(
+                downloading == null ? 0 : downloading,
+                waitingMessages == null ? 0 : waitingMessages.size()
+        );
+    }
+
+    static int getScanCapacity(int downloading, int waiting) {
+        return Math.max(
+                0,
+                MAX_WAITING_LENGTH - Math.max(0, downloading) - Math.max(0, waiting)
+        );
     }
 
     private int getSurplusSize(long telegramId) {
@@ -367,7 +397,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         if (waitingMessages == null) {
             waitingMessages = new LinkedList<>();
         }
-        if (!force && waitingMessages.size() > MAX_WAITING_LENGTH) {
+        if (!force && waitingMessages.size() >= MAX_WAITING_LENGTH) {
             return false;
         } else {
             log.debug("Add waiting download messages: %d".formatted(messages.size()));

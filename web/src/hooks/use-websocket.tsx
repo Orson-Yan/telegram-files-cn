@@ -6,6 +6,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
@@ -19,6 +20,13 @@ import { useDebounce } from "use-debounce";
 import { getWsUrl } from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 import { useSWRConfig } from "swr";
+import { type TDFile } from "@/lib/types";
+import {
+  downloadedTrafficDelta,
+  EMPTY_DOWNLOAD_ACTIVITY,
+  type DownloadActivityState,
+  updateDownloadActivity,
+} from "@/lib/download-activity";
 
 interface WebsocketContextType {
   sendMessage: (message: WebSocketMessage) => void;
@@ -26,6 +34,7 @@ interface WebsocketContextType {
   connectionStatus: string;
   isReady: boolean;
   accountDownloadSpeed: number;
+  downloadActivity: DownloadActivityState;
   reconnect: () => void;
   telegramConnectionState: string | null;
 }
@@ -44,14 +53,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
   const wsUrl = getWsUrl();
   const searchParams = useSearchParams();
   const [isReady, setIsReady] = useState(false);
-  const [accountDownloadSpeed, setAccountDownloadSpeed] = useState({
-    speed: 0,
-    lastDownloadedSize: 0,
-    lastTimestamp: 0,
-  });
+  const [downloadActivity, setDownloadActivity] = useState(
+    EMPTY_DOWNLOAD_ACTIVITY,
+  );
+  const downloadedByFile = useRef(new Map<string, number>());
   const { toast } = useToast();
   const { mutate } = useSWRConfig();
-  const [debounceSpeed] = useDebounce(accountDownloadSpeed.speed, 300, {
+  const [debounceSpeed] = useDebounce(downloadActivity.speed, 300, {
     leading: true,
     maxWait: 1000,
   });
@@ -74,6 +82,22 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
         retryOnError: true,
       },
     );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setDownloadActivity((previous) => {
+        if (
+          previous.speed === 0 ||
+          previous.totalCount === 0 ||
+          Date.now() - previous.lastProgressAt <= 5_000
+        ) {
+          return previous;
+        }
+        return { ...previous, speed: 0 };
+      });
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (readyState !== ReadyState.CONNECTING) return;
@@ -134,6 +158,31 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
           case WebSocketMessageType.AUTHORIZATION:
             void mutate("/telegrams");
             break;
+          case WebSocketMessageType.FILE_UPDATE: {
+            const file = (payload.data as { file?: TDFile })?.file;
+            const uniqueId = file?.remote?.uniqueId;
+            if (!file || !uniqueId || !file.local) {
+              break;
+            }
+            const current = Math.max(0, file.local.downloadedSize);
+            const previous = downloadedByFile.current.get(uniqueId);
+            const delta = downloadedTrafficDelta(previous, current);
+            downloadedByFile.current.set(uniqueId, current);
+            if (file.local.isDownloadingCompleted) {
+              downloadedByFile.current.delete(uniqueId);
+            }
+            if (delta > 0) {
+              setDownloadActivity((activity) => ({
+                ...activity,
+                sessionDownloadedBytes: activity.sessionDownloadedBytes + delta,
+                lastProgressAt: timestamp,
+              }));
+            }
+            break;
+          }
+          case WebSocketMessageType.FILE_STATUS:
+            void mutate("/files/count");
+            break;
           case WebSocketMessageType.CONNECTION:
             setTelegramConnectionState(
               (payload.data as { state?: string })?.state ?? null,
@@ -145,45 +194,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
               description: (payload.data as TelegramError).message,
             });
             break;
-          case WebSocketMessageType.FILE_DOWNLOAD:
-            const { downloadedSize, totalCount } = payload.data as {
+          case WebSocketMessageType.FILE_DOWNLOAD: {
+            const { downloadedSize, totalCount, totalSize } = payload.data as {
               totalSize: number;
               totalCount: number;
               downloadedSize: number;
             };
-            if (totalCount === 0) {
-              setAccountDownloadSpeed({
-                speed: 0,
-                lastDownloadedSize: 0,
-                lastTimestamp: 0,
-              });
-              return;
-            }
-            setAccountDownloadSpeed((prev) => {
-              const state = {
-                lastTimestamp: timestamp,
-                lastDownloadedSize: downloadedSize,
-              };
-              const timeDiff = (timestamp - prev.lastTimestamp) / 1000;
-              if (
-                prev.lastTimestamp === 0 ||
-                timeDiff <= 0 ||
-                downloadedSize <= prev.lastDownloadedSize
-              ) {
-                return {
-                  ...state,
-                  speed: prev.speed,
-                };
-              }
-
-              const speed =
-                (downloadedSize - prev.lastDownloadedSize) / timeDiff;
-              return {
-                speed,
-                lastDownloadedSize: downloadedSize,
-                lastTimestamp: timestamp,
-              };
-            });
+            setDownloadActivity((previous) =>
+              updateDownloadActivity(
+                previous,
+                { downloadedSize, totalCount, totalSize },
+                timestamp,
+              ),
+            );
+            break;
+          }
         }
       } catch (error) {
         console.error("Failed to parse WebSocket message:", error);
@@ -208,6 +233,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
         connectionStatus,
         isReady,
         accountDownloadSpeed: debounceSpeed,
+        downloadActivity: { ...downloadActivity, speed: debounceSpeed },
         reconnect,
         telegramConnectionState,
       }}

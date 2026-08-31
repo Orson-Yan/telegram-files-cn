@@ -1475,9 +1475,7 @@ public class TelegramVerticle extends AbstractVerticle {
                         FileRecord.DownloadStatus downloadStatus = TdApiHelp.getDownloadStatus(file);
 
                         if (fileRecord != null) {
-                            if (fileRecord.isDownloadStatus(FileRecord.DownloadStatus.completed) &&
-                                fileRecord.isTransferStatus(FileRecord.TransferStatus.completed) &&
-                                FileUtil.exist(fileRecord.localPath())) {
+                            if (shouldPreserveCompletedDownload(fileRecord)) {
                                 applyTelegramMessageTimestamp(fileRecord, fileRecord.localPath());
                                 return;
                             }
@@ -1584,5 +1582,12 @@ public class TelegramVerticle extends AbstractVerticle {
                     // contains the same completed path and status, not that synchronization failed.
                     return Future.succeededFuture();
                 });
+    }
+
+    static boolean shouldPreserveCompletedDownload(FileRecord fileRecord) {
+        return fileRecord != null
+               && fileRecord.isDownloadStatus(FileRecord.DownloadStatus.completed)
+               && StrUtil.isNotBlank(fileRecord.localPath())
+               && FileUtil.exist(fileRecord.localPath());
     }
 }
