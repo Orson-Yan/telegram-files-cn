@@ -102,22 +102,22 @@ public class MessageFilter {
                     .compose("cn.hutool.core.*")
                     .compose("telegram.files.repository.*")
             )
-            .namespaces(MapUtil.ofEntries(
-                    MapUtil.entry("str", StrUtil.class),
-                    MapUtil.entry("array", ArrayUtil.class),
-                    MapUtil.entry("coll", CollUtil.class),
-                    MapUtil.entry("obj", ObjectUtil.class),
-                    MapUtil.entry("class", ClassUtil.class),
-                    MapUtil.entry("id", IdUtil.class),
-                    MapUtil.entry("char", CharUtil.class),
-                    MapUtil.entry("random", RandomUtil.class),
-                    MapUtil.entry("escape", EscapeUtil.class),
-                    MapUtil.entry("hex", HexUtil.class),
-                    MapUtil.entry("net", NetUtil.class),
-                    MapUtil.entry("zip", ZipUtil.class),
-                    MapUtil.entry("date", DateUtil.class),
-                    MapUtil.entry("re", ReUtil.class),
-                    MapUtil.entry("num", NumberUtil.class)
+            .namespaces(Map.<String, Object>ofEntries(
+                    Map.entry("str", StrUtil.class),
+                    Map.entry("array", ArrayUtil.class),
+                    Map.entry("coll", CollUtil.class),
+                    Map.entry("obj", ObjectUtil.class),
+                    Map.entry("class", ClassUtil.class),
+                    Map.entry("id", IdUtil.class),
+                    Map.entry("char", CharUtil.class),
+                    Map.entry("random", RandomUtil.class),
+                    Map.entry("escape", EscapeUtil.class),
+                    Map.entry("hex", HexUtil.class),
+                    Map.entry("net", NetUtil.class),
+                    Map.entry("zip", ZipUtil.class),
+                    Map.entry("date", DateUtil.class),
+                    Map.entry("re", ReUtil.class),
+                    Map.entry("num", NumberUtil.class)
             ))
             .create();
 

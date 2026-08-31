@@ -20,6 +20,8 @@
 - 图片和视频预览
 - 文件搜索、筛选、标签和统计
 - 自动预加载、自动下载和自动转存
+- 自动回收 TDLib 已停止但数据库仍为下载中的僵尸任务
+- 使用 Telegram 消息发送时间作为文件修改时间，方便相册按时间排序
 - 响应式 Web 界面、PWA 与移动端访问
 - 从 Telegram 分享链接定位文件
 - 可选的 telegram-seed / qBittorrent 分享能力
@@ -61,6 +63,23 @@ ghcr.io/orson-yan/telegram-files-cn:latest
 ```
 
 `main` 分支更新后会构建 `main` 和 `latest` 镜像；正式 release 也会更新 `latest`。如需锁定版本，可在 `.env` 中设置 `IMAGE_TAG`。
+
+### 历史文件时间回填
+
+新下载的文件会自动把文件修改时间设置为 Telegram 消息发送时间；自动转存或重命名后也会再次校准。历史文件可在升级后执行：
+
+```bash
+docker compose exec telegram-files tfm file-time apply
+```
+
+命令只处理数据库中已完成、非缩略图且仍存在的文件，并在
+`/app/data/maintenance-audits/` 生成 JSONL 审计文件。需要恢复原修改时间时执行：
+
+```bash
+docker compose exec telegram-files tfm file-time rollback file-time-YYYYMMDD-HHMMSS.jsonl
+```
+
+回滚只会处理仍在数据库中且当前时间仍等于本次回填目标时间的文件，避免覆盖之后被其他程序修改的文件。
 
 ### 从源码构建
 

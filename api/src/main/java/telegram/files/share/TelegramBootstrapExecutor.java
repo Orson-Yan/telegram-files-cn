@@ -1,10 +1,13 @@
 package telegram.files.share;
 
+import cn.hutool.log.Log;
+import cn.hutool.log.LogFactory;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
+import telegram.files.FileTimestampService;
 import telegram.files.TdApiHelp;
 import telegram.files.TelegramVerticle;
 import telegram.files.TelegramVerticles;
@@ -20,6 +23,8 @@ import java.time.Clock;
 import java.util.Objects;
 
 public final class TelegramBootstrapExecutor {
+
+    private static final Log log = LogFactory.get();
 
     @FunctionalInterface
     public interface ProgressReporter {
@@ -196,7 +201,16 @@ public final class TelegramBootstrapExecutor {
                         FileRecord.DownloadStatus.completed,
                         clock.millis()
                 )
-                .map(path);
+                .compose(_ -> fileRepository.getByUniqueId(source.fileUniqueId()))
+                .compose(fileRecord -> fileRecord == null
+                        ? Future.succeededFuture(path)
+                        : FileTimestampService.applyAsync(vertx, fileRecord, path.toString())
+                                .map(path)
+                                .recover(error -> {
+                                    log.warn("Failed to apply Telegram message time for {}: {}",
+                                            source.fileUniqueId(), error.getMessage());
+                                    return Future.succeededFuture(path);
+                                }));
     }
 
     private Future<Path> currentPath(TdApi.File file) {

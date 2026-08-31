@@ -115,6 +115,7 @@ public abstract class Transfer {
                     if (MessyUtils.compareFilesMD5(FileUtil.file(fileRecord.localPath()), FileUtil.file(transferPath))) {
                         log.trace("File {} is the same as {}", fileRecord.id(), transferPath);
                         FileUtil.del(fileRecord.localPath());
+                        applyTelegramMessageTimestamp(fileRecord, transferPath);
                         transferStatusUpdated.accept(new TransferStatusUpdated(fileRecord, FileRecord.TransferStatus.completed, transferPath));
                         return;
                     } else {
@@ -127,12 +128,26 @@ public abstract class Transfer {
             FileUtil.move(Path.of(fileRecord.localPath()), Path.of(transferPath), isOverwrite);
             log.info("Transfer file {} to {}, duplication policy: {} overwrite: {}", fileRecord.id(), transferPath, duplicationPolicy, isOverwrite);
 
+            applyTelegramMessageTimestamp(fileRecord, transferPath);
             transferStatusUpdated.accept(new TransferStatusUpdated(fileRecord, FileRecord.TransferStatus.completed, transferPath));
         } catch (Exception e) {
             log.error(e, "Transfer file {} error", fileRecord.id());
             transferStatusUpdated.accept(new TransferStatusUpdated(fileRecord, FileRecord.TransferStatus.error, null));
         } finally {
             transferRecord = null;
+        }
+    }
+
+    private void applyTelegramMessageTimestamp(FileRecord fileRecord, String localPath) {
+        try {
+            FileTimestampService.Result result = FileTimestampService.applyBlocking(fileRecord, localPath);
+            if (result.changed()) {
+                log.debug("Applied Telegram message time after transfer: {}", result.path());
+            }
+        } catch (Exception error) {
+            // Timestamp metadata must never turn a successful file transfer into a failed transfer.
+            log.warn("Failed to apply Telegram message time after transfer for {}: {}",
+                    fileRecord.uniqueId(), error.getMessage());
         }
     }
 
