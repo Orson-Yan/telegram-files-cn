@@ -12,6 +12,10 @@ import { useWebsocket } from "@/hooks/use-websocket";
 import { useSettings } from "@/hooks/use-settings";
 import { type TDFile, type TelegramFile } from "@/lib/types";
 import {
+  type DownloadOverviewStatistics,
+  normalizeDownloadOverview,
+} from "@/lib/download-activity";
+import {
   type WebSocketMessage,
   WebSocketMessageType,
 } from "@/lib/websocket-types";
@@ -20,16 +24,6 @@ import Link from "next/link";
 const DOWNLOADING_FILES_URL =
   "/files?type=all&downloadStatus=downloading&limit=100";
 const STALLED_AFTER_MILLIS = 30_000;
-
-export interface DownloadOverviewStatistics {
-  downloading: number;
-  completed: number;
-  queued: number;
-  downloadedSize: number;
-  queuedSize: number;
-  activeSize: number;
-  downloadLimit: number;
-}
 
 interface DownloadingFilesResponse {
   files: TelegramFile[];
@@ -68,6 +62,7 @@ export function DownloadMonitor({
 }) {
   const { lastJsonMessage, downloadActivity } = useWebsocket();
   const { settings } = useSettings();
+  const overview = normalizeDownloadOverview(statistics);
   const { data, error, mutate } = useSWR<DownloadingFilesResponse>(
     DOWNLOADING_FILES_URL,
     { refreshInterval: 15_000, refreshWhenHidden: false },
@@ -198,12 +193,12 @@ export function DownloadMonitor({
       0,
       downloadActivity.totalSize - downloadActivity.downloadedSize,
     );
-    return (statistics.queuedSize + activeRemaining) / downloadActivity.speed;
-  }, [downloadActivity, statistics.queuedSize]);
+    return (overview.queuedSize + activeRemaining) / downloadActivity.speed;
+  }, [downloadActivity, overview.queuedSize]);
 
   const speedOptions = { bits: settings?.speedUnits === "bits" };
   const aggregateStalled =
-    statistics.downloading > 0 &&
+    overview.downloading > 0 &&
     downloadActivity.speed === 0 &&
     downloadActivity.lastProgressAt > 0 &&
     now - downloadActivity.lastProgressAt > STALLED_AFTER_MILLIS;
@@ -229,7 +224,7 @@ export function DownloadMonitor({
         <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
           <Metric
             label="Download slots"
-            value={`${statistics.downloading} / ${statistics.downloadLimit}`}
+            value={`${overview.downloading} / ${overview.downloadLimit}`}
           />
           <Metric
             label="Download speed"
@@ -238,7 +233,7 @@ export function DownloadMonitor({
           />
           <Metric
             label="Current traffic"
-            value={`${prettyBytes(downloadActivity.downloadedSize)} / ${prettyBytes(downloadActivity.totalSize || statistics.activeSize)}`}
+            value={`${prettyBytes(downloadActivity.downloadedSize)} / ${prettyBytes(downloadActivity.totalSize || overview.activeSize)}`}
           />
           <Metric
             label="Session traffic"
@@ -252,9 +247,9 @@ export function DownloadMonitor({
 
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <ListChecks className="size-4" />
-          <span>{statistics.queued} queued</span>
+          <span>{overview.queued} queued</span>
           <span>·</span>
-          <span>{prettyBytes(statistics.queuedSize)}</span>
+          <span>{prettyBytes(overview.queuedSize)}</span>
           {aggregateStalled && (
             <Badge variant="destructive" className="gap-1">
               <TriangleAlert className="size-3" />

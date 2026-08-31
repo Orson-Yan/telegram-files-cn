@@ -4,6 +4,26 @@ export interface DownloadListSnapshot {
   downloadedSize: number;
 }
 
+export interface DownloadOverviewStatistics {
+  downloading?: number;
+  completed?: number;
+  queued?: number;
+  downloadedSize?: number;
+  queuedSize?: number;
+  activeSize?: number;
+  downloadLimit?: number;
+}
+
+export interface NormalizedDownloadOverview {
+  downloading: number;
+  completed: number;
+  queued: number;
+  downloadedSize: number;
+  queuedSize: number;
+  activeSize: number;
+  downloadLimit: number;
+}
+
 export interface DownloadActivityState extends DownloadListSnapshot {
   speed: number;
   sessionDownloadedBytes: number;
@@ -23,8 +43,24 @@ export const EMPTY_DOWNLOAD_ACTIVITY: DownloadActivityState = {
   lastProgressAt: 0,
 };
 
-function nonNegative(value: number) {
-  return Number.isFinite(value) ? Math.max(0, value) : 0;
+function nonNegative(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, value)
+    : 0;
+}
+
+export function normalizeDownloadOverview(
+  statistics: DownloadOverviewStatistics,
+): NormalizedDownloadOverview {
+  return {
+    downloading: nonNegative(statistics.downloading),
+    completed: nonNegative(statistics.completed),
+    queued: nonNegative(statistics.queued),
+    downloadedSize: nonNegative(statistics.downloadedSize),
+    queuedSize: nonNegative(statistics.queuedSize),
+    activeSize: nonNegative(statistics.activeSize),
+    downloadLimit: nonNegative(statistics.downloadLimit) || 5,
+  };
 }
 
 export function updateDownloadActivity(

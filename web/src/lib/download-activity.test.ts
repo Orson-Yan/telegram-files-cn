@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   downloadedTrafficDelta,
   EMPTY_DOWNLOAD_ACTIVITY,
+  normalizeDownloadOverview,
   updateDownloadActivity,
 } from "@/lib/download-activity";
 
@@ -48,5 +49,23 @@ describe("download activity", () => {
     expect(downloadedTrafficDelta(undefined, 100)).toBe(0);
     expect(downloadedTrafficDelta(100, 150)).toBe(50);
     expect(downloadedTrafficDelta(150, 20)).toBe(0);
+  });
+
+  it("normalizes legacy file-count responses for rolling upgrades", () => {
+    expect(
+      normalizeDownloadOverview({
+        downloading: 1,
+        completed: 10,
+        downloadedSize: 1_024,
+      }),
+    ).toEqual({
+      downloading: 1,
+      completed: 10,
+      queued: 0,
+      downloadedSize: 1_024,
+      queuedSize: 0,
+      activeSize: 0,
+      downloadLimit: 5,
+    });
   });
 });

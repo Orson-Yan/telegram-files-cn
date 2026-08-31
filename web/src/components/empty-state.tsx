@@ -27,12 +27,13 @@ import useIsMobile from "@/hooks/use-is-mobile";
 import { useAdminSession } from "@/hooks/use-admin-session";
 import { PlatformBindingShortcut } from "@/components/platform-binding-shortcut";
 import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
-import {
-  DownloadMonitor,
-  type DownloadOverviewStatistics,
-} from "@/components/download-monitor";
+import { DownloadMonitor } from "@/components/download-monitor";
 import { useWebsocket } from "@/hooks/use-websocket";
 import { useSettings } from "@/hooks/use-settings";
+import {
+  type DownloadOverviewStatistics,
+  normalizeDownloadOverview,
+} from "@/lib/download-activity";
 
 interface EmptyStateProps {
   isLoadingAccount?: boolean;
@@ -184,6 +185,8 @@ function AllFiles() {
     );
   }
 
+  const statistics = normalizeDownloadOverview(data);
+
   return (
     <>
       <Card className="mx-auto mb-4 max-w-5xl">
@@ -194,7 +197,9 @@ function AllFiles() {
               <span className="hidden text-sm font-medium md:inline-block">
                 Downloaded
               </span>
-              <span className="text-sm font-medium">{data.completed}</span>
+              <span className="text-sm font-medium">
+                {statistics.completed}
+              </span>
             </div>
             <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
               <Download className="text-blue-500" />
@@ -202,7 +207,7 @@ function AllFiles() {
                 Downloading
               </span>
               <span className="text-sm font-medium">
-                {data.downloading} / {data.downloadLimit}
+                {statistics.downloading} / {statistics.downloadLimit}
               </span>
             </div>
             <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
@@ -223,7 +228,7 @@ function AllFiles() {
                 Size
               </span>
               <span className="text-sm font-medium">
-                {prettyBytes(data.downloadedSize)}
+                {prettyBytes(statistics.downloadedSize)}
               </span>
             </div>
           </div>
@@ -247,7 +252,7 @@ function AllFiles() {
           </div>
         </CardContent>
       </Card>
-      <DownloadMonitor statistics={data} />
+      <DownloadMonitor statistics={statistics} />
     </>
   );
 }
