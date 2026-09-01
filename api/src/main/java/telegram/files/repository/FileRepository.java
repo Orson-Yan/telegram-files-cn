@@ -37,6 +37,8 @@ public interface FileRepository {
 
     Future<List<FileRecord>> getByDownloadStatus(long telegramId, FileRecord.DownloadStatus downloadStatus);
 
+    Future<Boolean> claimDownloadStart(int fileId, String uniqueId, long startDate);
+
     Future<Boolean> claimStaleDownloadRetry(String uniqueId,
                                             long expectedStartDate,
                                             long retryStartDate);

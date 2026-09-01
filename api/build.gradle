@@ -80,7 +80,7 @@ test {
     jvmArgs "-Djava.library.path=${System.getenv('TDLIB_PATH')}",
             "-XX:+EnableDynamicAgentLoading",
             "-javaagent:${configurations.testRuntimeClasspath.find { it.name.contains('mockito-core') }}"
-    environment "APP_ROOT", "${testClassesDirs.asPath}"
+    environment "APP_ROOT", layout.buildDirectory.dir("test-app-root").get().asFile.absolutePath
     useJUnitPlatform()
     finalizedBy jacocoTestReport
 }

@@ -18,14 +18,15 @@ import telegram.files.repository.SettingKey;
 import telegram.files.repository.SettingTimeLimitedDownload;
 
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
-import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public class AutoDownloadVerticle extends AbstractVerticle {
@@ -40,12 +41,19 @@ public class AutoDownloadVerticle extends AbstractVerticle {
 
     static final int MAX_WAITING_LENGTH = 100;
 
+    static final int MAX_REALTIME_WAITING_LENGTH = 1000;
+
     static final int DOWNLOAD_INTERVAL = 1000;
 
     private static final List<String> DEFAULT_FILE_TYPE_ORDER = List.of("photo", "video", "audio", "file");
 
     // telegramId -> messages
     private final Map<Long, LinkedList<MessageWrapper>> waitingDownloadMessages = new ConcurrentHashMap<>();
+
+    // telegramId -> unique ids currently buffered or being dispatched
+    private final Map<Long, Set<String>> queuedDownloadUniqueIds = new ConcurrentHashMap<>();
+
+    private final Map<Long, Set<String>> inFlightDownloadUniqueIds = new ConcurrentHashMap<>();
 
     // telegramId -> waiting scan threads
     private final Map<Long, LinkedList<WaitingScanThread>> waitingScanThreads = new ConcurrentHashMap<>();
@@ -59,8 +67,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
     public AutoDownloadVerticle() {
         this.autoRecords = AutomationsHolder.INSTANCE.autoRecords();
         AutomationsHolder.INSTANCE.registerOnRemoveListener(removedItems -> removedItems.forEach(item ->
-                waitingDownloadMessages.getOrDefault(item.telegramId, new LinkedList<>())
-                        .removeIf(m -> m.message.chatId == item.chatId)));
+                removeWaitingMessages(item.telegramId, item.chatId)));
     }
 
     @Override
@@ -357,8 +364,9 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         List<MessageWrapper> waitingMessages = this.waitingDownloadMessages.get(telegramId);
         Integer downloading = Future.await(DataVerticle.fileRepository.countByStatus(
                 telegramId, FileRecord.DownloadStatus.downloading));
+        int inFlight = inFlightDownloadUniqueIds.getOrDefault(telegramId, Set.of()).size();
         return getScanCapacity(
-                downloading == null ? 0 : downloading,
+                (downloading == null ? 0 : downloading) + inFlight,
                 waitingMessages == null ? 0 : waitingMessages.size()
         );
     }
@@ -372,7 +380,12 @@ public class AutoDownloadVerticle extends AbstractVerticle {
 
     private int getSurplusSize(long telegramId) {
         Integer downloading = Future.await(DataVerticle.fileRepository.countByStatus(telegramId, FileRecord.DownloadStatus.downloading));
-        return downloading == null ? limit : Math.max(0, limit - downloading);
+        int inFlight = inFlightDownloadUniqueIds.getOrDefault(telegramId, Set.of()).size();
+        return getSurplusSize(limit, downloading == null ? 0 : downloading, inFlight);
+    }
+
+    static int getSurplusSize(int limit, int downloading, int inFlight) {
+        return Math.max(0, limit - Math.max(0, downloading) - Math.max(0, inFlight));
     }
 
     private boolean isDownloadCommentEnabled(SettingAutoRecords.Automation auto) {
@@ -393,22 +406,46 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         if (CollUtil.isEmpty(messages)) {
             return false;
         }
-        LinkedList<MessageWrapper> waitingMessages = this.waitingDownloadMessages.get(telegramId);
-        if (waitingMessages == null) {
-            waitingMessages = new LinkedList<>();
+        LinkedList<MessageWrapper> waitingMessages = this.waitingDownloadMessages
+                .computeIfAbsent(telegramId, _ -> new LinkedList<>());
+        Set<String> queuedUniqueIds = queuedDownloadUniqueIds
+                .computeIfAbsent(telegramId, _ -> ConcurrentHashMap.newKeySet());
+        Set<String> inFlightUniqueIds = inFlightDownloadUniqueIds
+                .computeIfAbsent(telegramId, _ -> ConcurrentHashMap.newKeySet());
+        int added = 0;
+        boolean capacityReached = false;
+        int maxWaitingLength = force ? MAX_REALTIME_WAITING_LENGTH : MAX_WAITING_LENGTH;
+        synchronized (waitingMessages) {
+            for (TdApi.Message message : TdApiHelp.filterUniqueMessages(messages)) {
+                String uniqueId = TdApiHelp.getFileUniqueId(message);
+                if (!reserveQueueUniqueId(uniqueId, queuedUniqueIds, inFlightUniqueIds)) {
+                    continue;
+                }
+                if (waitingMessages.size() >= maxWaitingLength) {
+                    queuedUniqueIds.remove(uniqueId);
+                    capacityReached = true;
+                    break;
+                }
+                waitingMessages.add(new MessageWrapper(message, isHistorical));
+                added++;
+            }
         }
-        if (!force && waitingMessages.size() >= MAX_WAITING_LENGTH) {
-            return false;
-        } else {
-            log.debug("Add waiting download messages: %d".formatted(messages.size()));
-            waitingMessages.addAll(TdApiHelp.filterUniqueMessages(messages)
-                    .stream()
-                    .map(message -> new MessageWrapper(message, isHistorical))
-                    .toList()
-            );
+        if (added > 0) {
+            log.debug("Add waiting download messages: %d".formatted(added));
         }
-        this.waitingDownloadMessages.put(telegramId, waitingMessages);
-        return true;
+        if (capacityReached && force) {
+            log.warn("Realtime download queue is full for TelegramId: {}", telegramId);
+        }
+        // A page containing only duplicates is fully handled and history scanning may advance.
+        return !capacityReached;
+    }
+
+    static boolean reserveQueueUniqueId(String uniqueId,
+                                        Set<String> queuedUniqueIds,
+                                        Set<String> inFlightUniqueIds) {
+        return StrUtil.isNotBlank(uniqueId)
+               && !inFlightUniqueIds.contains(uniqueId)
+               && queuedUniqueIds.add(uniqueId);
     }
 
     private void download(long telegramId) {
@@ -429,12 +466,26 @@ public class AutoDownloadVerticle extends AbstractVerticle {
             return;
         }
 
-        List<MessageWrapper> downloadMessages = IntStream.range(0, Math.min(surplusSize, messages.size()))
-                .mapToObj(_ -> messages.poll())
-                .toList();
+        Set<String> queuedUniqueIds = queuedDownloadUniqueIds
+                .computeIfAbsent(telegramId, _ -> ConcurrentHashMap.newKeySet());
+        Set<String> inFlightUniqueIds = inFlightDownloadUniqueIds
+                .computeIfAbsent(telegramId, _ -> ConcurrentHashMap.newKeySet());
+        List<MessageWrapper> downloadMessages = new ArrayList<>();
+        synchronized (messages) {
+            while (downloadMessages.size() < surplusSize && !messages.isEmpty()) {
+                MessageWrapper wrapper = messages.poll();
+                String uniqueId = TdApiHelp.getFileUniqueId(wrapper.message);
+                queuedUniqueIds.remove(uniqueId);
+                if (StrUtil.isBlank(uniqueId) || !inFlightUniqueIds.add(uniqueId)) {
+                    continue;
+                }
+                downloadMessages.add(wrapper);
+            }
+        }
         downloadMessages.forEach(messageWrapper -> {
             TdApi.Message message = messageWrapper.message;
             Integer fileId = TdApiHelp.getFileId(message);
+            String uniqueId = TdApiHelp.getFileUniqueId(message);
             log.debug("Start download file: %s".formatted(fileId));
             telegramVerticle.startDownload(message.chatId, message.id, fileId)
                     .onSuccess(fileRecord -> {
@@ -448,9 +499,37 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                         }
                     })
                     .onFailure(e -> log.error("Download file failed! ChatId: %d MessageId:%d FileId:%d"
-                            .formatted(message.chatId, message.id, fileId), e));
+                            .formatted(message.chatId, message.id, fileId), e))
+                    .onComplete(_ -> releaseInFlight(telegramId, uniqueId));
         });
         log.debug("Remaining download messages: %d".formatted(messages.size()));
+    }
+
+    private void releaseInFlight(long telegramId, String uniqueId) {
+        Set<String> inFlightUniqueIds = inFlightDownloadUniqueIds.get(telegramId);
+        if (inFlightUniqueIds == null) {
+            return;
+        }
+        inFlightUniqueIds.remove(uniqueId);
+    }
+
+    private void removeWaitingMessages(long telegramId, long chatId) {
+        LinkedList<MessageWrapper> waitingMessages = waitingDownloadMessages.get(telegramId);
+        if (waitingMessages == null) {
+            return;
+        }
+        Set<String> queuedUniqueIds = queuedDownloadUniqueIds.get(telegramId);
+        synchronized (waitingMessages) {
+            waitingMessages.removeIf(wrapper -> {
+                if (wrapper.message.chatId != chatId) {
+                    return false;
+                }
+                if (queuedUniqueIds != null) {
+                    queuedUniqueIds.remove(TdApiHelp.getFileUniqueId(wrapper.message));
+                }
+                return true;
+            });
+        }
     }
 
     private void onNewMessage(JsonObject jsonObject) {

@@ -14,7 +14,7 @@ import { useDebounce, useDebouncedCallback } from "use-debounce";
 
 const DEFAULT_FILTERS: FileFilter = {
   search: "",
-  type: "media",
+  type: "all",
   downloadStatus: undefined,
   transferStatus: undefined,
   offline: false,
@@ -78,7 +78,7 @@ export function useFiles(
       ...(filters.search && {
         search: window.encodeURIComponent(filters.search),
       }),
-      ...(filters.type && { type: filters.type }),
+      ...(filters.type !== "all" && { type: filters.type }),
       ...(filters.downloadStatus && { downloadStatus: filters.downloadStatus }),
       ...(filters.transferStatus && { transferStatus: filters.transferStatus }),
       ...(filters.offline && { offline: "true" }),
