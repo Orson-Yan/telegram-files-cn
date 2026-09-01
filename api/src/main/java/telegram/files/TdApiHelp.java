@@ -95,6 +95,9 @@ public class TdApiHelp {
     }
 
     public static TdApi.SearchMessagesFilter getSearchMessagesFilter(String fileType) {
+        if (fileType == null || fileType.isBlank() || "all".equals(fileType)) {
+            return null;
+        }
         return switch (fileType) {
             case "media" -> new TdApi.SearchMessagesFilterPhotoAndVideo();
             case "photo" -> new TdApi.SearchMessagesFilterPhoto();

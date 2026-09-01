@@ -9,6 +9,17 @@ import java.util.Map;
 public class TdApiHelpTest {
 
     @Test
+    void allFilesUsesNoTelegramTypeFilter() {
+        Assertions.assertNull(TdApiHelp.getSearchMessagesFilter(null));
+        Assertions.assertNull(TdApiHelp.getSearchMessagesFilter(""));
+        Assertions.assertNull(TdApiHelp.getSearchMessagesFilter("all"));
+        Assertions.assertInstanceOf(
+                TdApi.SearchMessagesFilterPhotoAndVideo.class,
+                TdApiHelp.getSearchMessagesFilter("media")
+        );
+    }
+
+    @Test
     void getFunctionTest() {
         TdApi.Function<?> function = TdApiHelp.getFunction("GetMe", null);
         Assertions.assertNotNull(function, "function is null");

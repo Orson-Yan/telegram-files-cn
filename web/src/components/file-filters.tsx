@@ -661,6 +661,7 @@ export default function FileFilters({
   const filterCount = Object.entries(filters).filter(([key, value]) => {
     if (["offline", "sort", "order", "dateType", "sizeUnit"].includes(key))
       return false;
+    if (key === "type") return value !== "all";
     if (typeof value === "string") return value !== "";
     if (typeof value === "boolean") return value;
     if (Array.isArray(value)) return value.length > 0;
