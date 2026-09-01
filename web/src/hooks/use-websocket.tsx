@@ -180,9 +180,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
             }
             break;
           }
-          case WebSocketMessageType.FILE_STATUS:
-            void mutate("/files/count");
-            break;
           case WebSocketMessageType.CONNECTION:
             setTelegramConnectionState(
               (payload.data as { state?: string })?.state ?? null,
