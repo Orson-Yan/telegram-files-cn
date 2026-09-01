@@ -527,6 +527,29 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
     }
 
     @Override
+    public Future<Boolean> claimDownloadStart(int fileId,
+                                              String uniqueId,
+                                              long startDate) {
+        return SqlTemplate
+                .forUpdate(sqlClient, """
+                        UPDATE file_record
+                        SET id = #{fileId},
+                            download_status = 'downloading',
+                            start_date = #{startDate},
+                            completion_date = NULL
+                        WHERE unique_id = #{uniqueId}
+                          AND download_status = 'idle'
+                        """)
+                .execute(Map.of(
+                        "fileId", fileId,
+                        "uniqueId", uniqueId,
+                        "startDate", startDate
+                ))
+                .map(result -> result.rowCount() == 1)
+                .onFailure(err -> log.error("Failed to claim download start {}: {}", uniqueId, err.getMessage()));
+    }
+
+    @Override
     public Future<Boolean> claimStaleDownloadRetry(String uniqueId,
                                                    long expectedStartDate,
                                                    long retryStartDate) {
@@ -628,6 +651,10 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                         return Future.succeededFuture(null);
                     }
 
+                    String nextDownloadStatus = downloadStatusUpdated
+                            ? downloadStatus == null ? null : downloadStatus.name()
+                            : record.downloadStatus();
+
                     long startDate = record.startDate();
                     if (downloadStatusUpdated && downloadStatus == FileRecord.DownloadStatus.downloading) {
                         startDate = System.currentTimeMillis();
@@ -635,36 +662,55 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                         startDate = 0L;
                     }
 
-                    return SqlTemplate
-                            .forUpdate(sqlClient, """
+                    // Completed is the authoritative terminal event. Other status changes use the
+                    // value read above as an optimistic lock, so an older callback cannot overwrite
+                    // a completion committed while this asynchronous operation was waiting.
+                    String expectedStatusGuard = downloadStatus == FileRecord.DownloadStatus.completed
+                            ? ""
+                            : """
+                              AND ((download_status = #{expectedDownloadStatus})
+                                   OR (download_status IS NULL AND #{expectedDownloadStatus} IS NULL))
+                              """;
+                    String updateSql = """
                                     UPDATE file_record SET id = #{fileId},
                                                            local_path = #{localPath},
                                                            download_status = #{downloadStatus},
                                                            start_date = #{startDate},
                                                            completion_date = #{completionDate}
                                     WHERE unique_id = #{uniqueId}
-                                    """)
-                            .execute(MapUtil.ofEntries(MapUtil.entry("fileId", fileId),
-                                    MapUtil.entry("uniqueId", uniqueId),
-                                    MapUtil.entry("localPath", pathUpdated ? localPath : record.localPath()),
-                                    MapUtil.entry("downloadStatus", downloadStatusUpdated ? downloadStatus.name() : record.downloadStatus()),
-                                    MapUtil.entry("startDate", startDate),
-                                    MapUtil.entry("completionDate", completionDate)
-                            ))
+                                    %s
+                                    """.formatted(expectedStatusGuard);
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("fileId", fileId);
+                    params.put("uniqueId", uniqueId);
+                    params.put("localPath", pathUpdated ? localPath : record.localPath());
+                    params.put("downloadStatus", nextDownloadStatus);
+                    params.put("expectedDownloadStatus", record.downloadStatus());
+                    params.put("startDate", startDate);
+                    params.put("completionDate", completionDate);
+
+                    return SqlTemplate
+                            .forUpdate(sqlClient, updateSql)
+                            .execute(params)
                             .onFailure(err ->
                                     log.error("Failed to update file record: %s".formatted(err.getMessage()))
                             )
                             .map(r -> {
+                                if (r.rowCount() == 0) {
+                                    log.debug("Skipped stale file status update: {}, expected status: {}, requested status: {}",
+                                            uniqueId, record.downloadStatus(), nextDownloadStatus);
+                                    return null;
+                                }
                                 JsonObject result = JsonObject.of();
                                 if (pathUpdated) {
                                     result.put("localPath", localPath);
                                     result.put("completionDate", completionDate);
                                 }
                                 if (downloadStatusUpdated) {
-                                    result.put("downloadStatus", downloadStatus.name());
+                                    result.put("downloadStatus", nextDownloadStatus);
                                 }
                                 log.debug("Successfully updated file record: %s, path: %s, status: %s, before: %s, %s"
-                                        .formatted(uniqueId, localPath, downloadStatus.name(), record.localPath(), record.downloadStatus()));
+                                        .formatted(uniqueId, localPath, nextDownloadStatus, record.localPath(), record.downloadStatus()));
                                 return result;
                             });
                 });

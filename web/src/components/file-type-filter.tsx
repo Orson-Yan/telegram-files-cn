@@ -9,8 +9,6 @@ import type { FileType } from "@/lib/types";
 import useSWR from "swr";
 import { Ellipsis } from "lucide-react";
 import { Label } from "@/components/ui/label";
-import * as React from "react";
-import { useEffect } from "react";
 
 interface FileTypeFilterProps {
   offline: boolean;
@@ -59,7 +57,6 @@ export default function FileTypeFilter({
   seedOnly = false,
   onChange,
 }: FileTypeFilterProps) {
-  const [localType, setLocalType] = React.useState<FileType | "all">(type);
   const countParams = new URLSearchParams({
     offline: String(offline),
     ...(offline && seedOnly && { seedOnly: "true" }),
@@ -69,26 +66,18 @@ export default function FileTypeFilter({
   );
 
   const handleTypeChange = (value: FileType | "all") => {
-    setLocalType(value);
     onChange(value);
   };
-
-  useEffect(() => {
-    if (!offline && localType === "all") {
-      setLocalType("media");
-      onChange("media");
-    }
-  }, [localType, offline, onChange]);
 
   return (
     <div className="space-y-2">
       <Label>Type</Label>
-      <Select value={localType} onValueChange={handleTypeChange}>
+      <Select value={type} onValueChange={handleTypeChange}>
         <SelectTrigger>
           <SelectValue placeholder="File type" />
         </SelectTrigger>
         <SelectContent>
-          {offline && <SelectItem value="all">All Files</SelectItem>}
+          <SelectItem value="all">All Files</SelectItem>
           <FileTypeSelectItem
             value="media"
             counts={counts}

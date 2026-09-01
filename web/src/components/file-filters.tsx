@@ -972,7 +972,7 @@ export default function FileFilters({
               offline={localFilters.offline}
               telegramId={telegramId}
               chatId={chatId}
-              type={filters.type}
+              type={localFilters.type}
               seedOnly={localFilters.seedOnly}
               onChange={handleTypeChange}
             />

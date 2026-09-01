@@ -21,6 +21,8 @@ public class DataVerticleTest {
 
     private static final Log log = LogFactory.get();
 
+    private String deploymentId;
+
     @BeforeAll
     static void setUp() {
         printDBInfo();
@@ -28,7 +30,11 @@ public class DataVerticleTest {
 
     @AfterEach
     void tearDown(Vertx vertx, VertxTestContext testContext) {
-        clear(vertx).onComplete(testContext.succeedingThenComplete());
+        Future<Void> undeploy = deploymentId == null
+                ? Future.succeededFuture()
+                : vertx.undeploy(deploymentId);
+        undeploy.compose(_ -> clear(vertx))
+                .onComplete(testContext.succeedingThenComplete());
     }
 
     public static void printDBInfo() {
@@ -46,10 +52,10 @@ public class DataVerticleTest {
 
     public static Future<Void> clear(Vertx vertx) {
         if (Config.isSqlite()) {
-            String appRoot = Config.APP_ROOT;
-            if (FileUtil.file(appRoot).exists()) {
-                FileUtil.clean(appRoot);
-            }
+            String dataPath = DataVerticle.getDataPath();
+            FileUtil.del(dataPath);
+            FileUtil.del(dataPath + "-wal");
+            FileUtil.del(dataPath + "-shm");
             return Future.succeededFuture();
         } else if (Config.isPostgres()) {
             SqlClient sqlClient = DataVerticle.createSqlClient(vertx, DataVerticle.createDefaultOptions());
@@ -93,6 +99,7 @@ public class DataVerticleTest {
     @DisplayName("Deploy data verticle")
     void deployVerticle(Vertx vertx, VertxTestContext testContext) {
         vertx.deployVerticle(new DataVerticle())
+                .onSuccess(id -> deploymentId = id)
                 .onComplete(testContext.succeedingThenComplete());
     }
 
@@ -257,6 +264,32 @@ public class DataVerticleTest {
                     Assertions.assertEquals(newFileId, r.id());
                     Assertions.assertEquals(FileRecord.DownloadStatus.downloading.name(), r.downloadStatus());
                     Assertions.assertEquals(updateLocalPath, r.localPath());
+                    testContext.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("Download start claim is atomic")
+    void claimDownloadStartIsAtomic(Vertx vertx, VertxTestContext testContext) {
+        FileRecord fileRecord = new FileRecord(
+                1, "claim_unique_id", 1, 1, 1, 1, 1, false, 1, 0, "type", "mime_type", "file_name", "thumbnail", "thumbnailUniqueId", "caption", "extra", null, FileRecord.DownloadStatus.idle.name(), FileRecord.TransferStatus.idle.name(), 0, null, null, 0, 0, 0
+        );
+        long startDate = 123L;
+        int newFileId = 2;
+        DataVerticle.fileRepository.create(fileRecord)
+                .compose(_ -> DataVerticle.fileRepository.claimDownloadStart(newFileId, fileRecord.uniqueId(), startDate))
+                .compose(firstClaim -> {
+                    testContext.verify(() -> Assertions.assertTrue(firstClaim));
+                    return DataVerticle.fileRepository.claimDownloadStart(3, fileRecord.uniqueId(), startDate + 1);
+                })
+                .compose(secondClaim -> {
+                    testContext.verify(() -> Assertions.assertFalse(secondClaim));
+                    return DataVerticle.fileRepository.getByUniqueId(fileRecord.uniqueId());
+                })
+                .onComplete(testContext.succeeding(record -> testContext.verify(() -> {
+                    Assertions.assertEquals(newFileId, record.id());
+                    Assertions.assertEquals(FileRecord.DownloadStatus.downloading.name(), record.downloadStatus());
+                    Assertions.assertEquals(startDate, record.startDate());
                     testContext.completeNow();
                 })));
     }
