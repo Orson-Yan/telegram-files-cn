@@ -63,7 +63,7 @@ export function DownloadMonitor({
   const { lastJsonMessage, downloadActivity } = useWebsocket();
   const { settings } = useSettings();
   const overview = normalizeDownloadOverview(statistics);
-  const { data, error, mutate } = useSWR<DownloadingFilesResponse>(
+  const { data, error } = useSWR<DownloadingFilesResponse>(
     DOWNLOADING_FILES_URL,
     { refreshInterval: 15_000, refreshWhenHidden: false },
   );
@@ -125,7 +125,6 @@ export function DownloadMonitor({
         samples.current.delete(status.uniqueId);
         setDownloads(next);
       }
-      void mutate();
       return;
     }
 
@@ -141,7 +140,6 @@ export function DownloadMonitor({
       downloadsRef.current = next;
       samples.current.delete(uniqueId);
       setDownloads(next);
-      void mutate();
       return;
     }
 
@@ -149,7 +147,6 @@ export function DownloadMonitor({
       (download) => download.uniqueId === uniqueId,
     );
     if (!existing) {
-      if (file.local.isDownloadingActive) void mutate();
       return;
     }
 
@@ -185,7 +182,7 @@ export function DownloadMonitor({
     );
     downloadsRef.current = next;
     setDownloads(next);
-  }, [lastJsonMessage, mutate]);
+  }, [lastJsonMessage]);
 
   const estimatedSeconds = useMemo(() => {
     if (downloadActivity.speed <= 0) return 0;

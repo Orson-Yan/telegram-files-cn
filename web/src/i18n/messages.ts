@@ -517,6 +517,7 @@ export const zhCNMessages: Readonly<Record<string, string>> = {
   "Download order:": "下载顺序：",
   "Download slots": "下载槽位",
   "Download speed": "下载速度",
+  "Download tasks": "下载任务",
   "Downloaded": "已下载",
   "Downloaded files will be transferred to the specified location.": "已下载文件将转存到指定位置。",
   "Edit": "编辑",
