@@ -69,6 +69,43 @@ class CloudArchiveServiceTest {
                 })));
     }
 
+    @Test
+    void allowsCopyBetweenDifferentTopicsInTheSameForum(VertxTestContext context) {
+        ScriptedTelegramGateway gateway = new ScriptedTelegramGateway(request -> switch (request) {
+            case TdApi.GetMessages value -> messages(value.messageIds);
+            case TdApi.GetMessageProperties _ -> copyableProperties();
+            case TdApi.ForwardMessages _ -> messages(new long[]{9001});
+            default -> new TdApi.Ok();
+        });
+        SettingAutoRecords.ArchiveRule rule = rule(100, SettingAutoRecords.ArchiveMode.COPY);
+        rule.sourceTopicId = 11;
+        rule.targetTopicId = 12;
+
+        CloudArchiveService.archive(telegram(gateway), 100, List.of(11L), rule)
+                .onComplete(context.succeeding(_ -> context.verify(() -> {
+                    TdApi.ForwardMessages forwarded = gateway.requests().stream()
+                            .filter(TdApi.ForwardMessages.class::isInstance)
+                            .map(TdApi.ForwardMessages.class::cast)
+                            .findFirst()
+                            .orElseThrow();
+                    TdApi.MessageTopicForum target = assertInstanceOf(
+                            TdApi.MessageTopicForum.class, forwarded.topicId);
+                    assertEquals(12, target.forumTopicId);
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void extractsTelegramFloodWaitWithSafetyMargin() {
+        TdApi.Error error = new TdApi.Error();
+        error.code = 429;
+        error.message = "FLOOD_WAIT_45";
+        TelegramRunException failure = new TelegramRunException(error);
+
+        assertTrue(CloudArchiveService.isRetryable(failure));
+        assertEquals(47_000L, CloudArchiveService.retryAfterMillis(failure));
+    }
+
     private static TelegramVerticle telegram(ScriptedTelegramGateway gateway) {
         TelegramVerticle telegram = new TelegramVerticle("/tmp/archive-fixture", () -> gateway);
         telegram.telegramRecord = new TelegramRecord(42, "test", "/tmp/archive-fixture", null);

@@ -85,6 +85,7 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
         String type = filter.get("type");
         String downloadStatus = filter.get("downloadStatus");
         String transferStatus = filter.get("transferStatus");
+        long telegramId = Convert.toLong(filter.get("telegramId"), -1L);
         List<String> tags = StrUtil.split(filter.get("tags"), ",");
         long messageThreadId = Convert.toLong(filter.get("messageThreadId"), 0L);
         String dateType = filter.get("dateType");
@@ -103,6 +104,10 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
         if (chatId != 0) {
             whereClause += " AND chat_id = #{chatId}";
             params.put("chatId", chatId);
+        }
+        if (telegramId != -1L) {
+            whereClause += " AND telegram_id = #{telegramId}";
+            params.put("telegramId", telegramId);
         }
         if (StrUtil.isNotBlank(search)) {
             whereClause += " AND (file_name LIKE #{search} OR caption LIKE #{search})";
@@ -222,6 +227,41 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
             long nextFromMessageId = CollUtil.isEmpty(fileRecords) ? 0 : fileRecords.getLast().messageId();
             return Tuple.tuple(fileRecords, nextFromMessageId, r.resultAt(1));
         });
+    }
+
+    @Override
+    public Future<List<JsonObject>> listLocalSources(long telegramId, boolean eligibleOnly) {
+        String eligibleExpression = "SUM(CASE WHEN transfer_status IS NULL OR transfer_status = 'idle' THEN 1 ELSE 0 END)";
+        String having = eligibleOnly ? "HAVING " + eligibleExpression + " > 0" : "";
+        return SqlTemplate
+                .forQuery(sqlClient, """
+                        SELECT telegram_id,
+                               chat_id,
+                               COUNT(*) AS downloaded_count,
+                               %s AS eligible_count,
+                               SUM(CASE WHEN transfer_status = 'completed' THEN 1 ELSE 0 END) AS organized_count,
+                               COALESCE(SUM(size), 0) AS downloaded_size,
+                               MAX(date) AS latest_message_date
+                        FROM file_record
+                        WHERE telegram_id = #{telegramId}
+                          AND type != 'thumbnail'
+                          AND download_status = 'completed'
+                          AND local_path IS NOT NULL
+                          AND TRIM(local_path) != ''
+                        GROUP BY telegram_id, chat_id
+                        %s
+                        ORDER BY latest_message_date DESC
+                        """.formatted(eligibleExpression, having))
+                .mapTo(row -> new JsonObject()
+                        .put("telegramId", Long.toString(((Number) row.getValue("telegram_id")).longValue()))
+                        .put("chatId", Long.toString(((Number) row.getValue("chat_id")).longValue()))
+                        .put("downloadedCount", ((Number) row.getValue("downloaded_count")).longValue())
+                        .put("eligibleCount", ((Number) row.getValue("eligible_count")).longValue())
+                        .put("organizedCount", ((Number) row.getValue("organized_count")).longValue())
+                        .put("downloadedSize", ((Number) row.getValue("downloaded_size")).longValue())
+                        .put("latestMessageDate", ((Number) row.getValue("latest_message_date")).longValue()))
+                .execute(Map.of("telegramId", telegramId))
+                .map(rows -> rows.stream().toList());
     }
 
     @Override

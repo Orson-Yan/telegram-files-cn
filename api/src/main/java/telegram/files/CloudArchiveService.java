@@ -12,9 +12,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Executes Telegram server-side copies/forwards without downloading media locally. */
 public final class CloudArchiveService {
+
+    private static final Pattern TELEGRAM_WAIT = Pattern.compile(
+            "(?:FLOOD|FLOOD_PREMIUM|SLOWMODE)_WAIT_?(\\d+)", Pattern.CASE_INSENSITIVE);
 
     private CloudArchiveService() {
     }
@@ -28,8 +33,8 @@ public final class CloudArchiveService {
         if (rule.targetChatId == 0) {
             return Future.failedFuture(new Rejected("TARGET_REQUIRED", "A destination chat is required"));
         }
-        if (sourceChatId == rule.targetChatId) {
-            return Future.failedFuture(new Rejected("SAME_CHAT", "Source and destination chats must be different"));
+        if (sameEndpoint(sourceChatId, rule)) {
+            return Future.failedFuture(new Rejected("SAME_DESTINATION", "Source and destination must be different"));
         }
 
         long[] ids = sourceMessageIds.stream()
@@ -63,7 +68,7 @@ public final class CloudArchiveService {
 
                     TdApi.ForwardMessages request = new TdApi.ForwardMessages(
                             rule.targetChatId,
-                            null,
+                            rule.targetTopicId == 0 ? null : new TdApi.MessageTopicForum((int) rule.targetTopicId),
                             sourceChatId,
                             ids,
                             options,
@@ -138,11 +143,11 @@ public final class CloudArchiveService {
                     .put("message", "Choose both a source and destination chat")
                     .put("warnings", warnings));
         }
-        if (sourceChatId == rule.targetChatId) {
+        if (sameEndpoint(sourceChatId, rule)) {
             return Future.succeededFuture(new JsonObject()
                     .put("valid", false)
-                    .put("code", "SAME_CHAT")
-                    .put("message", "Source and destination chats must be different")
+                    .put("code", "SAME_DESTINATION")
+                    .put("message", "Source and destination must be different")
                     .put("warnings", warnings));
         }
 
@@ -166,27 +171,59 @@ public final class CloudArchiveService {
             warnings.add("The destination protects archived messages from later forwarding or saving");
         }
         warnings.add("Use Send real test to confirm that this account can write to the destination chat");
-        if (source.lastMessage == null) {
-            warnings.add("The source chat has no recent message to test");
-            return Future.succeededFuture(new JsonObject()
-                    .put("valid", true)
-                    .put("warnings", warnings));
-        }
-
-        return telegram.client.execute(new TdApi.GetMessageProperties(sourceChatId, source.lastMessage.id))
-                .map(properties -> {
-                    boolean allowed = rule.mode == SettingAutoRecords.ArchiveMode.FORWARD
-                            ? properties.canBeForwarded
-                            : properties.canBeCopied;
-                    return new JsonObject()
-                            .put("valid", allowed)
-                            .put("code", allowed ? "OK" : rule.mode == SettingAutoRecords.ArchiveMode.FORWARD
-                                    ? "FORWARD_RESTRICTED" : "COPY_RESTRICTED")
-                            .put("message", allowed
-                                    ? "The latest source message can be archived"
-                                    : "The latest source message can't be archived in the selected mode")
-                            .put("warnings", warnings);
+        return latestSourceMessage(telegram, sourceChatId, source, rule.sourceTopicId)
+                .compose(message -> {
+                    if (message == null) {
+                        warnings.add("The selected source has no recent message to test");
+                        return Future.succeededFuture(new JsonObject()
+                                .put("valid", true)
+                                .put("warnings", warnings));
+                    }
+                    return telegram.client.execute(new TdApi.GetMessageProperties(sourceChatId, message.id))
+                            .map(properties -> {
+                                boolean allowed = rule.mode == SettingAutoRecords.ArchiveMode.FORWARD
+                                        ? properties.canBeForwarded
+                                        : properties.canBeCopied;
+                                return new JsonObject()
+                                        .put("valid", allowed)
+                                        .put("code", allowed ? "OK"
+                                                : rule.mode == SettingAutoRecords.ArchiveMode.FORWARD
+                                                  ? "FORWARD_RESTRICTED" : "COPY_RESTRICTED")
+                                        .put("message", allowed
+                                                ? "The latest source message can be archived"
+                                                : "The latest source message can't be archived in the selected mode")
+                                        .put("warnings", warnings);
+                            });
                 });
+    }
+
+    private static Future<TdApi.Message> latestSourceMessage(TelegramVerticle telegram,
+                                                              long sourceChatId,
+                                                              TdApi.Chat source,
+                                                              long sourceTopicId) {
+        if (sourceTopicId == 0) {
+            return Future.succeededFuture(source.lastMessage);
+        }
+        return telegram.client.execute(new TdApi.SearchChatMessages(
+                        sourceChatId,
+                        new TdApi.MessageTopicForum((int) sourceTopicId),
+                        "",
+                        null,
+                        0,
+                        0,
+                        1,
+                        null))
+                .map(found -> found == null || found.messages == null || found.messages.length == 0
+                        ? null : found.messages[0]);
+    }
+
+    private static boolean sameEndpoint(long sourceChatId, SettingAutoRecords.ArchiveRule rule) {
+        if (sourceChatId != rule.targetChatId) {
+            return false;
+        }
+        // An all-topic source includes the destination topic and would create a loop.
+        return rule.sourceTopicId == 0 || rule.targetTopicId == 0
+               || rule.sourceTopicId == rule.targetTopicId;
     }
 
     public static boolean isRetryable(Throwable failure) {
@@ -196,8 +233,11 @@ public final class CloudArchiveService {
         if (failure instanceof TelegramRunException telegramFailure) {
             TdApi.Error error = telegramFailure.getError();
             String message = error.message == null ? "" : error.message;
-            return error.code == 429 || error.code >= 500
-                   || message.contains("FLOOD_WAIT") || message.contains("TIMEOUT");
+            return error.code == 420 || error.code == 429 || error.code >= 500
+                   || message.contains("FLOOD_WAIT")
+                   || message.contains("FLOOD_PREMIUM_WAIT")
+                   || message.contains("SLOWMODE_WAIT")
+                   || message.contains("TIMEOUT");
         }
         return false;
     }
@@ -213,6 +253,25 @@ public final class CloudArchiveService {
             return "TIMEOUT";
         }
         return "UNEXPECTED_ERROR";
+    }
+
+    /** Telegram-provided wait duration, including a small safety margin. */
+    public static long retryAfterMillis(Throwable failure) {
+        if (!(failure instanceof TelegramRunException telegramFailure)) {
+            return 0L;
+        }
+        String message = Objects.toString(telegramFailure.getError().message, "");
+        Matcher matcher = TELEGRAM_WAIT.matcher(message);
+        if (!matcher.find()) {
+            return 0L;
+        }
+        try {
+            long seconds = Long.parseLong(matcher.group(1));
+            return Math.min(java.time.Duration.ofDays(1).toMillis(),
+                    java.time.Duration.ofSeconds(seconds + 2).toMillis());
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
     }
 
     private static int nonZeroHash(long... values) {

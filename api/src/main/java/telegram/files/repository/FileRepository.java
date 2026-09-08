@@ -15,6 +15,8 @@ public interface FileRepository {
 
     Future<Tuple3<List<FileRecord>, Long, Long>> getFiles(long chatId, Map<String, String> filter);
 
+    Future<List<JsonObject>> listLocalSources(long telegramId, boolean eligibleOnly);
+
     Future<Map<String, FileRecord>> getFilesByUniqueId(List<String> uniqueIds);
 
     Future<FileRecord> getByPrimaryKey(int fileId, String uniqueId);

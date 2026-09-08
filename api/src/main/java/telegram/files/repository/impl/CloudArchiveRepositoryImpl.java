@@ -31,9 +31,11 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
     @Override
     public Future<Boolean> enqueue(long telegramId,
                                    long sourceChatId,
+                                   long sourceTopicId,
                                    long sourceMessageId,
                                    long sourceAlbumId,
                                    long targetChatId,
+                                   long targetTopicId,
                                    String fileUniqueId,
                                    String mode) {
         return findExisting(telegramId, sourceChatId, sourceMessageId, targetChatId)
@@ -45,19 +47,21 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                     return preparedQuery("""
                                     INSERT INTO telegram_archive_record
                                         (id, telegram_id, source_chat_id, source_message_id,
-                                         source_album_id, target_chat_id, target_message_id,
+                                         source_topic_id, source_album_id, target_chat_id, target_topic_id, target_message_id,
                                          file_unique_id, mode, status, attempt_count,
                                          next_attempt_at, last_error_code, last_error_message,
                                          created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'PENDING', 0, ?, NULL, NULL, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'PENDING', 0, ?, NULL, NULL, ?, ?)
                                     """)
                             .execute(Tuple.of(
                                     UUID.randomUUID().toString(),
                                     telegramId,
                                     sourceChatId,
                                     sourceMessageId,
+                                    sourceTopicId,
                                     sourceAlbumId,
                                     targetChatId,
+                                    targetTopicId,
                                     fileUniqueId,
                                     mode,
                                     now,
@@ -182,6 +186,50 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         """)
                 .execute(Tuple.of(Math.max(1, Math.min(limit, 500))))
                 .map(this::records);
+    }
+
+    @Override
+    public Future<Long> countCompletedSince(long telegramId, long since) {
+        return preparedQuery("""
+                        SELECT COUNT(*) AS total FROM telegram_archive_record
+                        WHERE telegram_id = ? AND status = 'COMPLETED' AND updated_at >= ?
+                        """)
+                .execute(Tuple.of(telegramId, since))
+                .map(rows -> value(rows.iterator().next(), "total"));
+    }
+
+    @Override
+    public Future<Long> countPending(long telegramId) {
+        return preparedQuery("""
+                        SELECT COUNT(*) AS total FROM telegram_archive_record
+                        WHERE telegram_id = ? AND status IN ('PENDING', 'RETRY', 'SENDING')
+                        """)
+                .execute(Tuple.of(telegramId))
+                .map(rows -> value(rows.iterator().next(), "total"));
+    }
+
+    @Override
+    public Future<Long> cooldownUntil(long telegramId, long now) {
+        return preparedQuery("""
+                        SELECT MAX(next_attempt_at) AS cooldown_until
+                        FROM telegram_archive_record
+                        WHERE telegram_id = ? AND status = 'RETRY'
+                          AND last_error_code = 'TELEGRAM_WAIT' AND next_attempt_at > ?
+                        """)
+                .execute(Tuple.of(telegramId, now))
+                .map(rows -> value(rows.iterator().next(), "cooldown_until"));
+    }
+
+    @Override
+    public Future<Void> defer(String id, long nextAttemptAt, String code, String message) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_record
+                        SET status = 'RETRY', next_attempt_at = ?, last_error_code = ?,
+                            last_error_message = ?, updated_at = ?
+                        WHERE id = ? AND status IN ('PENDING', 'RETRY')
+                        """)
+                .execute(Tuple.of(nextAttemptAt, code, truncate(message), clock.millis(), id))
+                .mapEmpty();
     }
 
     @Override

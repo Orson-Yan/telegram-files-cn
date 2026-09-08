@@ -17,6 +17,7 @@ export function createDefaultAuto(): Auto {
       enabled: false,
       rule: {
         transferHistory: false,
+        sourceTopicId: 0,
         destination: "",
         transferPolicy: "GROUP_BY_CHAT",
         duplicationPolicy: "RENAME",
@@ -27,7 +28,9 @@ export function createDefaultAuto(): Auto {
     archive: {
       enabled: false,
       rule: {
+        sourceTopicId: 0,
         targetChatId: 0,
+        targetTopicId: 0,
         mode: "COPY",
         scope: "ALL_MESSAGES",
         fileTypes: [],

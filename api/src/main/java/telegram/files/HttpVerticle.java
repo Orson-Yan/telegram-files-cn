@@ -37,6 +37,7 @@ import io.vertx.ext.web.sstore.SessionStore;
 import org.drinkless.tdlib.TdApi;
 import org.jooq.lambda.function.Function2;
 import telegram.files.repository.SettingAutoRecords;
+import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.CloudArchiveRecord;
 import telegram.files.repository.SettingKey;
 import telegram.files.repository.SettingRecord;
@@ -68,6 +69,8 @@ public class HttpVerticle extends AbstractVerticle {
 
     // session id -> telegram verticle
     private final Map<String, TelegramVerticle> sessionTelegramVerticles = new ConcurrentHashMap<>();
+
+    private final Map<Long, Long> cloudArchiveTestTimestamps = new ConcurrentHashMap<>();
 
     private final List<String> unboundClients = new ArrayList<>();
 
@@ -228,10 +231,14 @@ public class HttpVerticle extends AbstractVerticle {
         router.get("/automations/chats").handler(this::handleAutomationChats);
         router.get("/cloud-archive/overview").handler(this::handleCloudArchiveOverview);
         router.get("/cloud-archive/records").handler(this::handleCloudArchiveRecords);
+        router.get("/cloud-archive/history").handler(this::handleCloudArchiveHistory);
+        router.post("/cloud-archive/history").handler(this::handleCloudArchiveHistoryCreate);
+        router.post("/cloud-archive/history/:jobId/:action").handler(this::handleCloudArchiveHistoryAction);
         router.post("/cloud-archive/validate").handler(this::handleCloudArchiveValidate);
         router.post("/cloud-archive/test").handler(this::handleCloudArchiveTest);
         router.post("/cloud-archive/records/:recordId/retry").handler(this::handleCloudArchiveRetry);
         router.get("/local-organize/overview").handler(this::handleLocalOrganizeOverview);
+        router.get("/local-organize/sources").handler(this::handleLocalOrganizeSources);
         router.post("/local-organize/preview").handler(this::handleLocalOrganizePreview);
 
         router.post("/telegram/create").handler(this::handleTelegramCreate);
@@ -241,6 +248,7 @@ public class HttpVerticle extends AbstractVerticle {
         router.post("/telegram/api/:method").handler(this::handleTelegramApi);
         router.get("/telegrams").handler(this::handleTelegrams);
         router.get("/telegram/:telegramId/chats").handler(this::handleTelegramChats);
+        router.get("/telegram/:telegramId/chat/:chatId/topics").handler(this::handleTelegramTopics);
         router.get("/telegram/:telegramId/chat/:chatId/files").handler(this::handleTelegramFiles);
         router.get("/telegram/:telegramId/chat/:chatId/files/count").handler(this::handleTelegramFilesCount);
         router.get("/telegram/:telegramId/download-statistics").handler(this::handleTelegramDownloadStatistics);
@@ -1122,6 +1130,85 @@ public class HttpVerticle extends AbstractVerticle {
                 .put("targetChatName", item.getString("targetChatName", Convert.toStr(record.targetChatId())));
     }
 
+    private void handleCloudArchiveHistory(RoutingContext ctx) {
+        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 50), 200));
+        DataVerticle.cloudArchiveHistoryRepository.listRecent(limit)
+                .map(jobs -> new JsonArray(jobs.stream().map(this::cloudArchiveHistoryJson).toList()))
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
+    private JsonObject cloudArchiveHistoryJson(CloudArchiveHistoryJob job) {
+        JsonObject item = JsonObject.mapFrom(job);
+        item.remove("ruleJson");
+        TelegramVerticles.get(job.telegramId()).ifPresent(telegram -> {
+            TdApi.Chat source = telegram.getChat(job.sourceChatId());
+            TdApi.Chat target = telegram.getChat(job.targetChatId());
+            item.put("sourceChatName", source == null ? Convert.toStr(job.sourceChatId()) : source.title)
+                    .put("targetChatName", target == null ? Convert.toStr(job.targetChatId()) : target.title);
+        });
+        return item
+                .put("sourceChatName", item.getString("sourceChatName", Convert.toStr(job.sourceChatId())))
+                .put("targetChatName", item.getString("targetChatName", Convert.toStr(job.targetChatId())));
+    }
+
+    private void handleCloudArchiveHistoryCreate(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        if (body == null) {
+            ctx.fail(400);
+            return;
+        }
+        long telegramId = Convert.toLong(body.getValue("telegramId"));
+        long sourceChatId = Convert.toLong(body.getValue("sourceChatId"));
+        int maxMessages = Math.max(1, Math.min(Convert.toInt(body.getValue("maxMessages"), 1000), 10_000));
+        SettingAutoRecords.Automation automation = AutomationsHolder.INSTANCE.autoRecords()
+                .getItem(telegramId, sourceChatId);
+        if (automation == null || automation.archive == null || !automation.archive.enabled
+            || automation.archive.rule == null || automation.archive.rule.targetChatId == 0) {
+            ctx.response().setStatusCode(400).end(JsonObject.of(
+                    "error", "Save and enable the cloud archive rule before starting history"
+            ).encode());
+            return;
+        }
+        SettingAutoRecords.ArchiveRule rule = automation.archive.rule;
+        DataVerticle.cloudArchiveHistoryRepository.create(
+                        telegramId,
+                        sourceChatId,
+                        rule.sourceTopicId,
+                        rule.targetChatId,
+                        rule.targetTopicId,
+                        Json.encode(rule),
+                        maxMessages)
+                .map(this::cloudArchiveHistoryJson)
+                .onSuccess(ctx::json)
+                .onFailure(failure -> {
+                    if (failure instanceof IllegalStateException) {
+                        ctx.response().setStatusCode(409)
+                                .end(JsonObject.of("error", failure.getMessage()).encode());
+                    } else {
+                        ctx.fail(failure);
+                    }
+                });
+    }
+
+    private void handleCloudArchiveHistoryAction(RoutingContext ctx) {
+        String jobId = ctx.pathParam("jobId");
+        String action = ctx.pathParam("action");
+        if (StrUtil.isBlank(jobId) || !Set.of("pause", "resume", "cancel").contains(action)) {
+            ctx.fail(400);
+            return;
+        }
+        DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action)
+                .onSuccess(updated -> {
+                    if (!updated) {
+                        ctx.fail(409);
+                    } else {
+                        ctx.json(JsonObject.of("updated", true));
+                    }
+                })
+                .onFailure(ctx::fail);
+    }
+
     private void handleCloudArchiveValidate(RoutingContext ctx) {
         JsonObject body = ctx.body().asJsonObject();
         if (body == null) {
@@ -1144,10 +1231,21 @@ public class HttpVerticle extends AbstractVerticle {
             return;
         }
         TelegramVerticle telegram = TelegramVerticles.getOrElseThrow(body.getString("telegramId"));
+        long telegramId = Convert.toLong(body.getValue("telegramId"));
         long sourceChatId = Convert.toLong(body.getValue("sourceChatId"));
         SettingAutoRecords.ArchiveRule rule = body.getJsonObject("rule", new JsonObject())
                 .mapTo(SettingAutoRecords.ArchiveRule.class);
-        telegram.client.execute(new TdApi.GetChatHistory(sourceChatId, 0, 0, 1, false))
+        long now = System.currentTimeMillis();
+        long lastTest = cloudArchiveTestTimestamps.getOrDefault(telegramId, 0L);
+        if (now - lastTest < Duration.ofMinutes(1).toMillis()) {
+            long retryAfter = Math.max(1, (Duration.ofMinutes(1).toMillis() - (now - lastTest)) / 1000);
+            ctx.response().setStatusCode(429)
+                    .putHeader("Retry-After", Long.toString(retryAfter))
+                    .end(JsonObject.of("error", "Wait before sending another real test").encode());
+            return;
+        }
+        cloudArchiveTestTimestamps.put(telegramId, now);
+        latestArchiveTestMessage(telegram, sourceChatId, rule.sourceTopicId)
                 .compose(messages -> {
                     TdApi.Message source = messages == null || messages.messages == null || messages.messages.length == 0
                             ? null : messages.messages[0];
@@ -1200,26 +1298,111 @@ public class HttpVerticle extends AbstractVerticle {
         ctx.json(new JsonObject().put("rules", new JsonArray(rules)));
     }
 
+    private void handleTelegramTopics(RoutingContext ctx) {
+        TelegramVerticle telegram = getTelegramVerticleByPath(ctx);
+        if (telegram == null) {
+            return;
+        }
+        long chatId = Convert.toLong(ctx.pathParam("chatId"));
+        String query = StrUtil.blankToDefault(ctx.request().getParam("query"), "");
+        if (chatId == 0) {
+            ctx.fail(400);
+            return;
+        }
+        telegram.client.execute(new TdApi.GetForumTopics(chatId, query, 0, 0, 0, 100), true)
+                .map(result -> new JsonArray(Arrays.stream(result == null || result.topics == null
+                                ? new TdApi.ForumTopic[0] : result.topics)
+                        .filter(topic -> topic != null && topic.info != null)
+                        .map(topic -> new JsonObject()
+                                .put("id", Integer.toString(topic.info.forumTopicId))
+                                .put("name", topic.info.name)
+                                .put("general", topic.info.isGeneral)
+                                .put("closed", topic.info.isClosed)
+                                .put("hidden", topic.info.isHidden))
+                        .toList()))
+                .recover(_ -> Future.succeededFuture(new JsonArray()))
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
+    private Future<TdApi.Messages> latestArchiveTestMessage(TelegramVerticle telegram,
+                                                             long sourceChatId,
+                                                             long sourceTopicId) {
+        if (sourceTopicId == 0) {
+            return telegram.client.execute(new TdApi.GetChatHistory(sourceChatId, 0, 0, 1, false));
+        }
+        return telegram.client.execute(new TdApi.SearchChatMessages(
+                        sourceChatId,
+                        new TdApi.MessageTopicForum((int) sourceTopicId),
+                        "",
+                        null,
+                        0,
+                        0,
+                        1,
+                        null))
+                .map(found -> {
+                    TdApi.Messages result = new TdApi.Messages();
+                    result.totalCount = found == null ? 0 : found.totalCount;
+                    result.messages = found == null || found.messages == null
+                            ? new TdApi.Message[0] : found.messages;
+                    return result;
+                });
+    }
+
+    private void handleLocalOrganizeSources(RoutingContext ctx) {
+        long telegramId = Convert.toLong(ctx.queryParams().get("telegramId"));
+        if (telegramId == 0 || TelegramVerticles.get(telegramId).isEmpty()) {
+            ctx.fail(400);
+            return;
+        }
+        boolean eligibleOnly = Convert.toBool(ctx.queryParams().get("eligibleOnly"), true);
+        String query = StrUtil.blankToDefault(URLUtil.decode(ctx.queryParams().get("query")), "")
+                .toLowerCase(Locale.ROOT);
+        DataVerticle.fileRepository.listLocalSources(telegramId, eligibleOnly)
+                .map(sources -> {
+                    TelegramVerticle telegram = TelegramVerticles.get(telegramId).orElse(null);
+                    return sources.stream().map(source -> {
+                        long chatId = Convert.toLong(source.getString("chatId"));
+                        TdApi.Chat chat = telegram == null ? null : telegram.getChat(chatId);
+                        String name = chat == null ? Long.toString(chatId) : chat.title;
+                        return source.copy()
+                                .put("id", Long.toString(chatId))
+                                .put("name", name)
+                                .put("type", chat == null ? "unknown" : TdApiHelp.getChatType(chat.type));
+                    }).filter(source -> query.isBlank()
+                            || source.getString("name", "").toLowerCase(Locale.ROOT).contains(query)
+                            || source.getString("chatId", "").contains(query))
+                            .toList();
+                })
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
     private void handleLocalOrganizePreview(RoutingContext ctx) {
         JsonObject body = ctx.body().asJsonObject();
         if (body == null) {
             ctx.fail(400);
             return;
         }
+        long telegramId = Convert.toLong(body.getValue("telegramId"));
         long chatId = Convert.toLong(body.getValue("sourceChatId"));
         SettingAutoRecords.TransferRule rule = body.getJsonObject("rule", new JsonObject())
                 .mapTo(SettingAutoRecords.TransferRule.class);
-        if (chatId == 0 || StrUtil.isBlank(rule.destination) || rule.transferPolicy == null
+        if (telegramId == 0 || chatId == 0 || StrUtil.isBlank(rule.destination) || rule.transferPolicy == null
             || rule.duplicationPolicy == null) {
             ctx.fail(400);
             return;
         }
         Transfer transfer = Transfer.create(rule);
-        DataVerticle.fileRepository.getFiles(chatId, Map.of(
-                        "downloadStatus", "completed",
-                        "transferStatus", "idle",
-                        "limit", "20"
-                ))
+        Map<String, String> filters = new HashMap<>();
+        filters.put("telegramId", Long.toString(telegramId));
+        filters.put("downloadStatus", "completed");
+        filters.put("transferStatus", "idle");
+        filters.put("limit", "20");
+        if (rule.sourceTopicId != 0) {
+            filters.put("messageThreadId", Long.toString(rule.sourceTopicId));
+        }
+        DataVerticle.fileRepository.getFiles(chatId, filters)
                 .map(result -> new JsonObject()
                         .put("total", result.v3)
                         .put("items", new JsonArray(result.v1.stream()

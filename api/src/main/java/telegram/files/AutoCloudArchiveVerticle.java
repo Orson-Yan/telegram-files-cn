@@ -10,6 +10,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
 import telegram.files.repository.CloudArchiveRecord;
+import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.SettingAutoRecords;
 
 import java.time.Duration;
@@ -40,6 +41,12 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private static final int MAX_ATTEMPTS = 8;
 
+    private static final long MAX_MESSAGES_PER_MINUTE = 20L;
+
+    private static final long MAX_MESSAGES_PER_HOUR = 300L;
+
+    private static final long MAX_MESSAGES_PER_DAY = 1_000L;
+
     private final SettingAutoRecords autoRecords = AutomationsHolder.INSTANCE.autoRecords();
 
     private final Map<AlbumKey, AlbumBuffer> albumBuffers = new HashMap<>();
@@ -50,14 +57,21 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private final Set<Long> busyAccounts = new HashSet<>();
 
+    private final Map<Long, Long> accountCooldownUntil = new HashMap<>();
+
     private boolean scanning;
+
+    private boolean historyScanning;
 
     @Override
     public void start(Promise<Void> startPromise) {
         DataVerticle.cloudArchiveRepository.recoverSendingAsUnknown()
                 .compose(_ -> initEventConsumer())
                 .onSuccess(_ -> {
-                    vertx.setPeriodic(0, RETRY_SCAN_INTERVAL, _ -> scanDue());
+                    vertx.setPeriodic(0, RETRY_SCAN_INTERVAL, _ -> {
+                        scanDue();
+                        scanHistory();
+                    });
                     log.info("Cloud archive verticle started! Auto chats: {}",
                             autoRecords.getArchiveEnabledItems().size());
                     startPromise.complete();
@@ -72,6 +86,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         queues.clear();
         queuedRecordIds.clear();
         busyAccounts.clear();
+        accountCooldownUntil.clear();
         log.info("Cloud archive verticle stopped");
     }
 
@@ -98,7 +113,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     }
 
     private void collectMessage(SettingAutoRecords.Automation automation, TdApi.Message message) {
-        if (message == null) {
+        if (message == null || message.isOutgoing || !matchesTopic(message, automation.archive.rule.sourceTopicId)) {
             return;
         }
         if (message.mediaAlbumId == 0) {
@@ -173,9 +188,11 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 .map(message -> DataVerticle.cloudArchiveRepository.enqueue(
                         automation.telegramId,
                         automation.chatId,
+                        rule.sourceTopicId,
                         message.id,
                         message.mediaAlbumId,
                         rule.targetChatId,
+                        rule.targetTopicId,
                         TdApiHelp.getFileUniqueId(message),
                         effectiveMode(rule).name()
                 ))
@@ -211,6 +228,14 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         return StrUtil.isBlank(rule.filterExpr) || MessageFilter.filter(rule.filterExpr).test(message);
     }
 
+    private static boolean matchesTopic(TdApi.Message message, long sourceTopicId) {
+        if (sourceTopicId == 0) {
+            return true;
+        }
+        return message.topicId instanceof TdApi.MessageTopicForum topic
+               && topic.forumTopicId == sourceTopicId;
+    }
+
     private static String messageText(TdApi.Message message) {
         return switch (message.content) {
             case TdApi.MessageText value -> value.text.text;
@@ -237,15 +262,125 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         }
                         String key = record.sourceAlbumId() == 0
                                 ? "message:" + record.id()
-                                : "%d:%d:%d:%d:%s".formatted(
+                                : "%d:%d:%d:%d:%d:%d:%s".formatted(
                                         record.telegramId(), record.sourceChatId(), record.sourceAlbumId(),
-                                        record.targetChatId(), record.mode());
+                                        record.sourceTopicId(), record.targetChatId(), record.targetTopicId(), record.mode());
                         batches.computeIfAbsent(key, _ -> new ArrayList<>()).add(record);
                     }
                     batches.values().forEach(this::queue);
                 })
                 .onFailure(failure -> log.error(failure, "Failed to scan pending cloud archive records"))
                 .onComplete(_ -> scanning = false);
+    }
+
+    private void scanHistory() {
+        if (historyScanning) {
+            return;
+        }
+        historyScanning = true;
+        DataVerticle.cloudArchiveHistoryRepository.listRunnable(20)
+                .compose(jobs -> jobs.isEmpty()
+                        ? Future.succeededFuture()
+                        : processHistoryPage(jobs.getFirst()))
+                .onFailure(failure -> log.error(failure, "Failed to scan cloud archive history"))
+                .onComplete(_ -> historyScanning = false);
+    }
+
+    private Future<Void> processHistoryPage(CloudArchiveHistoryJob job) {
+        return DataVerticle.cloudArchiveHistoryRepository.start(job.id()).compose(started -> {
+            if (!started) {
+                return Future.succeededFuture();
+            }
+            TelegramVerticle telegram = TelegramVerticles.get(job.telegramId()).orElse(null);
+            if (telegram == null || !telegram.isAvailable()) {
+                return DataVerticle.cloudArchiveHistoryRepository.fail(
+                        job.id(), "The Telegram account is unavailable");
+            }
+            SettingAutoRecords.ArchiveRule rule;
+            try {
+                rule = new JsonObject(job.ruleJson()).mapTo(SettingAutoRecords.ArchiveRule.class);
+            } catch (RuntimeException failure) {
+                return DataVerticle.cloudArchiveHistoryRepository.fail(
+                        job.id(), "The saved archive rule is invalid");
+            }
+            return DataVerticle.cloudArchiveRepository.countPending(job.telegramId()).compose(pending -> {
+                // Keep historical scans behind delivery so a large channel can't flood the durable queue.
+                if (pending >= 200) {
+                    return Future.succeededFuture();
+                }
+                int remaining = Math.max(0, job.maxMessages() - job.scannedCount());
+                if (remaining == 0) {
+                    return DataVerticle.cloudArchiveHistoryRepository.advance(
+                            job.id(), job.fromMessageId(), 0, 0, 0, true);
+                }
+                int pageSize = Math.min(50, remaining);
+                return historyMessages(telegram, job, pageSize).compose(messages -> {
+                List<TdApi.Message> candidates = Arrays.stream(messages)
+                        .filter(Objects::nonNull)
+                        .filter(message -> !message.isOutgoing)
+                        .filter(message -> matchesTopic(message, job.sourceTopicId()))
+                        .filter(message -> matches(message, rule))
+                        .toList();
+                List<Future<Boolean>> inserts = candidates.stream()
+                        .map(message -> DataVerticle.cloudArchiveRepository.enqueue(
+                                job.telegramId(),
+                                job.sourceChatId(),
+                                job.sourceTopicId(),
+                                message.id,
+                                message.mediaAlbumId,
+                                job.targetChatId(),
+                                job.targetTopicId(),
+                                TdApiHelp.getFileUniqueId(message),
+                                effectiveMode(rule).name()))
+                        .toList();
+                return Future.all(inserts).compose(results -> {
+                    int queued = 0;
+                    for (int index = 0; index < inserts.size(); index++) {
+                        if (Boolean.TRUE.equals(results.resultAt(index))) {
+                            queued++;
+                        }
+                    }
+                    long cursor = Arrays.stream(messages)
+                            .filter(Objects::nonNull)
+                            .mapToLong(message -> message.id)
+                            .min()
+                            .stream()
+                            .map(messageId -> Math.max(0L, messageId - 1L))
+                            .findFirst()
+                            .orElse(job.fromMessageId());
+                    boolean completed = messages.length == 0
+                                        || job.scannedCount() + messages.length >= job.maxMessages();
+                    return DataVerticle.cloudArchiveHistoryRepository.advance(
+                            job.id(), cursor, messages.length, candidates.size(), queued, completed);
+                }).onSuccess(_ -> scanDue());
+                });
+            }).recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
+                        job.id(), safeMessage(failure)));
+        });
+    }
+
+    private Future<TdApi.Message[]> historyMessages(TelegramVerticle telegram,
+                                                     CloudArchiveHistoryJob job,
+                                                     int limit) {
+        if (job.sourceTopicId() != 0) {
+            TdApi.SearchChatMessages request = new TdApi.SearchChatMessages(
+                    job.sourceChatId(),
+                    new TdApi.MessageTopicForum((int) job.sourceTopicId()),
+                    "",
+                    null,
+                    job.fromMessageId(),
+                    0,
+                    limit,
+                    null
+            );
+            return telegram.client.execute(request)
+                    .map(found -> found == null || found.messages == null
+                            ? new TdApi.Message[0] : found.messages);
+        }
+        return telegram.client.execute(new TdApi.GetChatHistory(
+                        job.sourceChatId(), job.fromMessageId(), 0, limit, false))
+                .map(found -> found == null || found.messages == null
+                        ? new TdApi.Message[0] : found.messages);
     }
 
     private void queue(List<CloudArchiveRecord> records) {
@@ -274,16 +409,70 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 .onComplete(_ -> {
                     busyAccounts.remove(telegramId);
                     work.records.forEach(record -> queuedRecordIds.remove(record.id()));
-                    vertx.setTimer(500L, _ -> drain(telegramId));
+                    vertx.setTimer(3_000L, _ -> drain(telegramId));
                 });
     }
 
     private Future<Void> process(ArchiveWork work) {
         CloudArchiveRecord first = work.records.getFirst();
+        long now = System.currentTimeMillis();
+        return DataVerticle.cloudArchiveRepository.cooldownUntil(first.telegramId(), now)
+                .compose(persistedCooldown -> {
+                    long cooldownUntil = Math.max(persistedCooldown,
+                            accountCooldownUntil.getOrDefault(first.telegramId(), 0L));
+                    if (cooldownUntil > now) {
+                        return deferAll(work.records, cooldownUntil, "TELEGRAM_WAIT",
+                                "Telegram requested a temporary account cooldown");
+                    }
+                    accountCooldownUntil.remove(first.telegramId());
+                    return processAfterCooldown(work, first, now);
+                });
+    }
+
+    private Future<Void> processAfterCooldown(ArchiveWork work,
+                                              CloudArchiveRecord first,
+                                              long now) {
         SettingAutoRecords.Automation automation = autoRecords.getItem(first.telegramId(), first.sourceChatId());
-        if (!isEnabled(automation) || automation.archive.rule.targetChatId != first.targetChatId()) {
+        if (!isEnabled(automation) || automation.archive.rule.targetChatId != first.targetChatId()
+            || automation.archive.rule.sourceTopicId != first.sourceTopicId()
+            || automation.archive.rule.targetTopicId != first.targetTopicId()) {
             return failAll(work.records, false, "RULE_DISABLED", "The cloud archive rule is disabled or changed");
         }
+        return Future.all(
+                        DataVerticle.cloudArchiveRepository.countCompletedSince(
+                                first.telegramId(), now - Duration.ofMinutes(1).toMillis()),
+                        DataVerticle.cloudArchiveRepository.countCompletedSince(
+                                first.telegramId(), now - Duration.ofHours(1).toMillis()),
+                        DataVerticle.cloudArchiveRepository.countCompletedSince(
+                                first.telegramId(), now - Duration.ofDays(1).toMillis()))
+                .compose(counts -> {
+                    long minute = counts.resultAt(0);
+                    long hourly = counts.resultAt(1);
+                    long daily = counts.resultAt(2);
+                    int requested = work.records.size();
+                    if (minute + requested > MAX_MESSAGES_PER_MINUTE
+                        || hourly + requested > MAX_MESSAGES_PER_HOUR
+                        || daily + requested > MAX_MESSAGES_PER_DAY) {
+                        long delay = daily + requested > MAX_MESSAGES_PER_DAY
+                                ? Duration.ofHours(1).toMillis()
+                                : hourly + requested > MAX_MESSAGES_PER_HOUR
+                                  ? Duration.ofMinutes(5).toMillis()
+                                  : Duration.ofMinutes(1).toMillis();
+                        return deferAll(work.records, now + delay,
+                                daily + requested > MAX_MESSAGES_PER_DAY
+                                        ? "DAILY_SAFETY_LIMIT"
+                                        : hourly + requested > MAX_MESSAGES_PER_HOUR
+                                          ? "HOURLY_SAFETY_LIMIT"
+                                          : "MINUTE_SAFETY_LIMIT",
+                                "The conservative account safety limit paused cloud archiving");
+                    }
+                    return processWithinBudget(work, automation, first);
+                });
+    }
+
+    private Future<Void> processWithinBudget(ArchiveWork work,
+                                             SettingAutoRecords.Automation automation,
+                                             CloudArchiveRecord first) {
         List<Future<Boolean>> claims = work.records.stream()
                 .map(record -> DataVerticle.cloudArchiveRepository.claim(record.id()))
                 .toList();
@@ -311,6 +500,17 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         });
     }
 
+    private Future<Void> deferAll(List<CloudArchiveRecord> records,
+                                  long nextAttemptAt,
+                                  String code,
+                                  String message) {
+        return Future.all(records.stream()
+                        .map(record -> DataVerticle.cloudArchiveRepository.defer(
+                                record.id(), nextAttemptAt, code, message))
+                        .toList())
+                .mapEmpty();
+    }
+
     private Future<Void> completeAll(List<CloudArchiveRecord> records, Map<Long, Long> targets) {
         List<Future<Void>> updates = records.stream().map(record -> {
             long targetMessageId = targets.getOrDefault(record.sourceMessageId(), 0L);
@@ -334,13 +534,29 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return Future.all(updates).mapEmpty();
         }
         boolean retryable = CloudArchiveService.isRetryable(failure);
-        return failAll(records, retryable, CloudArchiveService.errorCode(failure), safeMessage(failure));
+        long telegramWaitMillis = CloudArchiveService.retryAfterMillis(failure);
+        if (telegramWaitMillis > 0 && !records.isEmpty()) {
+            accountCooldownUntil.merge(records.getFirst().telegramId(),
+                    System.currentTimeMillis() + telegramWaitMillis, Math::max);
+        }
+        return failAll(records, retryable,
+                telegramWaitMillis > 0 ? "TELEGRAM_WAIT" : CloudArchiveService.errorCode(failure),
+                safeMessage(failure),
+                telegramWaitMillis);
     }
 
     private Future<Void> failAll(List<CloudArchiveRecord> records,
                                  boolean retryable,
                                  String code,
                                  String message) {
+        return failAll(records, retryable, code, message, 0L);
+    }
+
+    private Future<Void> failAll(List<CloudArchiveRecord> records,
+                                 boolean retryable,
+                                 String code,
+                                 String message,
+                                 long telegramWaitMillis) {
         List<Future<Void>> updates = records.stream()
                 .map(record -> {
                     int attempt = record.attemptCount() + 1;
@@ -348,7 +564,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     return DataVerticle.cloudArchiveRepository.fail(
                             record.id(),
                             shouldRetry,
-                            shouldRetry ? System.currentTimeMillis() + retryDelay(attempt) : 0L,
+                            shouldRetry ? System.currentTimeMillis()
+                                    + Math.max(retryDelay(attempt), telegramWaitMillis) : 0L,
                             shouldRetry ? code : retryable ? "MAX_RETRIES_EXCEEDED" : code,
                             message
                     );
@@ -377,6 +594,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                                            CloudArchiveRecord record) {
         SettingAutoRecords.ArchiveRule copy = new SettingAutoRecords.ArchiveRule();
         copy.targetChatId = record.targetChatId();
+        copy.sourceTopicId = record.sourceTopicId();
+        copy.targetTopicId = record.targetTopicId();
         copy.mode = SettingAutoRecords.ArchiveMode.valueOf(record.mode());
         copy.scope = configured.scope;
         copy.fileTypes = configured.fileTypes;

@@ -112,7 +112,10 @@ public class TransferVerticle extends AbstractVerticle {
                     automation = autoRecords.getItem(fileRecord.telegramId(), fileRecord.chatId());
                 }
 
-                if (automation == null || !automation.transfer.enabled || getTransfer(automation) == null) {
+                if (automation == null || !automation.transfer.enabled
+                    || (automation.transfer.rule.sourceTopicId != 0
+                        && automation.transfer.rule.sourceTopicId != fileRecord.messageThreadId())
+                    || getTransfer(automation) == null) {
                     return;
                 }
 
@@ -141,8 +144,10 @@ public class TransferVerticle extends AbstractVerticle {
                 continue;
             }
             Tuple3<List<FileRecord>, Long, Long> filesTuple = Future.await(DataVerticle.fileRepository.getFiles(automation.chatId,
-                    Map.of("downloadStatus", FileRecord.DownloadStatus.completed.name(),
-                            "transferStatus", FileRecord.TransferStatus.idle.name()
+                    Map.of("telegramId", Long.toString(automation.telegramId),
+                            "downloadStatus", FileRecord.DownloadStatus.completed.name(),
+                            "transferStatus", FileRecord.TransferStatus.idle.name(),
+                            "messageThreadId", Long.toString(automation.transfer.rule.sourceTopicId)
                     )
             ));
             List<FileRecord> files = filesTuple.v1;

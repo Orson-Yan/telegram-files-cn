@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   CloudUpload,
   Copy,
+  History,
   Loader2,
   Pause,
   Play,
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { RuleChatPicker } from "@/components/rule-chat-picker";
+import { RuleTopicPicker } from "@/components/rule-topic-picker";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeAuto } from "@/lib/automation";
@@ -59,6 +61,7 @@ import type {
   ArchiveScope,
   AutoArchiveRule,
   CloudArchiveOverview,
+  CloudArchiveHistoryJob,
   CloudArchiveRecord,
   CloudArchiveRuleOverview,
   TelegramChat,
@@ -79,7 +82,9 @@ function emptyDraft(telegramId = ""): RuleDraft {
     sourceChatId: "",
     enabled: true,
     rule: {
+      sourceTopicId: 0,
       targetChatId: 0,
+      targetTopicId: 0,
       mode: "COPY",
       scope: "ALL_MESSAGES",
       fileTypes: [],
@@ -96,7 +101,12 @@ function toDraft(rule: CloudArchiveRuleOverview): RuleDraft {
     telegramId: rule.telegramId,
     sourceChatId: rule.sourceChatId,
     enabled: rule.enabled,
-    rule: { ...rule.rule, targetChatId: String(rule.targetChatId) },
+    rule: {
+      ...rule.rule,
+      sourceTopicId: String(rule.rule.sourceTopicId || ""),
+      targetChatId: String(rule.targetChatId),
+      targetTopicId: String(rule.rule.targetTopicId || ""),
+    },
   };
 }
 
@@ -113,7 +123,9 @@ async function saveDraft(draft: RuleDraft) {
     enabled: draft.enabled,
     rule: {
       ...draft.rule,
+      sourceTopicId: Number(draft.rule.sourceTopicId || 0),
       targetChatId: Number(draft.rule.targetChatId),
+      targetTopicId: Number(draft.rule.targetTopicId || 0),
     },
   };
   await POST(
@@ -155,6 +167,10 @@ export function CloudArchiveManager() {
   const [draft, setDraft] = useState<RuleDraft>(() => emptyDraft());
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState<"validate" | "test" | null>(null);
+  const [historyRule, setHistoryRule] =
+    useState<CloudArchiveRuleOverview | null>(null);
+  const [historyLimit, setHistoryLimit] = useState("1000");
+  const [historySaving, setHistorySaving] = useState(false);
 
   const {
     data: overview,
@@ -168,6 +184,9 @@ export function CloudArchiveManager() {
     "/cloud-archive/records?limit=100",
     { refreshInterval: 5000 },
   );
+  const { data: historyJobs, mutate: reloadHistory } = useSWR<
+    CloudArchiveHistoryJob[]
+  >("/cloud-archive/history?limit=100", { refreshInterval: 5000 });
 
   useEffect(() => {
     if (!draft.telegramId && accounts.length > 0) {
@@ -175,16 +194,22 @@ export function CloudArchiveManager() {
     }
   }, [accounts, draft.telegramId]);
 
-  const validDraft = useMemo(
-    () =>
-      Boolean(
-        draft.telegramId &&
+  const validDraft = useMemo(() => {
+    const targetChatId = Number(draft.rule.targetChatId);
+    const sourceTopicId = Number(draft.rule.sourceTopicId || 0);
+    const targetTopicId = Number(draft.rule.targetTopicId || 0);
+    const differentEndpoint =
+      draft.sourceChatId !== String(targetChatId) ||
+      (sourceTopicId !== 0 &&
+        targetTopicId !== 0 &&
+        sourceTopicId !== targetTopicId);
+    return Boolean(
+      draft.telegramId &&
         draft.sourceChatId &&
-        Number(draft.rule.targetChatId) !== 0 &&
-        draft.sourceChatId !== String(draft.rule.targetChatId),
-      ),
-    [draft],
-  );
+        targetChatId !== 0 &&
+        differentEndpoint,
+    );
+  }, [draft]);
 
   const openNew = () => {
     setEditing(false);
@@ -209,7 +234,9 @@ export function CloudArchiveManager() {
           sourceChatId: draft.sourceChatId,
           rule: {
             ...draft.rule,
+            sourceTopicId: Number(draft.rule.sourceTopicId || 0),
             targetChatId: Number(draft.rule.targetChatId),
+            targetTopicId: Number(draft.rule.targetTopicId || 0),
           },
         },
       );
@@ -291,6 +318,47 @@ export function CloudArchiveManager() {
     }
   };
 
+  const createHistory = async () => {
+    if (!historyRule) return;
+    setHistorySaving(true);
+    try {
+      await POST("/cloud-archive/history", {
+        telegramId: historyRule.telegramId,
+        sourceChatId: historyRule.sourceChatId,
+        maxMessages: Number(historyLimit),
+      });
+      await reloadHistory();
+      setHistoryRule(null);
+      toast({ variant: "success", title: "Historical archive task queued" });
+    } catch (failure) {
+      toast({
+        variant: "error",
+        title: "Failed to start history task",
+        description:
+          failure instanceof Error ? failure.message : String(failure),
+      });
+    } finally {
+      setHistorySaving(false);
+    }
+  };
+
+  const historyAction = async (
+    job: CloudArchiveHistoryJob,
+    action: "pause" | "resume" | "cancel",
+  ) => {
+    try {
+      await POST(`/cloud-archive/history/${job.id}/${action}`);
+      await reloadHistory();
+    } catch (failure) {
+      toast({
+        variant: "error",
+        title: `Failed to ${action} history task`,
+        description:
+          failure instanceof Error ? failure.message : String(failure),
+      });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex justify-center p-12 text-muted-foreground">
@@ -338,6 +406,7 @@ export function CloudArchiveManager() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList>
             <TabsTrigger value="rules">Archive rules</TabsTrigger>
+            <TabsTrigger value="history">History tasks</TabsTrigger>
             <TabsTrigger value="records">Archive records</TabsTrigger>
           </TabsList>
           <Button onClick={openNew} disabled={accounts.length === 0}>
@@ -361,8 +430,18 @@ export function CloudArchiveManager() {
                     <div className="min-w-0">
                       <CardTitle className="flex flex-wrap items-center gap-2 text-base">
                         <span translate="no">{item.sourceChatName}</span>
+                        {Number(item.rule.sourceTopicId || 0) !== 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            topic #{item.rule.sourceTopicId}
+                          </span>
+                        )}
                         <span className="text-muted-foreground">→</span>
                         <span translate="no">{item.targetChatName}</span>
+                        {Number(item.rule.targetTopicId || 0) !== 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            topic #{item.rule.targetTopicId}
+                          </span>
+                        )}
                       </CardTitle>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {item.accountName} ·{" "}
@@ -386,6 +465,17 @@ export function CloudArchiveManager() {
                     {item.targetDownloadEnabled ? "Enabled" : "Disabled"}
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!item.enabled}
+                      onClick={() => {
+                        setHistoryLimit("1000");
+                        setHistoryRule(item);
+                      }}
+                    >
+                      <History data-icon="inline-start" /> Archive history
+                    </Button>
                     {!item.targetDownloadEnabled && (
                       <Button variant="outline" size="sm" asChild>
                         <Link
@@ -422,6 +512,94 @@ export function CloudArchiveManager() {
           )}
         </TabsContent>
 
+        <TabsContent value="history" className="mt-4">
+          <Card>
+            <CardContent className="overflow-x-auto p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Route</TableHead>
+                    <TableHead>Progress</TableHead>
+                    <TableHead>Matched / queued</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Error</TableHead>
+                    <TableHead className="w-44" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(historyJobs ?? []).map((job) => (
+                    <TableRow key={job.id}>
+                      <TableCell>
+                        <span translate="no">{job.sourceChatName}</span>
+                        <span className="mx-1 text-muted-foreground">→</span>
+                        <span translate="no">{job.targetChatName}</span>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {job.scannedCount} / {job.maxMessages}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {job.matchedCount} / {job.queuedCount}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{job.status}</Badge>
+                      </TableCell>
+                      <TableCell
+                        className="max-w-64 truncate"
+                        title={job.lastError}
+                      >
+                        {job.lastError || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          {["PENDING", "RUNNING"].includes(job.status) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void historyAction(job, "pause")}
+                            >
+                              <Pause /> Pause
+                            </Button>
+                          )}
+                          {["PAUSED", "FAILED"].includes(job.status) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void historyAction(job, "resume")}
+                            >
+                              <Play /> Resume
+                            </Button>
+                          )}
+                          {["PENDING", "RUNNING", "PAUSED"].includes(
+                            job.status,
+                          ) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void historyAction(job, "cancel")}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(historyJobs ?? []).length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={6}
+                        className="py-8 text-center text-muted-foreground"
+                      >
+                        No historical archive tasks yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="records" className="mt-4">
           <Card>
             <CardContent className="overflow-x-auto p-0">
@@ -442,12 +620,22 @@ export function CloudArchiveManager() {
                     <TableRow key={record.id}>
                       <TableCell>
                         <span translate="no">{record.sourceChatName}</span>
+                        {record.sourceTopicId ? (
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            topic #{record.sourceTopicId}
+                          </span>
+                        ) : null}
                         <span className="ml-1 text-xs text-muted-foreground">
                           #{record.sourceMessageId}
                         </span>
                       </TableCell>
                       <TableCell>
                         <span translate="no">{record.targetChatName}</span>
+                        {record.targetTopicId ? (
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            topic #{record.targetTopicId}
+                          </span>
+                        ) : null}
                         {record.targetMessageId ? (
                           <span className="ml-1 text-xs text-muted-foreground">
                             #{record.targetMessageId}
@@ -497,8 +685,8 @@ export function CloudArchiveManager() {
               {editing ? "Edit cloud archive rule" : "New cloud archive rule"}
             </DialogTitle>
             <DialogDescription>
-              Only messages received after the rule is enabled are archived in
-              this version.
+              New messages are archived automatically. Historical messages can
+              be queued separately after the rule is saved.
             </DialogDescription>
           </DialogHeader>
 
@@ -530,9 +718,24 @@ export function CloudArchiveManager() {
                   accountId={draft.telegramId}
                   value={draft.sourceChatId}
                   onChange={(sourceChatId) =>
-                    setDraft({ ...draft, sourceChatId })
+                    setDraft({
+                      ...draft,
+                      sourceChatId,
+                      rule: { ...draft.rule, sourceTopicId: 0 },
+                    })
                   }
-                  excludeChatId={String(draft.rule.targetChatId || "")}
+                />
+                <RuleTopicPicker
+                  accountId={draft.telegramId}
+                  chatId={draft.sourceChatId}
+                  value={String(draft.rule.sourceTopicId || "")}
+                  allowAll
+                  onChange={(sourceTopicId) =>
+                    setDraft({
+                      ...draft,
+                      rule: { ...draft.rule, sourceTopicId },
+                    })
+                  }
                 />
               </div>
               <div className="grid gap-2">
@@ -543,10 +746,24 @@ export function CloudArchiveManager() {
                   onChange={(targetChatId) =>
                     setDraft({
                       ...draft,
-                      rule: { ...draft.rule, targetChatId },
+                      rule: {
+                        ...draft.rule,
+                        targetChatId,
+                        targetTopicId: 0,
+                      },
                     })
                   }
-                  excludeChatId={draft.sourceChatId}
+                />
+                <RuleTopicPicker
+                  accountId={draft.telegramId}
+                  chatId={String(draft.rule.targetChatId || "")}
+                  value={String(draft.rule.targetTopicId || "")}
+                  onChange={(targetTopicId) =>
+                    setDraft({
+                      ...draft,
+                      rule: { ...draft.rule, targetTopicId },
+                    })
+                  }
                 />
               </div>
             </div>
@@ -744,6 +961,59 @@ export function CloudArchiveManager() {
             >
               {saving ? <Loader2 className="animate-spin" /> : <Copy />}
               Save rule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={historyRule !== null}
+        onOpenChange={(open) => !open && setHistoryRule(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Archive historical messages</DialogTitle>
+            <DialogDescription>
+              The task reads older messages in small pages and feeds the same
+              protected queue as new messages. Media stays inside Telegram.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <p className="text-sm">
+              <span translate="no">{historyRule?.sourceChatName}</span>
+              <span className="mx-2 text-muted-foreground">→</span>
+              <span translate="no">{historyRule?.targetChatName}</span>
+            </p>
+            <div className="grid gap-2">
+              <Label>Maximum messages to scan</Label>
+              <Select value={historyLimit} onValueChange={setHistoryLimit}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="500">500</SelectItem>
+                  <SelectItem value="1000">1,000</SelectItem>
+                  <SelectItem value="5000">5,000</SelectItem>
+                  <SelectItem value="10000">10,000</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Existing source-to-destination records are skipped, so rerunning
+              a completed range does not duplicate archived messages.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setHistoryRule(null)}
+            >
+              Cancel
+            </Button>
+            <Button disabled={historySaving} onClick={() => void createHistory()}>
+              {historySaving ? <Loader2 className="animate-spin" /> : <History />}
+              Start task
             </Button>
           </DialogFooter>
         </DialogContent>

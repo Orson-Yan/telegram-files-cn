@@ -236,6 +236,7 @@ export type DuplicationPolicy = (typeof DuplicationPolicies)[number];
 
 export type AutoTransferRule = {
   transferHistory: boolean;
+  sourceTopicId?: number | string;
   destination: string;
   transferPolicy: TransferPolicy;
   duplicationPolicy: DuplicationPolicy;
@@ -255,7 +256,9 @@ export type ArchiveMode = "COPY" | "FORWARD";
 export type ArchiveScope = "ALL_MESSAGES" | "MEDIA_ONLY";
 
 export type AutoArchiveRule = {
+  sourceTopicId: number | string;
   targetChatId: number | string;
+  targetTopicId: number | string;
   mode: ArchiveMode;
   scope: ArchiveScope;
   fileTypes: Array<Exclude<FileType, "media">>;
@@ -263,6 +266,14 @@ export type AutoArchiveRule = {
   filterExpr: string;
   preserveCaption: boolean;
   disableNotification: boolean;
+};
+
+export type TelegramTopic = {
+  id: string;
+  name: string;
+  general: boolean;
+  closed: boolean;
+  hidden: boolean;
 };
 
 export type CloudArchiveRuleOverview = {
@@ -294,10 +305,12 @@ export type CloudArchiveRecord = {
   id: string;
   telegramId: number;
   sourceChatId: number;
+  sourceTopicId: number;
   sourceMessageId: number;
   sourceAlbumId: number;
   sourceChatName: string;
   targetChatId: number;
+  targetTopicId: number;
   targetMessageId?: number;
   targetChatName: string;
   fileUniqueId?: string;
@@ -306,6 +319,26 @@ export type CloudArchiveRecord = {
   attemptCount: number;
   lastErrorCode?: string;
   lastErrorMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type CloudArchiveHistoryJob = {
+  id: string;
+  telegramId: number;
+  sourceChatId: number;
+  sourceTopicId: number;
+  sourceChatName: string;
+  targetChatId: number;
+  targetTopicId: number;
+  targetChatName: string;
+  status: string;
+  maxMessages: number;
+  fromMessageId: number;
+  scannedCount: number;
+  matchedCount: number;
+  queuedCount: number;
+  lastError?: string;
   createdAt: number;
   updatedAt: number;
 };

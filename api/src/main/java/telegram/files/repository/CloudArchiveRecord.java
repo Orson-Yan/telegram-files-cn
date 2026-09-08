@@ -1,15 +1,23 @@
 package telegram.files.repository;
 
+import cn.hutool.core.lang.Version;
+import cn.hutool.core.map.MapUtil;
+import io.vertx.core.Future;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.SqlClient;
+
+import java.util.TreeMap;
 
 /** Durable source-to-destination mapping for Telegram cloud archival. */
 public record CloudArchiveRecord(
         String id,
         long telegramId,
         long sourceChatId,
+        long sourceTopicId,
         long sourceMessageId,
         long sourceAlbumId,
         long targetChatId,
+        long targetTopicId,
         Long targetMessageId,
         String fileUniqueId,
         String mode,
@@ -28,9 +36,11 @@ public record CloudArchiveRecord(
                 id                 VARCHAR(64) PRIMARY KEY,
                 telegram_id        BIGINT NOT NULL,
                 source_chat_id     BIGINT NOT NULL,
+                source_topic_id    BIGINT NOT NULL DEFAULT 0,
                 source_message_id  BIGINT NOT NULL,
                 source_album_id    BIGINT NOT NULL DEFAULT 0,
                 target_chat_id     BIGINT NOT NULL,
+                target_topic_id    BIGINT NOT NULL DEFAULT 0,
                 target_message_id  BIGINT,
                 file_unique_id     VARCHAR(255),
                 mode               VARCHAR(32) NOT NULL,
@@ -45,14 +55,29 @@ public record CloudArchiveRecord(
             )
             """;
 
+    public static final String RATE_INDEX = """
+            CREATE INDEX idx_archive_account_status_time
+            ON telegram_archive_record (telegram_id, status, updated_at)
+            """;
+
+    public static final TreeMap<Version, String[]> MIGRATIONS = new TreeMap<>(MapUtil.ofEntries(
+            MapUtil.entry(new Version("0.6.0"), new String[]{
+                    "ALTER TABLE telegram_archive_record ADD COLUMN source_topic_id BIGINT NOT NULL DEFAULT 0;",
+                    "ALTER TABLE telegram_archive_record ADD COLUMN target_topic_id BIGINT NOT NULL DEFAULT 0;",
+                    RATE_INDEX
+            })
+    ));
+
     public static CloudArchiveRecord from(Row row) {
         return new CloudArchiveRecord(
                 row.getString("id"),
                 number(row, "telegram_id"),
                 number(row, "source_chat_id"),
+                number(row, "source_topic_id"),
                 number(row, "source_message_id"),
                 number(row, "source_album_id"),
                 number(row, "target_chat_id"),
+                number(row, "target_topic_id"),
                 nullableNumber(row, "target_message_id"),
                 row.getString("file_unique_id"),
                 row.getString("mode"),
@@ -80,6 +105,19 @@ public record CloudArchiveRecord(
         @Override
         public String getScheme() {
             return SCHEME;
+        }
+
+        @Override
+        public TreeMap<Version, String[]> getMigrations() {
+            return MIGRATIONS;
+        }
+
+        @Override
+        public Future<Void> createTable(SqlClient sqlClient) {
+            return Definition.super.createTable(sqlClient)
+                    .compose(_ -> sqlClient.query(RATE_INDEX).execute()
+                            .recover(_ -> Future.succeededFuture()))
+                    .mapEmpty();
         }
     }
 }

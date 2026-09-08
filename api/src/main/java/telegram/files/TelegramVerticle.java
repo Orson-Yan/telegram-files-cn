@@ -807,7 +807,12 @@ public class TelegramVerticle extends AbstractVerticle {
         }
         long targetChatId = archive.rule.targetChatId;
         if (sourceChatId == targetChatId) {
-            throw new IllegalArgumentException("Source and destination chats must be different");
+            if (archive.rule.sourceTopicId == 0 || archive.rule.targetTopicId == 0
+                || archive.rule.sourceTopicId == archive.rule.targetTopicId) {
+                throw new IllegalArgumentException(
+                        "Source and destination must be different chats or different forum topics");
+            }
+            return;
         }
         Set<Long> visited = new HashSet<>();
         long cursor = targetChatId;

@@ -35,6 +35,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { RuleChatPicker } from "@/components/rule-chat-picker";
+import { RuleTopicPicker } from "@/components/rule-topic-picker";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeAuto } from "@/lib/automation";
@@ -73,6 +74,7 @@ function emptyDraft(telegramId = ""): OrganizeDraft {
     enabled: true,
     rule: {
       transferHistory: false,
+      sourceTopicId: 0,
       destination: "",
       transferPolicy: "GROUP_BY_DATE",
       duplicationPolicy: "RENAME",
@@ -269,6 +271,11 @@ export function LocalOrganizeManager() {
                 <div className="min-w-0">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <span translate="no">{item.sourceChatName}</span>
+                    {Number(item.rule.sourceTopicId || 0) !== 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        topic #{item.rule.sourceTopicId}
+                      </span>
+                    )}
                     <span className="text-muted-foreground">→</span>
                     <span className="truncate" translate="no">
                       {item.rule.destination}
@@ -345,8 +352,26 @@ export function LocalOrganizeManager() {
               <RuleChatPicker
                 accountId={draft.telegramId}
                 value={draft.sourceChatId}
+                source="local"
+                eligibleOnly={false}
                 onChange={(sourceChatId) =>
-                  setDraft({ ...draft, sourceChatId })
+                  setDraft({
+                    ...draft,
+                    sourceChatId,
+                    rule: { ...draft.rule, sourceTopicId: 0 },
+                  })
+                }
+              />
+              <RuleTopicPicker
+                accountId={draft.telegramId}
+                chatId={draft.sourceChatId}
+                value={String(draft.rule.sourceTopicId || "")}
+                allowAll
+                onChange={(sourceTopicId) =>
+                  setDraft({
+                    ...draft,
+                    rule: { ...draft.rule, sourceTopicId },
+                  })
                 }
               />
             </div>

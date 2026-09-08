@@ -130,6 +130,9 @@ public class SettingAutoRecords {
     public static class TransferRule {
         public boolean transferHistory;
 
+        /** 0 means every topic in the source chat. */
+        public long sourceTopicId;
+
         public String destination;
 
         public Transfer.TransferPolicy transferPolicy;
@@ -159,8 +162,14 @@ public class SettingAutoRecords {
     }
 
     public static class ArchiveRule {
+        /** 0 means every topic in the source chat. */
+        public long sourceTopicId;
+
         /** Destination chat on the same Telegram account. */
         public long targetChatId;
+
+        /** 0 means the destination chat without a forum topic. */
+        public long targetTopicId;
 
         /** COPY creates an independent message; FORWARD keeps the source header. */
         public ArchiveMode mode = ArchiveMode.COPY;

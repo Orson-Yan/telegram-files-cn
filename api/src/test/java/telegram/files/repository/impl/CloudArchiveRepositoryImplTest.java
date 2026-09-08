@@ -7,6 +7,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import cn.hutool.core.lang.Version;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import telegram.files.repository.CloudArchiveRecord;
@@ -14,6 +15,7 @@ import telegram.files.repository.CloudArchiveRecord;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,6 +23,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ExtendWith(VertxExtension.class)
 class CloudArchiveRepositoryImplTest {
+
+    @Test
+    void migrationAddsForumTopicColumns(Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        String oldScheme = """
+                CREATE TABLE telegram_archive_record (
+                    id VARCHAR(64) PRIMARY KEY,
+                    telegram_id BIGINT NOT NULL,
+                    source_chat_id BIGINT NOT NULL,
+                    source_message_id BIGINT NOT NULL,
+                    source_album_id BIGINT NOT NULL DEFAULT 0,
+                    target_chat_id BIGINT NOT NULL,
+                    target_message_id BIGINT,
+                    file_unique_id VARCHAR(255), mode VARCHAR(32) NOT NULL,
+                    status VARCHAR(32) NOT NULL, attempt_count INT NOT NULL DEFAULT 0,
+                    next_attempt_at BIGINT NOT NULL, last_error_code VARCHAR(64),
+                    last_error_message VARCHAR(1024), created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    UNIQUE (telegram_id, source_chat_id, source_message_id, target_chat_id)
+                )
+                """;
+
+        pool.query(oldScheme).execute()
+                .compose(_ -> new CloudArchiveRecord.CloudArchiveRecordDefinition().migrate(
+                        pool, new Version("0.5.0"), new Version("0.6.0")))
+                .compose(_ -> pool.query("PRAGMA table_info(telegram_archive_record)").execute())
+                .eventually(pool::close)
+                .onComplete(context.succeeding(rows -> context.verify(() -> {
+                    var columns = StreamSupport.stream(rows.spliterator(), false)
+                            .map(row -> row.getString("name"))
+                            .toList();
+                    assertTrue(columns.contains("source_topic_id"));
+                    assertTrue(columns.contains("target_topic_id"));
+                    context.completeNow();
+                })));
+    }
 
     @Test
     void deduplicatesPersistsDeliveryAndRequiresReviewAfterRestart(Vertx vertx,
