@@ -39,7 +39,7 @@ export function RuleChatPicker({
 }: {
   accountId?: string;
   value?: string;
-  onChange: (chatId: string) => void;
+  onChange: (chatId: string, chat: LocalChat) => void;
   placeholder?: string;
   excludeChatId?: string;
   source?: "telegram" | "local";
@@ -100,7 +100,7 @@ export function RuleChatPicker({
                   key={chat.id}
                   value={chat.id}
                   onSelect={() => {
-                    onChange(chat.id);
+                    onChange(chat.id, chat);
                     setOpen(false);
                     setQuery("");
                   }}

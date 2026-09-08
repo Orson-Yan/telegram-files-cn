@@ -7,6 +7,7 @@ import cn.hutool.log.LogFactory;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
 import telegram.files.repository.CloudArchiveRecord;
@@ -113,7 +114,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     }
 
     private void collectMessage(SettingAutoRecords.Automation automation, TdApi.Message message) {
-        if (message == null || message.isOutgoing || !matchesTopic(message, automation.archive.rule.sourceTopicId)) {
+        if (message == null || message.sendingState instanceof TdApi.MessageSendingStatePending
+            || !matchesTopic(message, automation.archive.rule.sourceTopicId)) {
             return;
         }
         if (message.mediaAlbumId == 0) {
@@ -184,22 +186,48 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return;
         }
 
-        List<Future<Boolean>> inserts = messages.stream()
-                .map(message -> DataVerticle.cloudArchiveRepository.enqueue(
-                        automation.telegramId,
-                        automation.chatId,
-                        rule.sourceTopicId,
-                        message.id,
-                        message.mediaAlbumId,
-                        rule.targetChatId,
-                        rule.targetTopicId,
-                        TdApiHelp.getFileUniqueId(message),
-                        effectiveMode(rule).name()
-                ))
-                .toList();
-        Future.all(inserts)
+        DataVerticle.cloudArchiveHistoryRepository
+                .findActive(automation.telegramId, automation.chatId)
+                .compose(historyJob -> Future.all(messages.stream()
+                        .map(message -> {
+                            long sourceTopicId = messageTopicId(message);
+                            return resolveTargetTopic(automation.telegramId, automation.chatId,
+                                    sourceTopicId, rule).compose(targetTopicId -> {
+                                if (shouldStage(historyJob)) {
+                                    return DataVerticle.cloudArchiveRepository.stage(
+                                            automation.telegramId, automation.chatId, sourceTopicId,
+                                            message.id, message.mediaAlbumId, rule.targetChatId,
+                                            targetTopicId, TdApiHelp.getFileUniqueId(message),
+                                            effectiveMode(rule).name(), historyJob.id());
+                                }
+                                return DataVerticle.cloudArchiveRepository.enqueue(
+                                        automation.telegramId, automation.chatId, sourceTopicId,
+                                        message.id, message.mediaAlbumId, rule.targetChatId,
+                                        targetTopicId, TdApiHelp.getFileUniqueId(message),
+                                        effectiveMode(rule).name());
+                            });
+                        })
+                        .toList()))
                 .onSuccess(_ -> scanDue())
                 .onFailure(failure -> log.error(failure, "Failed to enqueue cloud archive messages"));
+    }
+
+    private Future<Long> resolveTargetTopic(long telegramId,
+                                            long sourceChatId,
+                                            long sourceTopicId,
+                                            SettingAutoRecords.ArchiveRule rule) {
+        if (effectiveTopicMode(rule) != SettingAutoRecords.ArchiveTopicMode.PRESERVE) {
+            return Future.succeededFuture(rule.targetTopicId);
+        }
+        TelegramVerticle telegram = TelegramVerticles.get(telegramId).orElse(null);
+        if (telegram == null || !telegram.isAvailable()) {
+            return Future.failedFuture("The Telegram account is unavailable");
+        }
+        if (sourceTopicId == 0) {
+            return Future.failedFuture("A source forum topic is required to preserve topic structure");
+        }
+        return CloudArchiveTopicService.resolve(
+                telegram, sourceChatId, sourceTopicId, rule.targetChatId);
     }
 
     private boolean matches(TdApi.Message message, SettingAutoRecords.ArchiveRule rule) {
@@ -287,6 +315,16 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     }
 
     private Future<Void> processHistoryPage(CloudArchiveHistoryJob job) {
+        if ("DRAINING".equals(job.status())) {
+            return DataVerticle.cloudArchiveRepository.releaseHistory(job.id())
+                    .compose(_ -> DataVerticle.cloudArchiveRepository.countOutstandingHistory(job.id()))
+                    .compose(outstanding -> {
+                        scanDue();
+                        return outstanding == 0
+                                ? DataVerticle.cloudArchiveHistoryRepository.completeDraining(job.id())
+                                : Future.succeededFuture();
+                    });
+        }
         return DataVerticle.cloudArchiveHistoryRepository.start(job.id()).compose(started -> {
             if (!started) {
                 return Future.succeededFuture();
@@ -303,39 +341,44 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 return DataVerticle.cloudArchiveHistoryRepository.fail(
                         job.id(), "The saved archive rule is invalid");
             }
+            if ("DISCOVERING".equals(job.stage())) {
+                return initializeHistoryTopics(telegram, job, rule);
+            }
             return DataVerticle.cloudArchiveRepository.countPending(job.telegramId()).compose(pending -> {
                 // Keep historical scans behind delivery so a large channel can't flood the durable queue.
                 if (pending >= 200) {
                     return Future.succeededFuture();
                 }
-                int remaining = Math.max(0, job.maxMessages() - job.scannedCount());
-                if (remaining == 0) {
-                    return DataVerticle.cloudArchiveHistoryRepository.advance(
-                            job.id(), job.fromMessageId(), 0, 0, 0, true);
+                boolean allHistory = "ALL".equals(job.scanMode());
+                int remaining = allHistory
+                        ? 50 : Math.max(0, job.maxMessages() - job.scannedCount());
+                if (!allHistory && remaining == 0) {
+                    return finishHistoryScan(job, "LIMIT_REACHED");
                 }
                 int pageSize = Math.min(50, remaining);
-                return historyMessages(telegram, job, pageSize).compose(messages -> {
+                return historyMessages(telegram, job, pageSize).compose(rawMessages -> {
+                TdApi.Message[] messages = Arrays.stream(rawMessages)
+                        .filter(Objects::nonNull)
+                        .filter(message -> job.fromMessageId() == 0 || message.id != job.fromMessageId())
+                        .limit(pageSize)
+                        .toArray(TdApi.Message[]::new);
                 List<TdApi.Message> candidates = Arrays.stream(messages)
                         .filter(Objects::nonNull)
-                        .filter(message -> !message.isOutgoing)
-                        .filter(message -> matchesTopic(message, job.sourceTopicId()))
+                        .filter(message -> matchesTopic(message, job.currentTopicId()))
                         .filter(message -> matches(message, rule))
                         .toList();
-                List<Future<Boolean>> inserts = candidates.stream()
-                        .map(message -> DataVerticle.cloudArchiveRepository.enqueue(
-                                job.telegramId(),
-                                job.sourceChatId(),
-                                job.sourceTopicId(),
-                                message.id,
-                                message.mediaAlbumId,
-                                job.targetChatId(),
-                                job.targetTopicId(),
-                                TdApiHelp.getFileUniqueId(message),
-                                effectiveMode(rule).name()))
-                        .toList();
-                return Future.all(inserts).compose(results -> {
+                return resolveHistoryTargetTopic(telegram, job, rule).compose(targetTopicId -> {
+                    List<Future<Boolean>> inserts = candidates.stream()
+                            .map(message -> DataVerticle.cloudArchiveRepository.stage(
+                                    job.telegramId(), job.sourceChatId(), messageTopicId(message),
+                                    message.id, message.mediaAlbumId, job.targetChatId(),
+                                    targetTopicId, TdApiHelp.getFileUniqueId(message),
+                                    effectiveMode(rule).name(), job.id()))
+                            .toList();
+                    return Future.all(inserts);
+                }).compose(results -> {
                     int queued = 0;
-                    for (int index = 0; index < inserts.size(); index++) {
+                    for (int index = 0; index < candidates.size(); index++) {
                         if (Boolean.TRUE.equals(results.resultAt(index))) {
                             queued++;
                         }
@@ -344,15 +387,20 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                             .filter(Objects::nonNull)
                             .mapToLong(message -> message.id)
                             .min()
-                            .stream()
-                            .map(messageId -> Math.max(0L, messageId - 1L))
-                            .findFirst()
                             .orElse(job.fromMessageId());
-                    boolean completed = messages.length == 0
-                                        || job.scannedCount() + messages.length >= job.maxMessages();
                     return DataVerticle.cloudArchiveHistoryRepository.advance(
-                            job.id(), cursor, messages.length, candidates.size(), queued, completed);
-                }).onSuccess(_ -> scanDue());
+                            job.id(), cursor, messages.length, candidates.size(), queued)
+                            .compose(_ -> {
+                                boolean limitReached = !allHistory
+                                                       && job.scannedCount() + messages.length >= job.maxMessages();
+                                if (limitReached) {
+                                    return finishHistoryScan(job, "LIMIT_REACHED");
+                                }
+                                return messages.length == 0
+                                        ? advanceHistoryTopic(job)
+                                        : Future.succeededFuture();
+                            });
+                });
                 });
             }).recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
                         job.id(), safeMessage(failure)));
@@ -362,25 +410,97 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     private Future<TdApi.Message[]> historyMessages(TelegramVerticle telegram,
                                                      CloudArchiveHistoryJob job,
                                                      int limit) {
-        if (job.sourceTopicId() != 0) {
-            TdApi.SearchChatMessages request = new TdApi.SearchChatMessages(
-                    job.sourceChatId(),
-                    new TdApi.MessageTopicForum((int) job.sourceTopicId()),
-                    "",
-                    null,
-                    job.fromMessageId(),
-                    0,
-                    limit,
-                    null
-            );
-            return telegram.client.execute(request)
+        int requestLimit = Math.min(100, limit + (job.fromMessageId() == 0 ? 0 : 1));
+        if (job.currentTopicId() != 0) {
+            return telegram.client.execute(new TdApi.GetForumTopicHistory(
+                            job.sourceChatId(), Math.toIntExact(job.currentTopicId()),
+                            job.fromMessageId(), 0, requestLimit))
                     .map(found -> found == null || found.messages == null
                             ? new TdApi.Message[0] : found.messages);
         }
         return telegram.client.execute(new TdApi.GetChatHistory(
-                        job.sourceChatId(), job.fromMessageId(), 0, limit, false))
+                        job.sourceChatId(), job.fromMessageId(), 0, requestLimit, false))
                 .map(found -> found == null || found.messages == null
                         ? new TdApi.Message[0] : found.messages);
+    }
+
+    private Future<Void> initializeHistoryTopics(TelegramVerticle telegram,
+                                                 CloudArchiveHistoryJob job,
+                                                 SettingAutoRecords.ArchiveRule rule) {
+        if (effectiveTopicMode(rule) != SettingAutoRecords.ArchiveTopicMode.PRESERVE) {
+            long topicId = job.sourceTopicId();
+            return DataVerticle.cloudArchiveHistoryRepository.initializeTopics(
+                    job.id(), new JsonArray(List.of(topicId)).encode(), 1, topicId);
+        }
+        if (!telegram.isForum(job.sourceChatId()) || !telegram.isForum(job.targetChatId())) {
+            return DataVerticle.cloudArchiveHistoryRepository.fail(job.id(),
+                    "Preserving topics requires both source and destination to be forum groups");
+        }
+        return TelegramTopics.listAll(telegram.client, job.sourceChatId(), "")
+                .compose(topics -> {
+                    List<TdApi.ForumTopic> selected = topics.stream()
+                            .filter(topic -> job.sourceTopicId() == 0
+                                             || topic.info.forumTopicId == job.sourceTopicId())
+                            .toList();
+                    if (selected.isEmpty()) {
+                        return Future.failedFuture("No source forum topics were found");
+                    }
+                    return Future.all(selected.stream()
+                                    .map(topic -> CloudArchiveTopicService.resolve(
+                                            telegram, job.sourceChatId(), topic.info, job.targetChatId()))
+                                    .toList())
+                            .compose(_ -> {
+                                List<Long> ids = selected.stream()
+                                        .map(topic -> (long) topic.info.forumTopicId)
+                                        .toList();
+                                return DataVerticle.cloudArchiveHistoryRepository.initializeTopics(
+                                        job.id(), new JsonArray(ids).encode(), ids.size(), ids.getFirst());
+                            });
+                })
+                .recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
+                        job.id(), safeMessage(failure)));
+    }
+
+    private Future<Long> resolveHistoryTargetTopic(TelegramVerticle telegram,
+                                                   CloudArchiveHistoryJob job,
+                                                   SettingAutoRecords.ArchiveRule rule) {
+        return effectiveTopicMode(rule) == SettingAutoRecords.ArchiveTopicMode.PRESERVE
+                ? CloudArchiveTopicService.resolve(telegram, job.sourceChatId(),
+                        job.currentTopicId(), job.targetChatId())
+                : Future.succeededFuture(job.targetTopicId());
+    }
+
+    private Future<Void> advanceHistoryTopic(CloudArchiveHistoryJob job) {
+        List<Long> topicIds = historyTopicIds(job);
+        int nextIndex = job.topicIndex() + 1;
+        if (nextIndex >= topicIds.size()) {
+            return finishHistoryScan(job, "HISTORY_END");
+        }
+        return DataVerticle.cloudArchiveHistoryRepository.completeTopic(
+                job.id(), nextIndex, topicIds.get(nextIndex), false, null);
+    }
+
+    private Future<Void> finishHistoryScan(CloudArchiveHistoryJob job, String reason) {
+        return DataVerticle.cloudArchiveHistoryRepository.completeTopic(
+                job.id(), job.topicCount(), 0, true, reason);
+    }
+
+    private static List<Long> historyTopicIds(CloudArchiveHistoryJob job) {
+        if (StrUtil.isBlank(job.topicIdsJson())) {
+            return List.of(job.sourceTopicId());
+        }
+        return new JsonArray(job.topicIdsJson()).stream()
+                .map(value -> ((Number) value).longValue())
+                .toList();
+    }
+
+    private static boolean shouldStage(CloudArchiveHistoryJob job) {
+        return job != null && !"DRAINING".equals(job.status());
+    }
+
+    private static long messageTopicId(TdApi.Message message) {
+        return message != null && message.topicId instanceof TdApi.MessageTopicForum topic
+                ? topic.forumTopicId : 0L;
     }
 
     private void queue(List<CloudArchiveRecord> records) {
@@ -433,9 +553,16 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                               CloudArchiveRecord first,
                                               long now) {
         SettingAutoRecords.Automation automation = autoRecords.getItem(first.telegramId(), first.sourceChatId());
-        if (!isEnabled(automation) || automation.archive.rule.targetChatId != first.targetChatId()
-            || automation.archive.rule.sourceTopicId != first.sourceTopicId()
-            || automation.archive.rule.targetTopicId != first.targetTopicId()) {
+        SettingAutoRecords.ArchiveRule configuredRule = automation == null || automation.archive == null
+                ? null : automation.archive.rule;
+        boolean topicMismatch = configuredRule != null
+                                && configuredRule.sourceTopicId != 0
+                                && configuredRule.sourceTopicId != first.sourceTopicId();
+        boolean targetTopicMismatch = configuredRule != null
+                                      && effectiveTopicMode(configuredRule) != SettingAutoRecords.ArchiveTopicMode.PRESERVE
+                                      && configuredRule.targetTopicId != first.targetTopicId();
+        if (!isEnabled(automation) || configuredRule.targetChatId != first.targetChatId()
+            || topicMismatch || targetTopicMismatch) {
             return failAll(work.records, false, "RULE_DISABLED", "The cloud archive rule is disabled or changed");
         }
         return Future.all(
@@ -596,6 +723,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         copy.targetChatId = record.targetChatId();
         copy.sourceTopicId = record.sourceTopicId();
         copy.targetTopicId = record.targetTopicId();
+        copy.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
         copy.mode = SettingAutoRecords.ArchiveMode.valueOf(record.mode());
         copy.scope = configured.scope;
         copy.fileTypes = configured.fileTypes;
@@ -608,6 +736,12 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private static SettingAutoRecords.ArchiveMode effectiveMode(SettingAutoRecords.ArchiveRule rule) {
         return rule.mode == null ? SettingAutoRecords.ArchiveMode.COPY : rule.mode;
+    }
+
+    private static SettingAutoRecords.ArchiveTopicMode effectiveTopicMode(
+            SettingAutoRecords.ArchiveRule rule) {
+        return rule.topicMode == null
+                ? SettingAutoRecords.ArchiveTopicMode.MERGE : rule.topicMode;
     }
 
     private static boolean isEnabled(SettingAutoRecords.Automation automation) {

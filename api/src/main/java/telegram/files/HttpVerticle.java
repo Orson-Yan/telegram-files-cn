@@ -1089,7 +1089,9 @@ public class HttpVerticle extends AbstractVerticle {
                         item.put("sourceChatName", source == null ? Convert.toStr(automation.chatId) : source.title)
                                 .put("targetChatName", target == null
                                         ? Convert.toStr(automation.archive.rule.targetChatId)
-                                        : target.title);
+                                        : target.title)
+                                .put("sourceIsForum", telegram.isForum(automation.chatId))
+                                .put("targetIsForum", telegram.isForum(automation.archive.rule.targetChatId));
                     });
                     SettingAutoRecords.Automation targetAutomation = AutomationsHolder.INSTANCE.autoRecords()
                             .getItem(automation.telegramId, automation.archive.rule.targetChatId);
@@ -1160,7 +1162,9 @@ public class HttpVerticle extends AbstractVerticle {
         }
         long telegramId = Convert.toLong(body.getValue("telegramId"));
         long sourceChatId = Convert.toLong(body.getValue("sourceChatId"));
-        int maxMessages = Math.max(1, Math.min(Convert.toInt(body.getValue("maxMessages"), 1000), 10_000));
+        String scanMode = "ALL".equalsIgnoreCase(body.getString("scanMode")) ? "ALL" : "LIMIT";
+        int maxMessages = "ALL".equals(scanMode) ? 0
+                : Math.max(1, Math.min(Convert.toInt(body.getValue("maxMessages"), 1000), 100_000));
         SettingAutoRecords.Automation automation = AutomationsHolder.INSTANCE.autoRecords()
                 .getItem(telegramId, sourceChatId);
         if (automation == null || automation.archive == null || !automation.archive.enabled
@@ -1178,6 +1182,7 @@ public class HttpVerticle extends AbstractVerticle {
                         rule.targetChatId,
                         rule.targetTopicId,
                         Json.encode(rule),
+                        scanMode,
                         maxMessages)
                 .map(this::cloudArchiveHistoryJson)
                 .onSuccess(ctx::json)
@@ -1194,11 +1199,15 @@ public class HttpVerticle extends AbstractVerticle {
     private void handleCloudArchiveHistoryAction(RoutingContext ctx) {
         String jobId = ctx.pathParam("jobId");
         String action = ctx.pathParam("action");
-        if (StrUtil.isBlank(jobId) || !Set.of("pause", "resume", "cancel").contains(action)) {
+        if (StrUtil.isBlank(jobId) || !Set.of("pause", "resume", "cancel", "delete").contains(action)) {
             ctx.fail(400);
             return;
         }
-        DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action)
+        Future<Boolean> transition = Set.of("cancel", "delete").contains(action)
+                ? DataVerticle.cloudArchiveRepository.cancelHistory(jobId)
+                        .compose(_ -> DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action))
+                : DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action);
+        transition
                 .onSuccess(updated -> {
                     if (!updated) {
                         ctx.fail(409);
@@ -1252,7 +1261,22 @@ public class HttpVerticle extends AbstractVerticle {
                     if (source == null) {
                         return Future.failedFuture("The source chat has no message to test");
                     }
-                    return CloudArchiveService.archive(telegram, sourceChatId, List.of(source.id), rule);
+                    SettingAutoRecords.ArchiveTopicMode topicMode = rule.topicMode == null
+                            ? SettingAutoRecords.ArchiveTopicMode.MERGE : rule.topicMode;
+                    if (topicMode != SettingAutoRecords.ArchiveTopicMode.PRESERVE) {
+                        return CloudArchiveService.archive(telegram, sourceChatId, List.of(source.id), rule);
+                    }
+                    if (!(source.topicId instanceof TdApi.MessageTopicForum topic)) {
+                        return Future.failedFuture("The test message doesn't belong to a forum topic");
+                    }
+                    return CloudArchiveTopicService.resolve(
+                                    telegram, sourceChatId, topic.forumTopicId, rule.targetChatId)
+                            .compose(targetTopicId -> {
+                                rule.targetTopicId = targetTopicId;
+                                rule.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
+                                return CloudArchiveService.archive(
+                                        telegram, sourceChatId, List.of(source.id), rule);
+                            });
                 })
                 .map(targets -> new JsonObject().put("targetMessageIds", new JsonArray(targets.values().stream().toList())))
                 .onSuccess(ctx::json)
@@ -1309,9 +1333,12 @@ public class HttpVerticle extends AbstractVerticle {
             ctx.fail(400);
             return;
         }
-        telegram.client.execute(new TdApi.GetForumTopics(chatId, query, 0, 0, 0, 100), true)
-                .map(result -> new JsonArray(Arrays.stream(result == null || result.topics == null
-                                ? new TdApi.ForumTopic[0] : result.topics)
+        if (!telegram.isForum(chatId)) {
+            ctx.json(new JsonArray());
+            return;
+        }
+        TelegramTopics.listAll(telegram.client, chatId, query)
+                .map(result -> new JsonArray(result.stream()
                         .filter(topic -> topic != null && topic.info != null)
                         .map(topic -> new JsonObject()
                                 .put("id", Integer.toString(topic.info.forumTopicId))
@@ -1320,7 +1347,6 @@ public class HttpVerticle extends AbstractVerticle {
                                 .put("closed", topic.info.isClosed)
                                 .put("hidden", topic.info.isHidden))
                         .toList()))
-                .recover(_ -> Future.succeededFuture(new JsonArray()))
                 .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
     }
@@ -1331,22 +1357,8 @@ public class HttpVerticle extends AbstractVerticle {
         if (sourceTopicId == 0) {
             return telegram.client.execute(new TdApi.GetChatHistory(sourceChatId, 0, 0, 1, false));
         }
-        return telegram.client.execute(new TdApi.SearchChatMessages(
-                        sourceChatId,
-                        new TdApi.MessageTopicForum((int) sourceTopicId),
-                        "",
-                        null,
-                        0,
-                        0,
-                        1,
-                        null))
-                .map(found -> {
-                    TdApi.Messages result = new TdApi.Messages();
-                    result.totalCount = found == null ? 0 : found.totalCount;
-                    result.messages = found == null || found.messages == null
-                            ? new TdApi.Message[0] : found.messages;
-                    return result;
-                });
+        return telegram.client.execute(new TdApi.GetForumTopicHistory(
+                sourceChatId, Math.toIntExact(sourceTopicId), 0, 0, 1));
     }
 
     private void handleLocalOrganizeSources(RoutingContext ctx) {

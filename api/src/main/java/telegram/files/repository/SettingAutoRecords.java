@@ -171,6 +171,9 @@ public class SettingAutoRecords {
         /** 0 means the destination chat without a forum topic. */
         public long targetTopicId;
 
+        /** MERGE uses targetTopicId; PRESERVE creates and reuses a matching target forum topic. */
+        public ArchiveTopicMode topicMode = ArchiveTopicMode.MERGE;
+
         /** COPY creates an independent message; FORWARD keeps the source header. */
         public ArchiveMode mode = ArchiveMode.COPY;
 
@@ -191,6 +194,11 @@ public class SettingAutoRecords {
     public enum ArchiveMode {
         COPY,
         FORWARD
+    }
+
+    public enum ArchiveTopicMode {
+        MERGE,
+        PRESERVE
     }
 
     public enum ArchiveScope {

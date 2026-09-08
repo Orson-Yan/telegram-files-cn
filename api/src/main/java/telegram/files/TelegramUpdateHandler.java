@@ -54,6 +54,7 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
             case TdApi.UpdateChatReadInbox.CONSTRUCTOR:
             case TdApi.UpdateChatLastMessage.CONSTRUCTOR:
             case TdApi.UpdateChatPosition.CONSTRUCTOR:
+            case TdApi.UpdateSupergroup.CONSTRUCTOR:
                 if (onChatUpdated != null) {
                     onChatUpdated.accept(object);
                 }

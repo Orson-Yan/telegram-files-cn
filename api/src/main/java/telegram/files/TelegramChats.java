@@ -21,6 +21,8 @@ public class TelegramChats {
 
     private final ConcurrentMap<Long, TdApi.Chat> chats = new ConcurrentHashMap<>();
 
+    private final ConcurrentMap<Long, TdApi.Supergroup> supergroups = new ConcurrentHashMap<>();
+
     private final NavigableSet<OrderedChat> mainChatList = new TreeSet<>();
 
     private final NavigableSet<OrderedChat> archivedChatList = new TreeSet<>();
@@ -54,6 +56,15 @@ public class TelegramChats {
 
     public TdApi.Chat getChat(long chatId) {
         return chats.get(chatId);
+    }
+
+    public boolean isForum(long chatId) {
+        TdApi.Chat chat = chats.get(chatId);
+        if (chat == null || !(chat.type instanceof TdApi.ChatTypeSupergroup type) || type.isChannel) {
+            return false;
+        }
+        TdApi.Supergroup supergroup = supergroups.get(type.supergroupId);
+        return supergroup != null && supergroup.isForum;
     }
 
     public void loadMainChatList() {
@@ -173,6 +184,13 @@ public class TelegramChats {
                     assert pos == new_positions.length;
 
                     setChatPositions(chat, new_positions);
+                }
+                break;
+            }
+            case TdApi.UpdateSupergroup.CONSTRUCTOR: {
+                TdApi.UpdateSupergroup update = (TdApi.UpdateSupergroup) object;
+                if (update.supergroup != null) {
+                    supergroups.put(update.supergroup.id, update.supergroup);
                 }
                 break;
             }

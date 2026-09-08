@@ -38,6 +38,38 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                    long targetTopicId,
                                    String fileUniqueId,
                                    String mode) {
+        return insert(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode,
+                null, "PENDING");
+    }
+
+    @Override
+    public Future<Boolean> stage(long telegramId,
+                                 long sourceChatId,
+                                 long sourceTopicId,
+                                 long sourceMessageId,
+                                 long sourceAlbumId,
+                                 long targetChatId,
+                                 long targetTopicId,
+                                 String fileUniqueId,
+                                 String mode,
+                                 String historyJobId) {
+        return insert(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode,
+                historyJobId, "STAGED");
+    }
+
+    private Future<Boolean> insert(long telegramId,
+                                   long sourceChatId,
+                                   long sourceTopicId,
+                                   long sourceMessageId,
+                                   long sourceAlbumId,
+                                   long targetChatId,
+                                   long targetTopicId,
+                                   String fileUniqueId,
+                                   String mode,
+                                   String historyJobId,
+                                   String status) {
         return findExisting(telegramId, sourceChatId, sourceMessageId, targetChatId)
                 .compose(existing -> {
                     if (existing) {
@@ -48,10 +80,11 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                     INSERT INTO telegram_archive_record
                                         (id, telegram_id, source_chat_id, source_message_id,
                                          source_topic_id, source_album_id, target_chat_id, target_topic_id, target_message_id,
-                                         file_unique_id, mode, status, attempt_count,
+                                         file_unique_id, mode, history_job_id, delivery_sequence,
+                                         status, attempt_count,
                                          next_attempt_at, last_error_code, last_error_message,
                                          created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'PENDING', 0, ?, NULL, NULL, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?)
                                     """)
                             .execute(Tuple.of(
                                     UUID.randomUUID().toString(),
@@ -64,6 +97,9 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                     targetTopicId,
                                     fileUniqueId,
                                     mode,
+                                    historyJobId,
+                                    sourceMessageId,
+                                    status,
                                     now,
                                     now,
                                     now
@@ -75,6 +111,40 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                             ? Future.succeededFuture(false)
                                             : Future.failedFuture(failure)));
                 });
+    }
+
+    @Override
+    public Future<Void> releaseHistory(String historyJobId) {
+        long now = clock.millis();
+        return preparedQuery("""
+                        UPDATE telegram_archive_record
+                        SET status = 'PENDING', next_attempt_at = ?, updated_at = ?
+                        WHERE history_job_id = ? AND status = 'STAGED'
+                        """)
+                .execute(Tuple.of(now, now, historyJobId))
+                .mapEmpty();
+    }
+
+    @Override
+    public Future<Long> countOutstandingHistory(String historyJobId) {
+        return preparedQuery("""
+                        SELECT COUNT(*) AS total FROM telegram_archive_record
+                        WHERE history_job_id = ?
+                          AND status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING')
+                        """)
+                .execute(Tuple.of(historyJobId))
+                .map(rows -> value(rows.iterator().next(), "total"));
+    }
+
+    @Override
+    public Future<Void> cancelHistory(String historyJobId) {
+        return preparedQuery("""
+                        DELETE FROM telegram_archive_record
+                        WHERE history_job_id = ?
+                          AND status IN ('STAGED', 'PENDING', 'RETRY')
+                        """)
+                .execute(Tuple.of(historyJobId))
+                .mapEmpty();
     }
 
     private Future<Boolean> findExisting(long telegramId,
@@ -170,7 +240,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
         return preparedQuery("""
                         SELECT * FROM telegram_archive_record
                         WHERE status IN ('PENDING', 'RETRY') AND next_attempt_at <= ?
-                        ORDER BY created_at ASC
+                        ORDER BY delivery_sequence ASC, created_at ASC
                         LIMIT ?
                         """)
                 .execute(Tuple.of(now, Math.max(1, Math.min(limit, 200))))

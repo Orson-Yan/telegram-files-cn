@@ -12,6 +12,7 @@ public interface CloudArchiveHistoryRepository {
                                           long targetChatId,
                                           long targetTopicId,
                                           String ruleJson,
+                                          String scanMode,
                                           int maxMessages);
 
     Future<List<CloudArchiveHistoryJob>> listRecent(int limit);
@@ -20,12 +21,23 @@ public interface CloudArchiveHistoryRepository {
 
     Future<Boolean> start(String id);
 
+    Future<CloudArchiveHistoryJob> findActive(long telegramId, long sourceChatId);
+
+    Future<Void> initializeTopics(String id, String topicIdsJson, int topicCount, long currentTopicId);
+
     Future<Void> advance(String id,
                          long fromMessageId,
                          int scanned,
                          int matched,
-                         int queued,
-                         boolean completed);
+                         int queued);
+
+    Future<Void> completeTopic(String id,
+                               int nextTopicIndex,
+                               long nextTopicId,
+                               boolean scanCompleted,
+                               String completionReason);
+
+    Future<Void> completeDraining(String id);
 
     Future<Void> fail(String id, String message);
 

@@ -28,6 +28,23 @@ public interface CloudArchiveRepository {
                             String fileUniqueId,
                             String mode);
 
+    Future<Boolean> stage(long telegramId,
+                          long sourceChatId,
+                          long sourceTopicId,
+                          long sourceMessageId,
+                          long sourceAlbumId,
+                          long targetChatId,
+                          long targetTopicId,
+                          String fileUniqueId,
+                          String mode,
+                          String historyJobId);
+
+    Future<Void> releaseHistory(String historyJobId);
+
+    Future<Long> countOutstandingHistory(String historyJobId);
+
+    Future<Void> cancelHistory(String historyJobId);
+
     Future<Boolean> claim(String id);
 
     Future<Void> complete(String id, long targetMessageId);

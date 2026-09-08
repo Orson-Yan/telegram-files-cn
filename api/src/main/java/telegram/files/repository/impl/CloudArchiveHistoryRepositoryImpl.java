@@ -35,11 +35,12 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                                                  long targetChatId,
                                                  long targetTopicId,
                                                  String ruleJson,
+                                                 String scanMode,
                                                  int maxMessages) {
         return preparedQuery("""
                         SELECT id FROM telegram_archive_history_job
                         WHERE telegram_id = ? AND source_chat_id = ?
-                          AND status IN ('PENDING', 'RUNNING', 'PAUSED')
+                          AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED')
                         LIMIT 1
                         """)
                 .execute(Tuple.of(telegramId, sourceChatId))
@@ -53,16 +54,17 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                     return preparedQuery("""
                                     INSERT INTO telegram_archive_history_job
                                         (id, telegram_id, source_chat_id, source_topic_id,
-                                         target_chat_id, target_topic_id, rule_json, status,
-                                         max_messages, from_message_id, scanned_count, matched_count,
+                                         target_chat_id, target_topic_id, rule_json, status, scan_mode,
+                                         stage, max_messages, from_message_id, scanned_count, matched_count,
                                          queued_count, last_error, created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 0, 0, 0, 0, NULL, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'DISCOVERING', ?, 0, 0, 0, 0, NULL, ?, ?)
                                     """)
                             .execute(Tuple.of(id, telegramId, sourceChatId, sourceTopicId,
-                                    targetChatId, targetTopicId, ruleJson, maxMessages, now, now))
+                                    targetChatId, targetTopicId, ruleJson, scanMode, maxMessages, now, now))
                             .map(_ -> new CloudArchiveHistoryJob(id, telegramId, sourceChatId,
                                     sourceTopicId, targetChatId, targetTopicId, ruleJson, "PENDING",
-                                    maxMessages, 0, 0, 0, 0, null, now, now));
+                                    scanMode, "DISCOVERING", maxMessages, null, 0, 0, 0,
+                                    0, 0, 0, 0, null, null, now, now));
                 });
     }
 
@@ -80,8 +82,9 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
     public Future<List<CloudArchiveHistoryJob>> listRunnable(int limit) {
         return preparedQuery("""
                         SELECT * FROM telegram_archive_history_job
-                        WHERE status IN ('PENDING', 'RUNNING')
-                        ORDER BY created_at ASC LIMIT ?
+                        WHERE status IN ('PENDING', 'RUNNING', 'DRAINING')
+                        ORDER BY CASE WHEN status = 'DRAINING' THEN 1 ELSE 0 END,
+                                 created_at ASC LIMIT ?
                         """)
                 .execute(Tuple.of(Math.max(1, Math.min(limit, 20))))
                 .map(this::jobs);
@@ -99,23 +102,81 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
     }
 
     @Override
+    public Future<CloudArchiveHistoryJob> findActive(long telegramId, long sourceChatId) {
+        return preparedQuery("""
+                        SELECT * FROM telegram_archive_history_job
+                        WHERE telegram_id = ? AND source_chat_id = ?
+                          AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED')
+                        ORDER BY created_at DESC LIMIT 1
+                        """)
+                .execute(Tuple.of(telegramId, sourceChatId))
+                .map(rows -> rows.iterator().hasNext()
+                        ? CloudArchiveHistoryJob.from(rows.iterator().next()) : null);
+    }
+
+    @Override
+    public Future<Void> initializeTopics(String id,
+                                         String topicIdsJson,
+                                         int topicCount,
+                                         long currentTopicId) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_history_job
+                        SET stage = 'SCANNING', topic_ids_json = ?, topic_index = 0,
+                            topic_count = ?, current_topic_id = ?, from_message_id = 0,
+                            last_error = NULL, updated_at = ?
+                        WHERE id = ? AND status = 'RUNNING'
+                        """)
+                .execute(Tuple.of(topicIdsJson, topicCount, currentTopicId, clock.millis(), id))
+                .mapEmpty();
+    }
+
+    @Override
     public Future<Void> advance(String id,
                                 long fromMessageId,
                                 int scanned,
                                 int matched,
-                                int queued,
-                                boolean completed) {
+                                int queued) {
         return preparedQuery("""
                         UPDATE telegram_archive_history_job
-                        SET status = ?, from_message_id = ?,
+                        SET from_message_id = ?,
                             scanned_count = scanned_count + ?,
                             matched_count = matched_count + ?,
                             queued_count = queued_count + ?,
                             last_error = NULL, updated_at = ?
                         WHERE id = ? AND status = 'RUNNING'
                         """)
-                .execute(Tuple.of(completed ? "COMPLETED" : "RUNNING", fromMessageId,
-                        scanned, matched, queued, clock.millis(), id))
+                .execute(Tuple.of(fromMessageId, scanned, matched, queued, clock.millis(), id))
+                .mapEmpty();
+    }
+
+    @Override
+    public Future<Void> completeTopic(String id,
+                                      int nextTopicIndex,
+                                      long nextTopicId,
+                                      boolean scanCompleted,
+                                      String completionReason) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_history_job
+                        SET status = ?, stage = ?, topic_index = ?, current_topic_id = ?,
+                            from_message_id = 0, completion_reason = ?, last_error = NULL,
+                            updated_at = ?
+                        WHERE id = ? AND status = 'RUNNING'
+                        """)
+                .execute(Tuple.of(scanCompleted ? "DRAINING" : "RUNNING",
+                        scanCompleted ? "DRAINING" : "SCANNING",
+                        nextTopicIndex, nextTopicId, completionReason,
+                        clock.millis(), id))
+                .mapEmpty();
+    }
+
+    @Override
+    public Future<Void> completeDraining(String id) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_history_job
+                        SET status = 'COMPLETED', stage = 'COMPLETED', updated_at = ?
+                        WHERE id = ? AND status = 'DRAINING'
+                        """)
+                .execute(Tuple.of(clock.millis(), id))
                 .mapEmpty();
     }
 
@@ -140,12 +201,20 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                     """;
             case "resume" -> """
                     UPDATE telegram_archive_history_job
-                    SET status = 'PENDING', last_error = NULL, updated_at = ?
+                    SET status = 'PENDING',
+                        from_message_id = CASE WHEN last_error LIKE '%from_message_id%' THEN 0 ELSE from_message_id END,
+                        scanned_count = CASE WHEN last_error LIKE '%from_message_id%' THEN 0 ELSE scanned_count END,
+                        matched_count = CASE WHEN last_error LIKE '%from_message_id%' THEN 0 ELSE matched_count END,
+                        last_error = NULL, updated_at = ?
                     WHERE id = ? AND status IN ('PAUSED', 'FAILED')
                     """;
             case "cancel" -> """
                     UPDATE telegram_archive_history_job SET status = 'CANCELLED', updated_at = ?
-                    WHERE id = ? AND status IN ('PENDING', 'RUNNING', 'PAUSED')
+                    WHERE id = ? AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED', 'FAILED')
+                    """;
+            case "delete" -> """
+                    DELETE FROM telegram_archive_history_job
+                    WHERE id = ? AND status IN ('COMPLETED', 'CANCELLED', 'FAILED')
                     """;
             default -> null;
         };
@@ -153,7 +222,8 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
             return Future.failedFuture(new IllegalArgumentException("Unsupported history task action"));
         }
         return preparedQuery(sql)
-                .execute(Tuple.of(clock.millis(), id))
+                .execute("delete".equals(normalized)
+                        ? Tuple.of(id) : Tuple.of(clock.millis(), id))
                 .map(rows -> rows.rowCount() == 1);
     }
 

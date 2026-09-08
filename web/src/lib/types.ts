@@ -16,6 +16,7 @@ export type TelegramChat = {
   id: string;
   name: string;
   type: "private" | "group" | "channel";
+  isForum?: boolean;
   avatar?: string;
   unreadCount?: number;
   lastMessage?: string;
@@ -254,11 +255,13 @@ export type AutoDownloadRule = {
 
 export type ArchiveMode = "COPY" | "FORWARD";
 export type ArchiveScope = "ALL_MESSAGES" | "MEDIA_ONLY";
+export type ArchiveTopicMode = "MERGE" | "PRESERVE";
 
 export type AutoArchiveRule = {
   sourceTopicId: number | string;
   targetChatId: number | string;
   targetTopicId: number | string;
+  topicMode: ArchiveTopicMode;
   mode: ArchiveMode;
   scope: ArchiveScope;
   fileTypes: Array<Exclude<FileType, "media">>;
@@ -281,8 +284,10 @@ export type CloudArchiveRuleOverview = {
   accountName: string;
   sourceChatId: string;
   sourceChatName: string;
+  sourceIsForum?: boolean;
   targetChatId: string;
   targetChatName: string;
+  targetIsForum?: boolean;
   targetDownloadEnabled: boolean;
   enabled: boolean;
   rule: AutoArchiveRule;
@@ -333,11 +338,17 @@ export type CloudArchiveHistoryJob = {
   targetTopicId: number;
   targetChatName: string;
   status: string;
+  scanMode: "ALL" | "LIMIT";
+  stage: "DISCOVERING" | "SCANNING" | "DRAINING" | "COMPLETED";
   maxMessages: number;
   fromMessageId: number;
   scannedCount: number;
   matchedCount: number;
   queuedCount: number;
+  topicIndex: number;
+  topicCount: number;
+  currentTopicId: number;
+  completionReason?: "HISTORY_END" | "LIMIT_REACHED";
   lastError?: string;
   createdAt: number;
   updatedAt: number;

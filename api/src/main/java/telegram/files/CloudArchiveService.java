@@ -170,6 +170,16 @@ public final class CloudArchiveService {
         if (target.hasProtectedContent) {
             warnings.add("The destination protects archived messages from later forwarding or saving");
         }
+        SettingAutoRecords.ArchiveTopicMode topicMode = rule.topicMode == null
+                ? SettingAutoRecords.ArchiveTopicMode.MERGE : rule.topicMode;
+        if (topicMode == SettingAutoRecords.ArchiveTopicMode.PRESERVE
+            && (!telegram.isForum(sourceChatId) || !telegram.isForum(rule.targetChatId))) {
+            return Future.succeededFuture(new JsonObject()
+                    .put("valid", false)
+                    .put("code", "FORUM_REQUIRED")
+                    .put("message", "Preserving topics requires forum groups at both ends")
+                    .put("warnings", warnings));
+        }
         warnings.add("Use Send real test to confirm that this account can write to the destination chat");
         return latestSourceMessage(telegram, sourceChatId, source, rule.sourceTopicId)
                 .compose(message -> {
@@ -204,15 +214,8 @@ public final class CloudArchiveService {
         if (sourceTopicId == 0) {
             return Future.succeededFuture(source.lastMessage);
         }
-        return telegram.client.execute(new TdApi.SearchChatMessages(
-                        sourceChatId,
-                        new TdApi.MessageTopicForum((int) sourceTopicId),
-                        "",
-                        null,
-                        0,
-                        0,
-                        1,
-                        null))
+        return telegram.client.execute(new TdApi.GetForumTopicHistory(
+                        sourceChatId, Math.toIntExact(sourceTopicId), 0, 0, 1))
                 .map(found -> found == null || found.messages == null || found.messages.length == 0
                         ? null : found.messages[0]);
     }

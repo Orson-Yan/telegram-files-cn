@@ -21,6 +21,8 @@ public record CloudArchiveRecord(
         Long targetMessageId,
         String fileUniqueId,
         String mode,
+        String historyJobId,
+        long deliverySequence,
         String status,
         int attemptCount,
         long nextAttemptAt,
@@ -44,6 +46,8 @@ public record CloudArchiveRecord(
                 target_message_id  BIGINT,
                 file_unique_id     VARCHAR(255),
                 mode               VARCHAR(32) NOT NULL,
+                history_job_id     VARCHAR(64),
+                delivery_sequence  BIGINT NOT NULL DEFAULT 0,
                 status             VARCHAR(32) NOT NULL,
                 attempt_count      INT NOT NULL DEFAULT 0,
                 next_attempt_at    BIGINT NOT NULL,
@@ -60,11 +64,25 @@ public record CloudArchiveRecord(
             ON telegram_archive_record (telegram_id, status, updated_at)
             """;
 
+    public static final String DUE_INDEX = """
+            CREATE INDEX idx_archive_due_delivery
+            ON telegram_archive_record (status, next_attempt_at, delivery_sequence)
+            """;
+
+    public static final String HISTORY_INDEX = """
+            CREATE INDEX idx_archive_history_delivery
+            ON telegram_archive_record (history_job_id, status, delivery_sequence)
+            """;
+
     public static final TreeMap<Version, String[]> MIGRATIONS = new TreeMap<>(MapUtil.ofEntries(
             MapUtil.entry(new Version("0.6.0"), new String[]{
                     "ALTER TABLE telegram_archive_record ADD COLUMN source_topic_id BIGINT NOT NULL DEFAULT 0;",
                     "ALTER TABLE telegram_archive_record ADD COLUMN target_topic_id BIGINT NOT NULL DEFAULT 0;",
                     RATE_INDEX
+            }),
+            MapUtil.entry(new Version("0.7.0"), new String[]{
+                    "ALTER TABLE telegram_archive_record ADD COLUMN history_job_id VARCHAR(64);",
+                    "ALTER TABLE telegram_archive_record ADD COLUMN delivery_sequence BIGINT NOT NULL DEFAULT 0;"
             })
     ));
 
@@ -81,6 +99,8 @@ public record CloudArchiveRecord(
                 nullableNumber(row, "target_message_id"),
                 row.getString("file_unique_id"),
                 row.getString("mode"),
+                row.getString("history_job_id"),
+                number(row, "delivery_sequence"),
                 row.getString("status"),
                 (int) number(row, "attempt_count"),
                 number(row, "next_attempt_at"),
@@ -115,9 +135,22 @@ public record CloudArchiveRecord(
         @Override
         public Future<Void> createTable(SqlClient sqlClient) {
             return Definition.super.createTable(sqlClient)
-                    .compose(_ -> sqlClient.query(RATE_INDEX).execute()
-                            .recover(_ -> Future.succeededFuture()))
-                    .mapEmpty();
+                    .compose(_ -> createIndexes(sqlClient));
+        }
+
+        @Override
+        public Future<Void> migrate(SqlClient sqlClient, Version lastVersion, Version currentVersion) {
+            return Definition.super.migrate(sqlClient, lastVersion, currentVersion)
+                    .compose(_ -> createIndexes(sqlClient));
+        }
+
+        private Future<Void> createIndexes(SqlClient sqlClient) {
+            Future<Void> future = Future.succeededFuture();
+            for (String index : new String[]{RATE_INDEX, DUE_INDEX, HISTORY_INDEX}) {
+                future = future.compose(_ -> sqlClient.query(index).execute()
+                        .recover(_ -> Future.succeededFuture()).mapEmpty());
+            }
+            return future;
         }
     }
 }

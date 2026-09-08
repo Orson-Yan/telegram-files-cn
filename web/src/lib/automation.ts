@@ -31,6 +31,7 @@ export function createDefaultAuto(): Auto {
         sourceTopicId: 0,
         targetChatId: 0,
         targetTopicId: 0,
+        topicMode: "MERGE",
         mode: "COPY",
         scope: "ALL_MESSAGES",
         fileTypes: [],

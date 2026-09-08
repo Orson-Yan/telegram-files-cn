@@ -18,6 +18,7 @@ import {
   Settings2,
   ShieldCheck,
   SkipForward,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +71,8 @@ import type {
 type RuleDraft = {
   telegramId: string;
   sourceChatId: string;
+  sourceIsForum: boolean;
+  targetIsForum: boolean;
   enabled: boolean;
   rule: AutoArchiveRule;
 };
@@ -80,11 +83,14 @@ function emptyDraft(telegramId = ""): RuleDraft {
   return {
     telegramId,
     sourceChatId: "",
+    sourceIsForum: false,
+    targetIsForum: false,
     enabled: true,
     rule: {
       sourceTopicId: 0,
       targetChatId: 0,
       targetTopicId: 0,
+      topicMode: "MERGE",
       mode: "COPY",
       scope: "ALL_MESSAGES",
       fileTypes: [],
@@ -100,12 +106,15 @@ function toDraft(rule: CloudArchiveRuleOverview): RuleDraft {
   return {
     telegramId: rule.telegramId,
     sourceChatId: rule.sourceChatId,
+    sourceIsForum: Boolean(rule.sourceIsForum),
+    targetIsForum: Boolean(rule.targetIsForum),
     enabled: rule.enabled,
     rule: {
       ...rule.rule,
       sourceTopicId: String(rule.rule.sourceTopicId || ""),
       targetChatId: String(rule.targetChatId),
       targetTopicId: String(rule.rule.targetTopicId || ""),
+      topicMode: rule.rule.topicMode || "MERGE",
     },
   };
 }
@@ -169,7 +178,7 @@ export function CloudArchiveManager() {
   const [checking, setChecking] = useState<"validate" | "test" | null>(null);
   const [historyRule, setHistoryRule] =
     useState<CloudArchiveRuleOverview | null>(null);
-  const [historyLimit, setHistoryLimit] = useState("1000");
+  const [historyLimit, setHistoryLimit] = useState("ALL");
   const [historySaving, setHistorySaving] = useState(false);
 
   const {
@@ -325,7 +334,8 @@ export function CloudArchiveManager() {
       await POST("/cloud-archive/history", {
         telegramId: historyRule.telegramId,
         sourceChatId: historyRule.sourceChatId,
-        maxMessages: Number(historyLimit),
+        scanMode: historyLimit === "ALL" ? "ALL" : "LIMIT",
+        maxMessages: historyLimit === "ALL" ? 0 : Number(historyLimit),
       });
       await reloadHistory();
       setHistoryRule(null);
@@ -344,7 +354,7 @@ export function CloudArchiveManager() {
 
   const historyAction = async (
     job: CloudArchiveHistoryJob,
-    action: "pause" | "resume" | "cancel",
+    action: "pause" | "resume" | "cancel" | "delete",
   ) => {
     try {
       await POST(`/cloud-archive/history/${job.id}/${action}`);
@@ -452,6 +462,9 @@ export function CloudArchiveManager() {
                         {item.rule.scope === "ALL_MESSAGES"
                           ? "All messages"
                           : "Media only"}
+                        {item.rule.topicMode === "PRESERVE"
+                          ? " · Preserve topics"
+                          : ""}
                       </p>
                     </div>
                     <Badge variant={item.enabled ? "default" : "secondary"}>
@@ -470,7 +483,7 @@ export function CloudArchiveManager() {
                       size="sm"
                       disabled={!item.enabled}
                       onClick={() => {
-                        setHistoryLimit("1000");
+                        setHistoryLimit("ALL");
                         setHistoryRule(item);
                       }}
                     >
@@ -535,13 +548,36 @@ export function CloudArchiveManager() {
                         <span translate="no">{job.targetChatName}</span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">
-                        {job.scannedCount} / {job.maxMessages}
+                        <div>
+                          {job.scannedCount} /{" "}
+                          {job.scanMode === "ALL" ? "All history" : job.maxMessages}
+                        </div>
+                        {job.topicCount > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            Topic {Math.min(job.topicIndex + 1, job.topicCount)} /{" "}
+                            {job.topicCount}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">
                         {job.matchedCount} / {job.queuedCount}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{job.status}</Badge>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge variant="outline">{job.status}</Badge>
+                          {job.stage && job.stage !== job.status && (
+                            <span className="text-xs text-muted-foreground">
+                              {job.stage}
+                            </span>
+                          )}
+                          {job.completionReason && (
+                            <span className="text-xs text-muted-foreground">
+                              {job.completionReason === "HISTORY_END"
+                                ? "History end reached"
+                                : "Limit reached"}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell
                         className="max-w-64 truncate"
@@ -569,15 +605,31 @@ export function CloudArchiveManager() {
                               <Play /> Resume
                             </Button>
                           )}
-                          {["PENDING", "RUNNING", "PAUSED"].includes(
-                            job.status,
-                          ) && (
+                          {[
+                            "PENDING",
+                            "RUNNING",
+                            "DRAINING",
+                            "PAUSED",
+                            "FAILED",
+                          ].includes(job.status) && (
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => void historyAction(job, "cancel")}
                             >
                               Cancel
+                            </Button>
+                          )}
+                          {["COMPLETED", "CANCELLED", "FAILED"].includes(
+                            job.status,
+                          ) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete task"
+                              onClick={() => void historyAction(job, "delete")}
+                            >
+                              <Trash2 />
                             </Button>
                           )}
                         </div>
@@ -717,56 +769,98 @@ export function CloudArchiveManager() {
                 <RuleChatPicker
                   accountId={draft.telegramId}
                   value={draft.sourceChatId}
-                  onChange={(sourceChatId) =>
+                  onChange={(sourceChatId, chat) =>
                     setDraft({
                       ...draft,
                       sourceChatId,
-                      rule: { ...draft.rule, sourceTopicId: 0 },
+                      sourceIsForum: Boolean(chat.isForum),
+                      rule: {
+                        ...draft.rule,
+                        sourceTopicId: 0,
+                        topicMode:
+                          chat.isForum && draft.targetIsForum
+                            ? draft.rule.topicMode
+                            : "MERGE",
+                      },
                     })
                   }
                 />
-                <RuleTopicPicker
-                  accountId={draft.telegramId}
-                  chatId={draft.sourceChatId}
-                  value={String(draft.rule.sourceTopicId || "")}
-                  allowAll
-                  onChange={(sourceTopicId) =>
-                    setDraft({
-                      ...draft,
-                      rule: { ...draft.rule, sourceTopicId },
-                    })
-                  }
-                />
+                {draft.sourceIsForum && (
+                  <RuleTopicPicker
+                    accountId={draft.telegramId}
+                    chatId={draft.sourceChatId}
+                    value={String(draft.rule.sourceTopicId || "")}
+                    allowAll
+                    allowClosed
+                    onChange={(sourceTopicId) =>
+                      setDraft({
+                        ...draft,
+                        rule: { ...draft.rule, sourceTopicId },
+                      })
+                    }
+                  />
+                )}
               </div>
               <div className="grid gap-2">
                 <Label>Destination chat</Label>
                 <RuleChatPicker
                   accountId={draft.telegramId}
                   value={String(draft.rule.targetChatId || "")}
-                  onChange={(targetChatId) =>
+                  onChange={(targetChatId, chat) =>
                     setDraft({
                       ...draft,
+                      targetIsForum: Boolean(chat.isForum),
                       rule: {
                         ...draft.rule,
                         targetChatId,
                         targetTopicId: 0,
+                        topicMode:
+                          draft.sourceIsForum && chat.isForum
+                            ? draft.rule.topicMode
+                            : "MERGE",
                       },
                     })
                   }
                 />
-                <RuleTopicPicker
-                  accountId={draft.telegramId}
-                  chatId={String(draft.rule.targetChatId || "")}
-                  value={String(draft.rule.targetTopicId || "")}
-                  onChange={(targetTopicId) =>
-                    setDraft({
-                      ...draft,
-                      rule: { ...draft.rule, targetTopicId },
-                    })
-                  }
-                />
+                {draft.targetIsForum && draft.rule.topicMode === "MERGE" && (
+                  <RuleTopicPicker
+                    accountId={draft.telegramId}
+                    chatId={String(draft.rule.targetChatId || "")}
+                    value={String(draft.rule.targetTopicId || "")}
+                    onChange={(targetTopicId) =>
+                      setDraft({
+                        ...draft,
+                        rule: { ...draft.rule, targetTopicId },
+                      })
+                    }
+                  />
+                )}
               </div>
             </div>
+
+            {draft.sourceIsForum && draft.targetIsForum && (
+              <div className="grid gap-2">
+                <Label>Topic organization</Label>
+                <Select
+                  value={draft.rule.topicMode}
+                  onValueChange={(topicMode: "MERGE" | "PRESERVE") =>
+                    setDraft({
+                      ...draft,
+                      rule: { ...draft.rule, topicMode, targetTopicId: 0 },
+                    })
+                  }
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PRESERVE">Preserve source topics</SelectItem>
+                    <SelectItem value="MERGE">Merge into one destination</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Preserve creates and reuses matching topics in the destination forum.
+                </p>
+              </div>
+            )}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -985,23 +1079,27 @@ export function CloudArchiveManager() {
               <span translate="no">{historyRule?.targetChatName}</span>
             </p>
             <div className="grid gap-2">
-              <Label>Maximum messages to scan</Label>
+              <Label>History range</Label>
               <Select value={historyLimit} onValueChange={setHistoryLimit}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="ALL">All history</SelectItem>
                   <SelectItem value="100">100</SelectItem>
                   <SelectItem value="500">500</SelectItem>
                   <SelectItem value="1000">1,000</SelectItem>
                   <SelectItem value="5000">5,000</SelectItem>
                   <SelectItem value="10000">10,000</SelectItem>
+                  <SelectItem value="100000">100,000</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <p className="text-xs text-muted-foreground">
-              Existing source-to-destination records are skipped, so rerunning
-              a completed range does not duplicate archived messages.
+              Messages are staged while scanning, then released oldest first.
+              Existing archive records are skipped, so rerunning does not
+              duplicate messages. Preserve mode also creates and reuses matching
+              destination topics.
             </p>
           </div>
           <DialogFooter>

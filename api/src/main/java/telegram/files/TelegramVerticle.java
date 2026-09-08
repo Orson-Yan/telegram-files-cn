@@ -320,6 +320,10 @@ public class TelegramVerticle extends AbstractVerticle {
         return telegramChats == null ? null : telegramChats.getChat(chatId);
     }
 
+    public boolean isForum(long chatId) {
+        return telegramChats != null && telegramChats.isForum(chatId);
+    }
+
     public Future<JsonObject> getChatFiles(long chatId, Map<String, String> filter) {
         boolean offline = Convert.toBool(filter.get("offline"), false);
         if (offline) {
@@ -791,6 +795,9 @@ public class TelegramVerticle extends AbstractVerticle {
         if (automation.archive.rule.mode == null) {
             automation.archive.rule.mode = SettingAutoRecords.ArchiveMode.COPY;
         }
+        if (automation.archive.rule.topicMode == null) {
+            automation.archive.rule.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
+        }
         if (automation.archive.rule.scope == null) {
             automation.archive.rule.scope = SettingAutoRecords.ArchiveScope.ALL_MESSAGES;
         }
@@ -806,6 +813,13 @@ public class TelegramVerticle extends AbstractVerticle {
             return;
         }
         long targetChatId = archive.rule.targetChatId;
+        SettingAutoRecords.ArchiveTopicMode topicMode = archive.rule.topicMode == null
+                ? SettingAutoRecords.ArchiveTopicMode.MERGE : archive.rule.topicMode;
+        if (topicMode == SettingAutoRecords.ArchiveTopicMode.PRESERVE
+            && (!isForum(sourceChatId) || !isForum(targetChatId))) {
+            throw new IllegalArgumentException(
+                    "Preserving topics requires both source and destination to be forum groups");
+        }
         if (sourceChatId == targetChatId) {
             if (archive.rule.sourceTopicId == 0 || archive.rule.targetTopicId == 0
                 || archive.rule.sourceTopicId == archive.rule.targetTopicId) {

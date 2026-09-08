@@ -25,7 +25,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CloudArchiveRepositoryImplTest {
 
     @Test
-    void migrationAddsForumTopicColumns(Vertx vertx, VertxTestContext context) {
+    void stagesReleasesInMessageOrderAndCancelsUnsentHistory(Vertx vertx,
+                                                              VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        Clock clock = Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC);
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> repository.stage(
+                        7, 100, 11, 30, 0, 200, 21, null, "COPY", "job-1"))
+                .compose(_ -> repository.stage(
+                        7, 100, 11, 10, 0, 200, 21, null, "COPY", "job-1"))
+                .compose(_ -> repository.releaseHistory("job-1"))
+                .compose(_ -> repository.listDue(1_000, 10))
+                .compose(records -> {
+                    context.verify(() -> {
+                        assertEquals(2, records.size());
+                        assertEquals(10, records.get(0).sourceMessageId());
+                        assertEquals(30, records.get(1).sourceMessageId());
+                    });
+                    return repository.cancelHistory("job-1");
+                })
+                .compose(_ -> repository.listRecent(10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    assertTrue(records.isEmpty());
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void migrationAddsForumTopicAndHistoryDeliveryColumns(Vertx vertx, VertxTestContext context) {
         Pool pool = JDBCPool.pool(
                 vertx,
                 new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
@@ -50,7 +83,7 @@ class CloudArchiveRepositoryImplTest {
 
         pool.query(oldScheme).execute()
                 .compose(_ -> new CloudArchiveRecord.CloudArchiveRecordDefinition().migrate(
-                        pool, new Version("0.5.0"), new Version("0.6.0")))
+                        pool, new Version("0.5.0"), new Version("0.7.0")))
                 .compose(_ -> pool.query("PRAGMA table_info(telegram_archive_record)").execute())
                 .eventually(pool::close)
                 .onComplete(context.succeeding(rows -> context.verify(() -> {
@@ -59,6 +92,8 @@ class CloudArchiveRepositoryImplTest {
                             .toList();
                     assertTrue(columns.contains("source_topic_id"));
                     assertTrue(columns.contains("target_topic_id"));
+                    assertTrue(columns.contains("history_job_id"));
+                    assertTrue(columns.contains("delivery_sequence"));
                     context.completeNow();
                 })));
     }
