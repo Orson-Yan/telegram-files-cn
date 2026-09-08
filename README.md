@@ -1,8 +1,8 @@
 # Telegram Files 中文增强版
 
-这是 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 的简体中文增强 fork。项目保留完整英文界面，在不改变后端协议和核心业务逻辑的前提下增加简体中文、本地语言记忆、中文日期显示，以及面向本 fork 的镜像和上游同步流程。
+这是 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 的简体中文增强 fork。项目保留完整英文界面，并增加简体中文、本地语言记忆、中文日期显示、云端转发、本地整理，以及面向本 fork 的镜像和上游同步流程。
 
-> 本仓库只维护中文增强内容；原项目功能、问题和路线图请同时参考[上游仓库](https://github.com/jarvis2f/telegram-files)。
+> 原项目功能、问题和路线图请同时参考[上游仓库](https://github.com/jarvis2f/telegram-files)；本 fork 的云端转发和本地整理属于独立增强功能。
 
 ## 中文界面
 
@@ -20,6 +20,8 @@
 - 图片和视频预览
 - 文件搜索、筛选、标签和统计
 - 自动预加载、自动下载和自动转存
+- 云端转发：使用 Telegram 服务端复制或转发新消息，不先下载到本地
+- 本地整理：按聊天、类型或消息日期将已下载文件移动到指定目录
 - 自动回收 TDLib 已停止但数据库仍为下载中的僵尸任务
 - 持续填充自动下载并发槽位，避免小文件批次之间长时间空等
 - 首页实时显示总速率、流量、队列、预计时间和逐文件下载进度
@@ -66,6 +68,12 @@ ghcr.io/orson-yan/telegram-files-cn:latest
 ```
 
 `main` 分支更新后会构建 `main` 和 `latest` 镜像；正式 release 也会更新 `latest`。如需锁定版本，可在 `.env` 中设置 `IMAGE_TAG`。
+
+### 云端转发与本地整理
+
+首页的“云端转发”用于把来源聊天的新消息复制或转发到同一 Telegram 账号可访问的目标聊天。媒体传输发生在 Telegram 内部，不会先下载到 TG File 服务器。推荐使用“复制归档”模式，这样目标消息不显示原始转发来源；如果来源启用了内容保护，Telegram 仍会拒绝复制或转发。V1 只处理规则启用后收到的新消息，不回填历史消息。
+
+首页的“本地整理”只处理已经下载到服务器的文件。它会移动文件并同步更新数据库中的本地路径和转存状态，不会因为整理而重新下载。按消息日期整理支持年、年月、年月日三级目录，并可设置时区和聊天 ID 目录。启用历史整理前可以先预览目标路径，重复文件默认安全重命名。
 
 ### 历史文件时间回填
 
@@ -188,6 +196,6 @@ CI 会运行 ESLint、TypeScript 类型检查、单元测试、Playwright 端到
 
 ## 致谢与许可
 
-核心项目由 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 提供。本 fork 仅增加中文界面及相关维护能力。
+核心项目由 [jarvis2f/telegram-files](https://github.com/jarvis2f/telegram-files) 提供。本 fork 增加中文界面、云端转发、本地整理及相关维护能力。
 
 项目继续使用 [MIT License](LICENSE)。

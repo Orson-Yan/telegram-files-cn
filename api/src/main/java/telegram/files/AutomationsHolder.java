@@ -72,6 +72,7 @@ public class AutomationsHolder {
                 theAutomation.preload.with(automation.preload);
                 theAutomation.download.with(automation.download);
                 theAutomation.transfer.with(automation.transfer);
+                theAutomation.archive.with(automation.archive);
                 log.info("Update auto records success: %s".formatted(automation.uniqueKey()));
             }
         }

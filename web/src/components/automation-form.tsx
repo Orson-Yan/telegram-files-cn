@@ -570,6 +570,11 @@ const PolicyLegends: Record<
       </div>
     ),
   },
+  GROUP_BY_DATE: {
+    title: "Group by message date",
+    description:
+      "Transfer files into year, month, or day folders based on the Telegram message date.",
+  },
   GROUP_BY_AI: {
     title: "Group by AI",
     description: (

@@ -19,6 +19,12 @@ import telegram.files.repository.SettingAutoRecords;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.zone.ZoneRulesException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -67,6 +73,7 @@ public abstract class Transfer {
             case DIRECT -> new DirectTransfer(transferRule);
             case GROUP_BY_CHAT -> new GroupByChat(transferRule);
             case GROUP_BY_TYPE -> new GroupByType(transferRule);
+            case GROUP_BY_DATE -> new GroupByDate(transferRule);
             case GROUP_BY_AI -> new GroupByAI(transferRule);
         };
     }
@@ -216,6 +223,11 @@ public abstract class Transfer {
 
     protected abstract String getTransferPath(FileRecord fileRecord);
 
+    /** Calculates the destination without changing the file system. */
+    public String previewPath(FileRecord fileRecord) {
+        return getTransferPath(fileRecord);
+    }
+
     static class GroupByChat extends Transfer {
 
         public GroupByChat(SettingAutoRecords.TransferRule transferRule) {
@@ -246,6 +258,49 @@ public abstract class Transfer {
                     fileRecord.type(),
                     name
             ).toString();
+        }
+    }
+
+    static class GroupByDate extends Transfer {
+
+        public GroupByDate(SettingAutoRecords.TransferRule transferRule) {
+            super(transferRule);
+        }
+
+        @Override
+        protected String getTransferPath(FileRecord fileRecord) {
+            String name = buildFileName(fileRecord);
+            long epochSeconds = fileRecord.date();
+            if (epochSeconds <= 0 && fileRecord.completionDate() != null) {
+                epochSeconds = fileRecord.completionDate() / 1000L;
+            }
+            if (epochSeconds <= 0) {
+                return Path.of(destination, "unknown-date", name).toString();
+            }
+
+            String configuredZone = extra.getString("timezone", "Asia/Shanghai");
+            ZoneId zone;
+            try {
+                zone = ZoneId.of(configuredZone);
+            } catch (ZoneRulesException exception) {
+                zone = ZoneId.of("Asia/Shanghai");
+            }
+            ZonedDateTime messageDate = Instant.ofEpochSecond(epochSeconds).atZone(zone);
+            String grouping = extra.getString("dateGrouping", "YEAR_MONTH");
+
+            List<String> parts = new ArrayList<>();
+            if (extra.getBoolean("includeChatDirectory", false)) {
+                parts.add(Convert.toStr(fileRecord.chatId()));
+            }
+            parts.add("%04d".formatted(messageDate.getYear()));
+            if (!"YEAR".equals(grouping)) {
+                parts.add("%02d".formatted(messageDate.getMonthValue()));
+            }
+            if ("YEAR_MONTH_DAY".equals(grouping)) {
+                parts.add("%02d".formatted(messageDate.getDayOfMonth()));
+            }
+            parts.add(name);
+            return Path.of(destination, parts.toArray(String[]::new)).toString();
         }
     }
 
@@ -327,6 +382,10 @@ public abstract class Transfer {
          * Transfer files by type
          */
         GROUP_BY_TYPE,
+        /**
+         * Transfer files by their Telegram message date.
+         */
+        GROUP_BY_DATE,
         /**
          * Transfer files by AI classification
          */

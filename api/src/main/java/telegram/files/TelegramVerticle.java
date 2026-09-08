@@ -317,7 +317,7 @@ public class TelegramVerticle extends AbstractVerticle {
     }
 
     public TdApi.Chat getChat(long chatId) {
-        return telegramChats.getChat(chatId);
+        return telegramChats == null ? null : telegramChats.getChat(chatId);
     }
 
     public Future<JsonObject> getChatFiles(long chatId, Map<String, String> filter) {
@@ -753,14 +753,20 @@ public class TelegramVerticle extends AbstractVerticle {
                         settingAutoRecords = new SettingAutoRecords();
                     }
                     SettingAutoRecords.Automation automation = params.mapTo(SettingAutoRecords.Automation.class);
+                    normalizeAutomation(automation);
+                    validateArchiveRule(settingAutoRecords, chatId, automation.archive);
                     boolean hasEnabled = automation.preload.enabled
                                          || automation.download.enabled
-                                         || automation.transfer.enabled;
+                                         || automation.transfer.enabled
+                                         || automation.archive.enabled;
+                    boolean hasConfiguredArchive = automation.archive.rule.targetChatId != 0;
+                    boolean hasConfiguredTransfer = StrUtil.isNotBlank(automation.transfer.rule.destination);
 
-                    if (settingAutoRecords.exists(this.telegramRecord.id(), chatId) && !hasEnabled) {
+                    if (settingAutoRecords.exists(this.telegramRecord.id(), chatId)
+                        && !hasEnabled && !hasConfiguredArchive && !hasConfiguredTransfer) {
                         settingAutoRecords.remove(this.telegramRecord.id(), chatId);
                     } else {
-                        if (!hasEnabled) {
+                        if (!hasEnabled && !hasConfiguredArchive && !hasConfiguredTransfer) {
                             return Future.succeededFuture();
                         }
                         automation.telegramId = this.telegramRecord.id();
@@ -772,6 +778,51 @@ public class TelegramVerticle extends AbstractVerticle {
                             .onSuccess(r -> vertx.eventBus().publish(EventEnum.AUTO_DOWNLOAD_UPDATE.name(), r.value()));
                 })
                 .mapEmpty();
+    }
+
+    private static void normalizeAutomation(SettingAutoRecords.Automation automation) {
+        if (automation.preload == null) automation.preload = new SettingAutoRecords.PreloadConfig();
+        if (automation.download == null) automation.download = new SettingAutoRecords.DownloadConfig();
+        if (automation.download.rule == null) automation.download.rule = new SettingAutoRecords.DownloadRule();
+        if (automation.transfer == null) automation.transfer = new SettingAutoRecords.TransferConfig();
+        if (automation.transfer.rule == null) automation.transfer.rule = new SettingAutoRecords.TransferRule();
+        if (automation.archive == null) automation.archive = new SettingAutoRecords.ArchiveConfig();
+        if (automation.archive.rule == null) automation.archive.rule = new SettingAutoRecords.ArchiveRule();
+        if (automation.archive.rule.mode == null) {
+            automation.archive.rule.mode = SettingAutoRecords.ArchiveMode.COPY;
+        }
+        if (automation.archive.rule.scope == null) {
+            automation.archive.rule.scope = SettingAutoRecords.ArchiveScope.ALL_MESSAGES;
+        }
+        if (automation.archive.rule.fileTypes == null) {
+            automation.archive.rule.fileTypes = new ArrayList<>();
+        }
+    }
+
+    private void validateArchiveRule(SettingAutoRecords existing,
+                                     long sourceChatId,
+                                     SettingAutoRecords.ArchiveConfig archive) {
+        if (archive == null || archive.rule == null || archive.rule.targetChatId == 0) {
+            return;
+        }
+        long targetChatId = archive.rule.targetChatId;
+        if (sourceChatId == targetChatId) {
+            throw new IllegalArgumentException("Source and destination chats must be different");
+        }
+        Set<Long> visited = new HashSet<>();
+        long cursor = targetChatId;
+        while (visited.add(cursor)) {
+            if (cursor == sourceChatId) {
+                throw new IllegalArgumentException("Cloud archive rules can't form a forwarding loop");
+            }
+            SettingAutoRecords.Automation next = existing.getItem(this.telegramRecord.id(), cursor);
+            if (next == null || next.chatId == sourceChatId || next.archive == null
+                || !next.archive.enabled || next.archive.rule == null
+                || next.archive.rule.targetChatId == 0) {
+                break;
+            }
+            cursor = next.archive.rule.targetChatId;
+        }
     }
 
     public Future<JsonObject> getDownloadStatistics() {
@@ -1124,7 +1175,8 @@ public class TelegramVerticle extends AbstractVerticle {
         return AutomationsHolder.INSTANCE.autoRecords().automations.stream()
                 .anyMatch(auto -> auto.telegramId == telegramRecord.id()
                                   && ((auto.download != null && auto.download.enabled)
-                                      || (auto.preload != null && auto.preload.enabled)));
+                                      || (auto.preload != null && auto.preload.enabled)
+                                      || (auto.archive != null && auto.archive.enabled)));
     }
 
     private boolean canIdleSleepLocked() {

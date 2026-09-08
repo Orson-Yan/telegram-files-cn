@@ -27,11 +27,17 @@ public class SettingAutoRecords {
 
         public long chatId;
 
-        public PreloadConfig preload;
+        public PreloadConfig preload = new PreloadConfig();
 
-        public DownloadConfig download;
+        public DownloadConfig download = new DownloadConfig();
 
-        public TransferConfig transfer;
+        public TransferConfig transfer = new TransferConfig();
+
+        /**
+         * Telegram-to-Telegram archival. This is intentionally separate from
+         * {@link #transfer}, which only moves files after a local download.
+         */
+        public ArchiveConfig archive = new ArchiveConfig();
 
         public int state;
 
@@ -64,6 +70,10 @@ public class SettingAutoRecords {
         public long nextFromMessageId;
 
         public PreloadConfig with(PreloadConfig config) {
+            if (config == null) {
+                this.enabled = false;
+                return this;
+            }
             this.enabled = config.enabled;
             return this;
         }
@@ -72,15 +82,19 @@ public class SettingAutoRecords {
     public static class DownloadConfig {
         public boolean enabled;
 
-        public DownloadRule rule;
+        public DownloadRule rule = new DownloadRule();
 
         public String nextFileType;
 
         public long nextFromMessageId;
 
         public DownloadConfig with(DownloadConfig config) {
+            if (config == null) {
+                this.enabled = false;
+                return this;
+            }
             this.enabled = config.enabled;
-            this.rule = config.rule;
+            this.rule = config.rule == null ? new DownloadRule() : config.rule;
             return this;
         }
     }
@@ -88,7 +102,7 @@ public class SettingAutoRecords {
     public static class DownloadRule {
         public String query;
 
-        public List<String> fileTypes;
+        public List<String> fileTypes = new ArrayList<>();
 
         public boolean downloadHistory;
 
@@ -100,11 +114,15 @@ public class SettingAutoRecords {
     public static class TransferConfig {
         public boolean enabled;
 
-        public TransferRule rule;
+        public TransferRule rule = new TransferRule();
 
         public TransferConfig with(TransferConfig config) {
+            if (config == null) {
+                this.enabled = false;
+                return this;
+            }
             this.enabled = config.enabled;
-            this.rule = config.rule;
+            this.rule = config.rule == null ? new TransferRule() : config.rule;
             return this;
         }
     }
@@ -122,6 +140,53 @@ public class SettingAutoRecords {
         public boolean useCaptionName;
 
         public JsonObject extra;
+    }
+
+    public static class ArchiveConfig {
+        public boolean enabled;
+
+        public ArchiveRule rule = new ArchiveRule();
+
+        public ArchiveConfig with(ArchiveConfig config) {
+            if (config == null) {
+                this.enabled = false;
+                return this;
+            }
+            this.enabled = config.enabled;
+            this.rule = config.rule == null ? new ArchiveRule() : config.rule;
+            return this;
+        }
+    }
+
+    public static class ArchiveRule {
+        /** Destination chat on the same Telegram account. */
+        public long targetChatId;
+
+        /** COPY creates an independent message; FORWARD keeps the source header. */
+        public ArchiveMode mode = ArchiveMode.COPY;
+
+        /** ALL_MESSAGES mirrors text and media; MEDIA_ONLY only archives supported files. */
+        public ArchiveScope scope = ArchiveScope.ALL_MESSAGES;
+
+        public List<String> fileTypes = new ArrayList<>();
+
+        public String query;
+
+        public String filterExpr;
+
+        public boolean preserveCaption = true;
+
+        public boolean disableNotification = true;
+    }
+
+    public enum ArchiveMode {
+        COPY,
+        FORWARD
+    }
+
+    public enum ArchiveScope {
+        ALL_MESSAGES,
+        MEDIA_ONLY
     }
 
     public SettingAutoRecords() {
@@ -163,6 +228,31 @@ public class SettingAutoRecords {
     public List<Automation> getTransferEnabledItems() {
         return automations.stream()
                 .filter(i -> i.transfer != null && i.transfer.enabled)
+                .toList();
+    }
+
+    @JsonIgnore
+    public List<Automation> getTransferConfiguredItems() {
+        return automations.stream()
+                .filter(i -> i.transfer != null && i.transfer.rule != null
+                             && i.transfer.rule.destination != null
+                             && !i.transfer.rule.destination.isBlank())
+                .toList();
+    }
+
+    @JsonIgnore
+    public List<Automation> getArchiveEnabledItems() {
+        return automations.stream()
+                .filter(i -> i.archive != null && i.archive.enabled
+                             && i.archive.rule != null && i.archive.rule.targetChatId != 0)
+                .toList();
+    }
+
+    @JsonIgnore
+    public List<Automation> getArchiveConfiguredItems() {
+        return automations.stream()
+                .filter(i -> i.archive != null && i.archive.rule != null
+                             && i.archive.rule.targetChatId != 0)
                 .toList();
     }
 

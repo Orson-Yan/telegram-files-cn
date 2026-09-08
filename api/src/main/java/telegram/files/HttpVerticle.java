@@ -37,6 +37,7 @@ import io.vertx.ext.web.sstore.SessionStore;
 import org.drinkless.tdlib.TdApi;
 import org.jooq.lambda.function.Function2;
 import telegram.files.repository.SettingAutoRecords;
+import telegram.files.repository.CloudArchiveRecord;
 import telegram.files.repository.SettingKey;
 import telegram.files.repository.SettingRecord;
 import telegram.files.security.OriginPolicy;
@@ -116,6 +117,7 @@ public class HttpVerticle extends AbstractVerticle {
                 .compose(_ -> initHttpServer())
                 .compose(_ -> initTelegramVerticles())
                 .compose(_ -> AutomationsHolder.INSTANCE.init())
+                .compose(_ -> initCloudArchiveVerticle())
                 .compose(_ -> initAutoDownloadVerticle())
                 .compose(_ -> initTransferVerticle())
                 .compose(_ -> initPreloadMessageVerticle())
@@ -224,6 +226,13 @@ public class HttpVerticle extends AbstractVerticle {
         router.get("/settings").handler(this::handleSettings);
         router.post("/settings/create").handler(this::handleSettingsCreate);
         router.get("/automations/chats").handler(this::handleAutomationChats);
+        router.get("/cloud-archive/overview").handler(this::handleCloudArchiveOverview);
+        router.get("/cloud-archive/records").handler(this::handleCloudArchiveRecords);
+        router.post("/cloud-archive/validate").handler(this::handleCloudArchiveValidate);
+        router.post("/cloud-archive/test").handler(this::handleCloudArchiveTest);
+        router.post("/cloud-archive/records/:recordId/retry").handler(this::handleCloudArchiveRetry);
+        router.get("/local-organize/overview").handler(this::handleLocalOrganizeOverview);
+        router.post("/local-organize/preview").handler(this::handleLocalOrganizePreview);
 
         router.post("/telegram/create").handler(this::handleTelegramCreate);
         router.post("/telegram/:telegramId/delete").handler(this::handleTelegramDelete);
@@ -285,6 +294,11 @@ public class HttpVerticle extends AbstractVerticle {
 
     public Future<Void> initAutoDownloadVerticle() {
         return vertx.deployVerticle(new AutoDownloadVerticle(), Config.VIRTUAL_THREAD_DEPLOYMENT_OPTIONS)
+                .mapEmpty();
+    }
+
+    public Future<Void> initCloudArchiveVerticle() {
+        return vertx.deployVerticle(new AutoCloudArchiveVerticle(), Config.VIRTUAL_THREAD_DEPLOYMENT_OPTIONS)
                 .mapEmpty();
     }
 
@@ -1011,7 +1025,11 @@ public class HttpVerticle extends AbstractVerticle {
         List<SettingAutoRecords.Automation> enabledAutomations = AutomationsHolder.INSTANCE.autoRecords().automations.stream()
                 .filter(automation -> (automation.preload != null && automation.preload.enabled)
                                       || (automation.download != null && automation.download.enabled)
-                                      || (automation.transfer != null && automation.transfer.enabled))
+                                      || (automation.transfer != null && automation.transfer.enabled)
+                                      || (automation.archive != null && automation.archive.rule != null
+                                          && automation.archive.rule.targetChatId != 0)
+                                      || (automation.transfer != null && automation.transfer.rule != null
+                                          && StrUtil.isNotBlank(automation.transfer.rule.destination)))
                 .toList();
 
         List<JsonObject> overviewItems = enabledAutomations.stream()
@@ -1045,6 +1063,180 @@ public class HttpVerticle extends AbstractVerticle {
                 .toList();
 
         ctx.json(new JsonArray(overviewItems));
+    }
+
+    private void handleCloudArchiveOverview(RoutingContext ctx) {
+        List<JsonObject> rules = AutomationsHolder.INSTANCE.autoRecords().getArchiveConfiguredItems().stream()
+                .map(automation -> {
+                    JsonObject item = new JsonObject()
+                            .put("telegramId", Convert.toStr(automation.telegramId))
+                            .put("sourceChatId", Convert.toStr(automation.chatId))
+                            .put("targetChatId", Convert.toStr(automation.archive.rule.targetChatId))
+                            .put("enabled", automation.archive.enabled)
+                            .put("rule", automation.archive.rule);
+                    TelegramVerticles.get(automation.telegramId).ifPresent(telegram -> {
+                        item.put("accountName", accountDisplayName(telegram));
+                        TdApi.Chat source = telegram.getChat(automation.chatId);
+                        TdApi.Chat target = telegram.getChat(automation.archive.rule.targetChatId);
+                        item.put("sourceChatName", source == null ? Convert.toStr(automation.chatId) : source.title)
+                                .put("targetChatName", target == null
+                                        ? Convert.toStr(automation.archive.rule.targetChatId)
+                                        : target.title);
+                    });
+                    SettingAutoRecords.Automation targetAutomation = AutomationsHolder.INSTANCE.autoRecords()
+                            .getItem(automation.telegramId, automation.archive.rule.targetChatId);
+                    item.put("targetDownloadEnabled", targetAutomation != null
+                            && targetAutomation.download != null && targetAutomation.download.enabled);
+                    return item
+                            .put("accountName", item.getString("accountName", item.getString("telegramId")))
+                            .put("sourceChatName", item.getString("sourceChatName", item.getString("sourceChatId")))
+                            .put("targetChatName", item.getString("targetChatName", item.getString("targetChatId")));
+                })
+                .sorted(Comparator.comparing(item -> item.getString("sourceChatName", "")))
+                .toList();
+        DataVerticle.cloudArchiveRepository.statistics()
+                .onSuccess(statistics -> ctx.json(new JsonObject()
+                        .put("statistics", statistics)
+                        .put("rules", new JsonArray(rules))))
+                .onFailure(ctx::fail);
+    }
+
+    private void handleCloudArchiveRecords(RoutingContext ctx) {
+        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 500));
+        DataVerticle.cloudArchiveRepository.listRecent(limit)
+                .map(records -> new JsonArray(records.stream().map(this::cloudArchiveRecordJson).toList()))
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
+    private JsonObject cloudArchiveRecordJson(CloudArchiveRecord record) {
+        JsonObject item = JsonObject.mapFrom(record);
+        TelegramVerticles.get(record.telegramId()).ifPresent(telegram -> {
+            TdApi.Chat source = telegram.getChat(record.sourceChatId());
+            TdApi.Chat target = telegram.getChat(record.targetChatId());
+            item.put("sourceChatName", source == null ? Convert.toStr(record.sourceChatId()) : source.title)
+                    .put("targetChatName", target == null ? Convert.toStr(record.targetChatId()) : target.title);
+        });
+        return item
+                .put("sourceChatName", item.getString("sourceChatName", Convert.toStr(record.sourceChatId())))
+                .put("targetChatName", item.getString("targetChatName", Convert.toStr(record.targetChatId())));
+    }
+
+    private void handleCloudArchiveValidate(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        if (body == null) {
+            ctx.fail(400);
+            return;
+        }
+        TelegramVerticle telegram = TelegramVerticles.getOrElseThrow(body.getString("telegramId"));
+        long sourceChatId = Convert.toLong(body.getValue("sourceChatId"));
+        SettingAutoRecords.ArchiveRule rule = body.getJsonObject("rule", new JsonObject())
+                .mapTo(SettingAutoRecords.ArchiveRule.class);
+        CloudArchiveService.validate(telegram, sourceChatId, rule)
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
+    private void handleCloudArchiveTest(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        if (body == null) {
+            ctx.fail(400);
+            return;
+        }
+        TelegramVerticle telegram = TelegramVerticles.getOrElseThrow(body.getString("telegramId"));
+        long sourceChatId = Convert.toLong(body.getValue("sourceChatId"));
+        SettingAutoRecords.ArchiveRule rule = body.getJsonObject("rule", new JsonObject())
+                .mapTo(SettingAutoRecords.ArchiveRule.class);
+        telegram.client.execute(new TdApi.GetChatHistory(sourceChatId, 0, 0, 1, false))
+                .compose(messages -> {
+                    TdApi.Message source = messages == null || messages.messages == null || messages.messages.length == 0
+                            ? null : messages.messages[0];
+                    if (source == null) {
+                        return Future.failedFuture("The source chat has no message to test");
+                    }
+                    return CloudArchiveService.archive(telegram, sourceChatId, List.of(source.id), rule);
+                })
+                .map(targets -> new JsonObject().put("targetMessageIds", new JsonArray(targets.values().stream().toList())))
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
+    }
+
+    private void handleCloudArchiveRetry(RoutingContext ctx) {
+        String recordId = ctx.pathParam("recordId");
+        if (StrUtil.isBlank(recordId)) {
+            ctx.fail(400);
+            return;
+        }
+        DataVerticle.cloudArchiveRepository.retry(recordId)
+                .onSuccess(updated -> {
+                    if (!updated) {
+                        ctx.fail(404);
+                    } else {
+                        ctx.json(JsonObject.of("queued", true));
+                    }
+                })
+                .onFailure(ctx::fail);
+    }
+
+    private void handleLocalOrganizeOverview(RoutingContext ctx) {
+        List<JsonObject> rules = AutomationsHolder.INSTANCE.autoRecords().getTransferConfiguredItems().stream()
+                .map(automation -> {
+                    JsonObject item = new JsonObject()
+                            .put("telegramId", Convert.toStr(automation.telegramId))
+                            .put("sourceChatId", Convert.toStr(automation.chatId))
+                            .put("enabled", automation.transfer.enabled)
+                            .put("rule", automation.transfer.rule);
+                    TelegramVerticles.get(automation.telegramId).ifPresent(telegram -> {
+                        item.put("accountName", accountDisplayName(telegram));
+                        TdApi.Chat source = telegram.getChat(automation.chatId);
+                        item.put("sourceChatName", source == null ? Convert.toStr(automation.chatId) : source.title);
+                    });
+                    return item
+                            .put("accountName", item.getString("accountName", item.getString("telegramId")))
+                            .put("sourceChatName", item.getString("sourceChatName", item.getString("sourceChatId")));
+                })
+                .sorted(Comparator.comparing(item -> item.getString("sourceChatName", "")))
+                .toList();
+        ctx.json(new JsonObject().put("rules", new JsonArray(rules)));
+    }
+
+    private void handleLocalOrganizePreview(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        if (body == null) {
+            ctx.fail(400);
+            return;
+        }
+        long chatId = Convert.toLong(body.getValue("sourceChatId"));
+        SettingAutoRecords.TransferRule rule = body.getJsonObject("rule", new JsonObject())
+                .mapTo(SettingAutoRecords.TransferRule.class);
+        if (chatId == 0 || StrUtil.isBlank(rule.destination) || rule.transferPolicy == null
+            || rule.duplicationPolicy == null) {
+            ctx.fail(400);
+            return;
+        }
+        Transfer transfer = Transfer.create(rule);
+        DataVerticle.fileRepository.getFiles(chatId, Map.of(
+                        "downloadStatus", "completed",
+                        "transferStatus", "idle",
+                        "limit", "20"
+                ))
+                .map(result -> new JsonObject()
+                        .put("total", result.v3)
+                        .put("items", new JsonArray(result.v1.stream()
+                                .filter(record -> !"thumbnail".equals(record.type()))
+                                .filter(record -> StrUtil.isNotBlank(record.localPath()))
+                                .map(record -> {
+                                    String destination = transfer.previewPath(record);
+                                    return new JsonObject()
+                                            .put("uniqueId", record.uniqueId())
+                                            .put("fileName", record.fileName())
+                                            .put("sourcePath", record.localPath())
+                                            .put("destinationPath", destination)
+                                            .put("destinationExists", FileUtil.exist(destination));
+                                })
+                                .toList())))
+                .onSuccess(ctx::json)
+                .onFailure(ctx::fail);
     }
 
     private String accountDisplayName(TelegramVerticle telegramVerticle) {
@@ -1500,7 +1692,15 @@ public class HttpVerticle extends AbstractVerticle {
         JsonObject params = ctx.body().asJsonObject();
         telegramVerticle.updateAutoSettings(Convert.toLong(chatId), params)
                 .onSuccess(_ -> ctx.end())
-                .onFailure(ctx::fail);
+                .onFailure(failure -> {
+                    if (failure instanceof IllegalArgumentException) {
+                        ctx.response().setStatusCode(400)
+                                .putHeader("Content-Type", "application/json")
+                                .end(JsonObject.of("error", failure.getMessage()).encode());
+                    } else {
+                        ctx.fail(failure);
+                    }
+                });
     }
 
     private void handleFilesCount(RoutingContext ctx) {

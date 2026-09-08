@@ -48,13 +48,38 @@ class TransferTest {
         groupByChatRule.transferPolicy = TransferPolicy.GROUP_BY_CHAT;
         SettingAutoRecords.TransferRule groupByTypeRule = new SettingAutoRecords.TransferRule();
         groupByTypeRule.transferPolicy = TransferPolicy.GROUP_BY_TYPE;
+        SettingAutoRecords.TransferRule groupByDateRule = new SettingAutoRecords.TransferRule();
+        groupByDateRule.transferPolicy = TransferPolicy.GROUP_BY_DATE;
         Transfer chatTransfer = Transfer.create(groupByChatRule);
         Transfer typeTransfer = Transfer.create(groupByTypeRule);
+        Transfer dateTransfer = Transfer.create(groupByDateRule);
 
         assertNotNull(chatTransfer);
         assertNotNull(typeTransfer);
         assertInstanceOf(Transfer.GroupByChat.class, chatTransfer);
         assertInstanceOf(Transfer.GroupByType.class, typeTransfer);
+        assertInstanceOf(Transfer.GroupByDate.class, dateTransfer);
+    }
+
+    @Test
+    void testGroupByDateUsesMessageDateAndConfiguredTimezone(@TempDir Path tempDir) {
+        SettingAutoRecords.TransferRule transferRule = new SettingAutoRecords.TransferRule();
+        transferRule.destination = tempDir.toString();
+        transferRule.transferPolicy = TransferPolicy.GROUP_BY_DATE;
+        transferRule.duplicationPolicy = DuplicationPolicy.RENAME;
+        transferRule.extra = JsonObject.of(
+                "timezone", "Asia/Shanghai",
+                "dateGrouping", "YEAR_MONTH_DAY",
+                "includeChatDirectory", true
+        );
+        when(mockFileRecord.localPath()).thenReturn(tempDir.resolve("photo.jpg").toString());
+        when(mockFileRecord.chatId()).thenReturn(-100123L);
+        when(mockFileRecord.date()).thenReturn(1788798600); // 2026-09-08 00:30 Asia/Shanghai
+
+        String path = Transfer.create(transferRule).previewPath(mockFileRecord);
+
+        assertEquals(tempDir.resolve("-100123").resolve("2026").resolve("09")
+                .resolve("08").resolve("photo.jpg").toString(), path);
     }
 
     @Test

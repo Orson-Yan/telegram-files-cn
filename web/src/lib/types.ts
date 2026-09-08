@@ -212,12 +212,17 @@ export type Auto = {
     enabled: boolean;
     rule: AutoTransferRule;
   };
+  archive: {
+    enabled: boolean;
+    rule: AutoArchiveRule;
+  };
 };
 
 export const TransferPolices = [
   "DIRECT",
   "GROUP_BY_CHAT",
   "GROUP_BY_TYPE",
+  "GROUP_BY_DATE",
   "GROUP_BY_AI",
 ] as const;
 export type TransferPolicy = (typeof TransferPolices)[number];
@@ -244,6 +249,78 @@ export type AutoDownloadRule = {
   downloadHistory: boolean;
   downloadCommentFiles: boolean;
   filterExpr: string;
+};
+
+export type ArchiveMode = "COPY" | "FORWARD";
+export type ArchiveScope = "ALL_MESSAGES" | "MEDIA_ONLY";
+
+export type AutoArchiveRule = {
+  targetChatId: number | string;
+  mode: ArchiveMode;
+  scope: ArchiveScope;
+  fileTypes: Array<Exclude<FileType, "media">>;
+  query: string;
+  filterExpr: string;
+  preserveCaption: boolean;
+  disableNotification: boolean;
+};
+
+export type CloudArchiveRuleOverview = {
+  telegramId: string;
+  accountName: string;
+  sourceChatId: string;
+  sourceChatName: string;
+  targetChatId: string;
+  targetChatName: string;
+  targetDownloadEnabled: boolean;
+  enabled: boolean;
+  rule: AutoArchiveRule;
+};
+
+export type CloudArchiveStatistics = {
+  total: number;
+  completed: number;
+  skipped: number;
+  failed: number;
+  pending: number;
+};
+
+export type CloudArchiveOverview = {
+  statistics: CloudArchiveStatistics;
+  rules: CloudArchiveRuleOverview[];
+};
+
+export type CloudArchiveRecord = {
+  id: string;
+  telegramId: number;
+  sourceChatId: number;
+  sourceMessageId: number;
+  sourceAlbumId: number;
+  sourceChatName: string;
+  targetChatId: number;
+  targetMessageId?: number;
+  targetChatName: string;
+  fileUniqueId?: string;
+  mode: ArchiveMode;
+  status: string;
+  attemptCount: number;
+  lastErrorCode?: string;
+  lastErrorMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type LocalOrganizeRuleOverview = {
+  telegramId: string;
+  accountName: string;
+  sourceChatId: string;
+  sourceChatName: string;
+  enabled: boolean;
+  rule: AutoTransferRule;
+};
+
+export type LocalOrganizeOverview = {
+  rules: LocalOrganizeRuleOverview[];
 };
 
 export type AutomationChatOverview = {

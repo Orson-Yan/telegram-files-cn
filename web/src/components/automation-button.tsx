@@ -21,7 +21,10 @@ const AutomationButton = React.forwardRef<
 >(({ auto, className, ...props }, ref) => {
   const autoEnabled =
     auto &&
-    (auto.preload.enabled || auto.download.enabled || auto.transfer.enabled);
+    (auto.preload.enabled ||
+      auto.download.enabled ||
+      auto.transfer.enabled ||
+      auto.archive?.enabled);
   const isMobile = UseIsMobile();
 
   return (
@@ -50,7 +53,8 @@ const AutomationButton = React.forwardRef<
                 autoEnabled
                   ? auto?.preload.enabled &&
                     auto.download.enabled &&
-                    auto.transfer.enabled
+                    auto.transfer.enabled &&
+                    auto.archive?.enabled
                     ? "animate-breathing bg-green-500"
                     : "animate-breathing bg-blue-500"
                   : "bg-red-500",

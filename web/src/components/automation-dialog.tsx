@@ -20,35 +20,9 @@ import { type Auto } from "@/lib/types";
 import { Badge } from "./ui/badge";
 import AutomationForm from "@/components/automation-form";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, FolderSync, PackageSearch } from "lucide-react";
+import { CloudUpload, Download, FolderSync, PackageSearch } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-
-const DEFAULT_AUTO: Auto = {
-  preload: {
-    enabled: false,
-  },
-  download: {
-    enabled: false,
-    rule: {
-      query: "",
-      fileTypes: [],
-      downloadHistory: true,
-      downloadCommentFiles: false,
-      filterExpr: "",
-    },
-  },
-  transfer: {
-    enabled: false,
-    rule: {
-      transferHistory: true,
-      destination: "",
-      transferPolicy: "GROUP_BY_CHAT",
-      duplicationPolicy: "OVERWRITE",
-      useCaptionName: false,
-      extra: {},
-    },
-  },
-};
+import { createDefaultAuto, normalizeAuto } from "@/lib/automation";
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
@@ -109,7 +83,7 @@ export default function AutomationDialog() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [auto, setAuto] = useState<Auto>(DEFAULT_AUTO);
+  const [auto, setAuto] = useState<Auto>(() => createDefaultAuto());
   const mutationKey =
     accountId && chat
       ? `/${accountId}/file/update-auto-settings?telegramId=${accountId}&chatId=${chat.id}`
@@ -147,9 +121,9 @@ export default function AutomationDialog() {
 
   useEffect(() => {
     if (chat?.auto) {
-      setAuto(chat.auto);
+      setAuto(normalizeAuto(chat.auto));
     } else {
-      setAuto(DEFAULT_AUTO);
+      setAuto(createDefaultAuto());
     }
   }, [chat]);
 
@@ -264,6 +238,19 @@ export default function AutomationDialog() {
                     </div>
                   </>
                 )}
+              </AutomationSummarySection>
+
+              <AutomationSummarySection
+                title="Cloud Archive"
+                enabled={chat.auto.archive?.enabled ?? false}
+                icon={<CloudUpload />}
+              >
+                {chat.auto.archive?.rule?.targetChatId ? (
+                  <DetailBlock
+                    label="Destination Chat"
+                    value={String(chat.auto.archive.rule.targetChatId)}
+                  />
+                ) : undefined}
               </AutomationSummarySection>
 
               <AutomationSummarySection

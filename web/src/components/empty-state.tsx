@@ -3,7 +3,9 @@ import {
   AlertTriangle,
   ArrowRight,
   Check,
+  CloudUpload,
   Download,
+  FolderSync,
   HardDrive,
   Loader2,
   LogOut,
@@ -222,6 +224,22 @@ function AllFiles() {
           >
             <Activity data-icon="inline-start" />
             Active downloads
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/cloud-archive")}
+          >
+            <CloudUpload data-icon="inline-start" />
+            Cloud archive
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/local-organize")}
+          >
+            <FolderSync data-icon="inline-start" />
+            Local organization
           </Button>
           <Button
             variant="outline"

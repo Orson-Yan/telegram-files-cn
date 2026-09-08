@@ -26,6 +26,7 @@ import {
   ArrowRight,
   Download,
   FolderSync,
+  CloudUpload,
   PackageSearch,
   Workflow,
 } from "lucide-react";
@@ -45,6 +46,7 @@ function enabledCount(item: AutomationChatOverview) {
     item.auto.preload.enabled,
     item.auto.download.enabled,
     item.auto.transfer.enabled,
+    item.auto.archive?.enabled,
   ].filter(Boolean).length;
 }
 
@@ -77,6 +79,12 @@ function AutomationBadges({ item }: { item: AutomationChatOverview }) {
           Transfer
         </Badge>
       )}
+      {item.auto.archive?.enabled && (
+        <Badge variant="secondary">
+          <CloudUpload data-icon="inline-start" />
+          Cloud archive
+        </Badge>
+      )}
     </div>
   );
 }
@@ -89,6 +97,7 @@ function ProgressText({ item }: { item: AutomationChatOverview }) {
       isStateComplete(item.auto.state, HISTORY_DOWNLOAD_STATE),
     item.auto.transfer.enabled &&
       isStateComplete(item.auto.state, HISTORY_TRANSFER_STATE),
+    item.auto.archive?.enabled,
   ].filter(Boolean).length;
   const total = enabledCount(item);
 

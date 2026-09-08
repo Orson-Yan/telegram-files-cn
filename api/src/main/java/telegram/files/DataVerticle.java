@@ -18,6 +18,7 @@ import io.vertx.sqlclient.SqlConnectOptions;
 import org.jooq.lambda.tuple.Tuple;
 import telegram.files.repository.*;
 import telegram.files.repository.impl.FileRepositoryImpl;
+import telegram.files.repository.impl.CloudArchiveRepositoryImpl;
 import telegram.files.repository.impl.InstallationIdentityRepositoryImpl;
 import telegram.files.repository.impl.NodeTaskRepositoryImpl;
 import telegram.files.repository.impl.ShareRepositoryImpl;
@@ -63,6 +64,8 @@ public class DataVerticle extends AbstractVerticle {
 
     public static TorrentUploadSessionRepository torrentUploadSessionRepository;
 
+    public static CloudArchiveRepository cloudArchiveRepository;
+
     private static SqlConnectOptions sqlConnectOptions;
 
     public static final List<Definition> definitions;
@@ -96,7 +99,8 @@ public class DataVerticle extends AbstractVerticle {
                 new DiskReservationRecord.DiskReservationRecordDefinition(),
                 new TorrentRecord.TorrentRecordDefinition(),
                 new TorrentStatisticEventRecord.TorrentStatisticEventRecordDefinition(),
-                new TorrentUploadSessionRecord.TorrentUploadSessionRecordDefinition()
+                new TorrentUploadSessionRecord.TorrentUploadSessionRecordDefinition(),
+                new CloudArchiveRecord.CloudArchiveRecordDefinition()
         );
     }
 
@@ -114,6 +118,7 @@ public class DataVerticle extends AbstractVerticle {
         torrentRepository = new TorrentRepositoryImpl(pool);
         torrentStatisticEventRepository = new TorrentStatisticEventRepositoryImpl(pool);
         torrentUploadSessionRepository = new TorrentUploadSessionRepositoryImpl(pool);
+        cloudArchiveRepository = new CloudArchiveRepositoryImpl(pool);
         isCompletelyNewInitialization()
                 .compose(isNew -> createTablesSequentially().map(isNew))
                 .compose(isNew -> settingRepository.<Version>getByKey(SettingKey.version).map(version -> Tuple.tuple(isNew, version)))

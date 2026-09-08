@@ -128,7 +128,8 @@ export default function ChatSelect({ disabled }: { disabled: boolean }) {
                       "opacity-100":
                         chat.auto?.download.enabled ||
                         chat.auto?.preload.enabled ||
-                        chat.auto?.transfer.enabled,
+                        chat.auto?.transfer.enabled ||
+                        chat.auto?.archive?.enabled,
                     },
                   )}
                 />
