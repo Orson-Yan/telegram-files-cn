@@ -311,15 +311,19 @@ export type CloudArchiveRecord = {
   telegramId: number;
   sourceChatId: number;
   sourceTopicId: number;
+  sourceTopicName?: string;
   sourceMessageId: number;
   sourceAlbumId: number;
   sourceChatName: string;
   targetChatId: number;
   targetTopicId: number;
+  targetTopicName?: string;
+  generalTopic?: boolean;
   targetMessageId?: number;
   targetChatName: string;
   fileUniqueId?: string;
   mode: ArchiveMode;
+  topicMode: ArchiveTopicMode;
   status: string;
   attemptCount: number;
   lastErrorCode?: string;
@@ -337,6 +341,8 @@ export type CloudArchiveHistoryJob = {
   targetChatId: number;
   targetTopicId: number;
   targetChatName: string;
+  topicMode: ArchiveTopicMode | "UNKNOWN";
+  archiveMode: ArchiveMode | "UNKNOWN";
   status: string;
   scanMode: "ALL" | "LIMIT";
   stage: "DISCOVERING" | "SCANNING" | "DRAINING" | "COMPLETED";

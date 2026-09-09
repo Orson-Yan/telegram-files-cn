@@ -14,7 +14,9 @@ import java.util.function.Supplier;
 /** Creates and persistently reuses destination topics for PRESERVE archive rules. */
 final class CloudArchiveTopicService {
     private static final int DEFAULT_TOPIC_COLOR = 0x6FB9F0;
+    private static final long VERIFY_TTL_MILLIS = 5 * 60 * 1_000L;
     private static final Map<String, Future<Long>> IN_FLIGHT = new ConcurrentHashMap<>();
+    private static final Map<String, VerifiedMapping> VERIFIED_MAPPINGS = new ConcurrentHashMap<>();
 
     private CloudArchiveTopicService() {
     }
@@ -28,8 +30,8 @@ final class CloudArchiveTopicService {
         }
         long telegramId = telegram.telegramRecord.id();
         String key = telegramId + ":" + sourceChatId + ":" + sourceTopicId + ":" + targetChatId;
-        return singleFlight(key, () -> resolveUncached(
-                telegram, telegramId, sourceChatId, sourceTopicId, targetChatId));
+        return singleFlight(key, () -> remember(key, resolveUncached(
+                telegram, key, telegramId, sourceChatId, sourceTopicId, targetChatId)));
     }
 
     static Future<Long> resolve(TelegramVerticle telegram,
@@ -39,11 +41,21 @@ final class CloudArchiveTopicService {
         Objects.requireNonNull(source, "source");
         long telegramId = telegram.telegramRecord.id();
         String key = telegramId + ":" + sourceChatId + ":" + source.forumTopicId + ":" + targetChatId;
-        return singleFlight(key, () -> DataVerticle.cloudArchiveTopicRepository
+        return singleFlight(key, () -> remember(key, DataVerticle.cloudArchiveTopicRepository
                 .find(telegramId, sourceChatId, source.forumTopicId, targetChatId)
                 .compose(existing -> existing == null
                         ? createMapping(telegram, telegramId, sourceChatId, source, targetChatId)
-                        : Future.succeededFuture(existing.targetTopicId())));
+                        : validateExisting(telegram, key, existing,
+                                () -> createMapping(telegram, telegramId, sourceChatId,
+                                        source, targetChatId)))));
+    }
+
+    static void invalidate(long telegramId,
+                           long sourceChatId,
+                           long sourceTopicId,
+                           long targetChatId) {
+        VERIFIED_MAPPINGS.remove(
+                telegramId + ":" + sourceChatId + ":" + sourceTopicId + ":" + targetChatId);
     }
 
     private static Future<Long> singleFlight(String key, Supplier<Future<Long>> action) {
@@ -67,6 +79,7 @@ final class CloudArchiveTopicService {
     }
 
     private static Future<Long> resolveUncached(TelegramVerticle telegram,
+                                                 String key,
                                                  long telegramId,
                                                  long sourceChatId,
                                                  long sourceTopicId,
@@ -75,18 +88,51 @@ final class CloudArchiveTopicService {
                 .find(telegramId, sourceChatId, sourceTopicId, targetChatId)
                 .compose(existing -> {
                     if (existing != null) {
-                        return Future.succeededFuture(existing.targetTopicId());
+                        return validateExisting(telegram, key, existing,
+                                () -> sourceTopic(telegram, sourceChatId, sourceTopicId)
+                                        .compose(source -> createMapping(telegram, telegramId,
+                                                sourceChatId, source, targetChatId)));
                     }
-                    return telegram.client.execute(new TdApi.GetForumTopic(
-                                    sourceChatId, Math.toIntExact(sourceTopicId)))
-                            .compose(topic -> {
-                                if (topic == null || topic.info == null) {
-                                    return Future.failedFuture("The source forum topic is unavailable");
-                                }
-                                return createMapping(telegram, telegramId, sourceChatId,
-                                        topic.info, targetChatId);
-                            });
+                    return sourceTopic(telegram, sourceChatId, sourceTopicId)
+                            .compose(source -> createMapping(telegram, telegramId, sourceChatId,
+                                    source, targetChatId));
                 });
+    }
+
+    private static Future<TdApi.ForumTopicInfo> sourceTopic(TelegramVerticle telegram,
+                                                             long sourceChatId,
+                                                             long sourceTopicId) {
+        return telegram.client.execute(new TdApi.GetForumTopic(
+                        sourceChatId, Math.toIntExact(sourceTopicId)))
+                .compose(topic -> topic == null || topic.info == null
+                        ? Future.failedFuture("The source forum topic is unavailable")
+                        : Future.succeededFuture(topic.info));
+    }
+
+    private static Future<Long> validateExisting(TelegramVerticle telegram,
+                                                  String key,
+                                                  CloudArchiveTopicMap existing,
+                                                  Supplier<Future<Long>> recreate) {
+        VerifiedMapping verified = VERIFIED_MAPPINGS.get(key);
+        if (verified != null && verified.targetTopicId() == existing.targetTopicId()
+            && verified.expiresAt() > System.currentTimeMillis()) {
+            return Future.succeededFuture(existing.targetTopicId());
+        }
+        return telegram.client.execute(new TdApi.GetForumTopic(
+                        existing.targetChatId(), Math.toIntExact(existing.targetTopicId())))
+                .map(topic -> topic != null && topic.info != null)
+                .recover(failure -> CloudArchiveService.isTopicFailure(failure)
+                        ? Future.succeededFuture(false)
+                        : Future.failedFuture(failure))
+                .compose(valid -> valid
+                        ? Future.succeededFuture(existing.targetTopicId())
+                        : recreate.get());
+    }
+
+    private static Future<Long> remember(String key, Future<Long> resolution) {
+        return resolution.onSuccess(targetTopicId -> VERIFIED_MAPPINGS.put(key,
+                new VerifiedMapping(targetTopicId,
+                        System.currentTimeMillis() + VERIFY_TTL_MILLIS)));
     }
 
     private static Future<Long> createMapping(TelegramVerticle telegram,
@@ -144,5 +190,8 @@ final class CloudArchiveTopicService {
             value = "Archived topic";
         }
         return value.length() <= 128 ? value : value.substring(0, 128);
+    }
+
+    private record VerifiedMapping(long targetTopicId, long expiresAt) {
     }
 }

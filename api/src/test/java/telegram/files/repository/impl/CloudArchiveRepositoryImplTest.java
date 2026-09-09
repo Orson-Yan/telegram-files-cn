@@ -58,7 +58,8 @@ class CloudArchiveRepositoryImplTest {
     }
 
     @Test
-    void migrationAddsForumTopicAndHistoryDeliveryColumns(Vertx vertx, VertxTestContext context) {
+    void migrationAddsForumTopicHistoryDeliveryAndTopicModeColumns(Vertx vertx,
+                                                                    VertxTestContext context) {
         Pool pool = JDBCPool.pool(
                 vertx,
                 new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
@@ -83,7 +84,7 @@ class CloudArchiveRepositoryImplTest {
 
         pool.query(oldScheme).execute()
                 .compose(_ -> new CloudArchiveRecord.CloudArchiveRecordDefinition().migrate(
-                        pool, new Version("0.5.0"), new Version("0.7.0")))
+                        pool, new Version("0.5.0"), new Version("0.7.1")))
                 .compose(_ -> pool.query("PRAGMA table_info(telegram_archive_record)").execute())
                 .eventually(pool::close)
                 .onComplete(context.succeeding(rows -> context.verify(() -> {
@@ -94,6 +95,71 @@ class CloudArchiveRepositoryImplTest {
                     assertTrue(columns.contains("target_topic_id"));
                     assertTrue(columns.contains("history_job_id"));
                     assertTrue(columns.contains("delivery_sequence"));
+                    assertTrue(columns.contains("topic_mode"));
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void prioritizesLiveMessagesAheadOfLargeHistoryRoutes(Vertx vertx,
+                                                           VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(
+                pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> repository.stage(
+                        7, 100, 0, 1, 0, 200, 0, null, "COPY", "job-1"))
+                .compose(_ -> repository.stage(
+                        7, 100, 0, 2, 0, 200, 0, null, "COPY", "job-1"))
+                .compose(_ -> repository.stage(
+                        7, 101, 0, 3, 0, 200, 0, null, "COPY", "job-2"))
+                .compose(_ -> repository.releaseHistory("job-1"))
+                .compose(_ -> repository.releaseHistory("job-2"))
+                .compose(_ -> repository.enqueue(7, 102, 50, 0, 200, null, "COPY"))
+                .compose(_ -> repository.listDue(1_000, 10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    assertEquals(4, records.size());
+                    assertEquals(102L, records.getFirst().sourceChatId());
+                    assertEquals(100L, records.get(1).sourceChatId());
+                    assertEquals(101L, records.get(2).sourceChatId());
+                    assertEquals(100L, records.get(3).sourceChatId());
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void persistsResolvedTopicsForPreviouslyUnresolvedQueueRows(Vertx vertx,
+                                                                 VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(
+                pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> repository.enqueue(
+                        7, 100, 0, 50, 0, 200, 0, null, "COPY", "MERGE"))
+                .compose(_ -> repository.listDue(1_000, 10))
+                .compose(records -> {
+                    String id = records.getFirst().id();
+                    return repository.claim(id).compose(claimed -> {
+                        context.verify(() -> assertTrue(claimed));
+                        return repository.updateTopics(id, 11, 21, "PRESERVE");
+                    });
+                })
+                .compose(_ -> repository.listRecent(10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    CloudArchiveRecord record = records.getFirst();
+                    assertEquals(11L, record.sourceTopicId());
+                    assertEquals(21L, record.targetTopicId());
+                    assertEquals("PRESERVE", record.topicMode());
                     context.completeNow();
                 })));
     }

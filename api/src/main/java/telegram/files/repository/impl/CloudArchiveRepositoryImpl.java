@@ -37,9 +37,10 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                    long targetChatId,
                                    long targetTopicId,
                                    String fileUniqueId,
-                                   String mode) {
+                                   String mode,
+                                   String topicMode) {
         return insert(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
-                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode, topicMode,
                 null, "PENDING");
     }
 
@@ -53,9 +54,10 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                  long targetTopicId,
                                  String fileUniqueId,
                                  String mode,
+                                 String topicMode,
                                  String historyJobId) {
         return insert(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
-                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode, topicMode,
                 historyJobId, "STAGED");
     }
 
@@ -68,6 +70,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                    long targetTopicId,
                                    String fileUniqueId,
                                    String mode,
+                                   String topicMode,
                                    String historyJobId,
                                    String status) {
         return findExisting(telegramId, sourceChatId, sourceMessageId, targetChatId)
@@ -80,11 +83,11 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                     INSERT INTO telegram_archive_record
                                         (id, telegram_id, source_chat_id, source_message_id,
                                          source_topic_id, source_album_id, target_chat_id, target_topic_id, target_message_id,
-                                         file_unique_id, mode, history_job_id, delivery_sequence,
+                                         file_unique_id, mode, topic_mode, history_job_id, delivery_sequence,
                                          status, attempt_count,
                                          next_attempt_at, last_error_code, last_error_message,
                                          created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?)
                                     """)
                             .execute(Tuple.of(
                                     UUID.randomUUID().toString(),
@@ -97,6 +100,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                     targetTopicId,
                                     fileUniqueId,
                                     mode,
+                                    topicMode,
                                     historyJobId,
                                     sourceMessageId,
                                     status,
@@ -111,6 +115,20 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                             ? Future.succeededFuture(false)
                                             : Future.failedFuture(failure)));
                 });
+    }
+
+    @Override
+    public Future<Void> updateTopics(String id,
+                                     long sourceTopicId,
+                                     long targetTopicId,
+                                     String topicMode) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_record
+                        SET source_topic_id = ?, target_topic_id = ?, topic_mode = ?, updated_at = ?
+                        WHERE id = ? AND status = 'SENDING'
+                        """)
+                .execute(Tuple.of(sourceTopicId, targetTopicId, topicMode, clock.millis(), id))
+                .mapEmpty();
     }
 
     @Override
@@ -238,9 +256,18 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
     @Override
     public Future<List<CloudArchiveRecord>> listDue(long now, int limit) {
         return preparedQuery("""
-                        SELECT * FROM telegram_archive_record
-                        WHERE status IN ('PENDING', 'RETRY') AND next_attempt_at <= ?
-                        ORDER BY delivery_sequence ASC, created_at ASC
+                        SELECT * FROM (
+                            SELECT archive_record.*,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY telegram_id, source_chat_id
+                                       ORDER BY delivery_sequence ASC, created_at ASC
+                                   ) AS route_position
+                            FROM telegram_archive_record archive_record
+                            WHERE status IN ('PENDING', 'RETRY') AND next_attempt_at <= ?
+                        ) due_records
+                        ORDER BY CASE WHEN history_job_id IS NULL THEN 0 ELSE 1 END,
+                                 route_position ASC, telegram_id ASC, source_chat_id ASC,
+                                 created_at ASC
                         LIMIT ?
                         """)
                 .execute(Tuple.of(now, Math.max(1, Math.min(limit, 200))))

@@ -1114,12 +1114,21 @@ public class HttpVerticle extends AbstractVerticle {
     private void handleCloudArchiveRecords(RoutingContext ctx) {
         int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 500));
         DataVerticle.cloudArchiveRepository.listRecent(limit)
-                .map(records -> new JsonArray(records.stream().map(this::cloudArchiveRecordJson).toList()))
+                .compose(records -> Future.all(records.stream()
+                        .map(this::cloudArchiveRecordJson)
+                        .toList()))
+                .map(records -> {
+                    List<JsonObject> items = new ArrayList<>(records.size());
+                    for (int index = 0; index < records.size(); index++) {
+                        items.add(records.resultAt(index));
+                    }
+                    return new JsonArray(items);
+                })
                 .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
     }
 
-    private JsonObject cloudArchiveRecordJson(CloudArchiveRecord record) {
+    private Future<JsonObject> cloudArchiveRecordJson(CloudArchiveRecord record) {
         JsonObject item = JsonObject.mapFrom(record);
         TelegramVerticles.get(record.telegramId()).ifPresent(telegram -> {
             TdApi.Chat source = telegram.getChat(record.sourceChatId());
@@ -1127,9 +1136,23 @@ public class HttpVerticle extends AbstractVerticle {
             item.put("sourceChatName", source == null ? Convert.toStr(record.sourceChatId()) : source.title)
                     .put("targetChatName", target == null ? Convert.toStr(record.targetChatId()) : target.title);
         });
-        return item
+        item
                 .put("sourceChatName", item.getString("sourceChatName", Convert.toStr(record.sourceChatId())))
                 .put("targetChatName", item.getString("targetChatName", Convert.toStr(record.targetChatId())));
+        if (record.sourceTopicId() == 0 || record.targetTopicId() == 0) {
+            return Future.succeededFuture(item);
+        }
+        return DataVerticle.cloudArchiveTopicRepository.find(
+                        record.telegramId(), record.sourceChatId(), record.sourceTopicId(),
+                        record.targetChatId())
+                .map(mapping -> {
+                    if (mapping != null && mapping.targetTopicId() == record.targetTopicId()) {
+                        item.put("sourceTopicName", mapping.sourceTopicName())
+                                .put("targetTopicName", mapping.targetTopicName())
+                                .put("generalTopic", mapping.general());
+                    }
+                    return item;
+                });
     }
 
     private void handleCloudArchiveHistory(RoutingContext ctx) {
@@ -1143,6 +1166,13 @@ public class HttpVerticle extends AbstractVerticle {
     private JsonObject cloudArchiveHistoryJson(CloudArchiveHistoryJob job) {
         JsonObject item = JsonObject.mapFrom(job);
         item.remove("ruleJson");
+        try {
+            JsonObject savedRule = new JsonObject(job.ruleJson());
+            item.put("topicMode", savedRule.getString("topicMode", "MERGE"))
+                    .put("archiveMode", savedRule.getString("mode", "COPY"));
+        } catch (RuntimeException ignored) {
+            item.put("topicMode", "UNKNOWN").put("archiveMode", "UNKNOWN");
+        }
         TelegramVerticles.get(job.telegramId()).ifPresent(telegram -> {
             TdApi.Chat source = telegram.getChat(job.sourceChatId());
             TdApi.Chat target = telegram.getChat(job.targetChatId());

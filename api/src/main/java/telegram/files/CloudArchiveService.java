@@ -9,6 +9,7 @@ import telegram.files.repository.SettingAutoRecords;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeoutException;
@@ -32,6 +33,12 @@ public final class CloudArchiveService {
         Objects.requireNonNull(rule, "rule");
         if (rule.targetChatId == 0) {
             return Future.failedFuture(new Rejected("TARGET_REQUIRED", "A destination chat is required"));
+        }
+        if (rule.topicMode == SettingAutoRecords.ArchiveTopicMode.PRESERVE
+            && rule.targetTopicId == 0) {
+            return Future.failedFuture(new Rejected(
+                    "TOPIC_TARGET_REQUIRED",
+                    "Preserve mode requires a resolved destination topic"));
         }
         if (sameEndpoint(sourceChatId, rule)) {
             return Future.failedFuture(new Rejected("SAME_DESTINATION", "Source and destination must be different"));
@@ -243,6 +250,20 @@ public final class CloudArchiveService {
                    || message.contains("TIMEOUT");
         }
         return false;
+    }
+
+    public static boolean isTopicFailure(Throwable failure) {
+        if (!(failure instanceof TelegramRunException telegramFailure)) {
+            return false;
+        }
+        String message = Objects.toString(telegramFailure.getError().message, "")
+                .toUpperCase(Locale.ROOT)
+                .replaceAll("[^A-Z0-9]+", "_");
+        return message.contains("THREAD_ID_INVALID")
+               || message.contains("MESSAGE_THREAD_NOT_FOUND")
+               || message.contains("INVALID_MESSAGE_THREAD")
+               || message.contains("TOPIC_ID_INVALID")
+               || message.contains("TOPIC_NOT_FOUND");
     }
 
     public static String errorCode(Throwable failure) {

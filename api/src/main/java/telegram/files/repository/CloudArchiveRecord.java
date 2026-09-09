@@ -21,6 +21,7 @@ public record CloudArchiveRecord(
         Long targetMessageId,
         String fileUniqueId,
         String mode,
+        String topicMode,
         String historyJobId,
         long deliverySequence,
         String status,
@@ -46,6 +47,7 @@ public record CloudArchiveRecord(
                 target_message_id  BIGINT,
                 file_unique_id     VARCHAR(255),
                 mode               VARCHAR(32) NOT NULL,
+                topic_mode         VARCHAR(32) NOT NULL DEFAULT 'MERGE',
                 history_job_id     VARCHAR(64),
                 delivery_sequence  BIGINT NOT NULL DEFAULT 0,
                 status             VARCHAR(32) NOT NULL,
@@ -83,6 +85,9 @@ public record CloudArchiveRecord(
             MapUtil.entry(new Version("0.7.0"), new String[]{
                     "ALTER TABLE telegram_archive_record ADD COLUMN history_job_id VARCHAR(64);",
                     "ALTER TABLE telegram_archive_record ADD COLUMN delivery_sequence BIGINT NOT NULL DEFAULT 0;"
+            }),
+            MapUtil.entry(new Version("0.7.1"), new String[]{
+                    "ALTER TABLE telegram_archive_record ADD COLUMN topic_mode VARCHAR(32) NOT NULL DEFAULT 'MERGE';"
             })
     ));
 
@@ -99,6 +104,7 @@ public record CloudArchiveRecord(
                 nullableNumber(row, "target_message_id"),
                 row.getString("file_unique_id"),
                 row.getString("mode"),
+                row.getString("topic_mode"),
                 row.getString("history_job_id"),
                 number(row, "delivery_sequence"),
                 row.getString("status"),

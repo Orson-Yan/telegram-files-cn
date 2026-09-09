@@ -546,6 +546,14 @@ export function CloudArchiveManager() {
                         <span translate="no">{job.sourceChatName}</span>
                         <span className="mx-1 text-muted-foreground">→</span>
                         <span translate="no">{job.targetChatName}</span>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {job.archiveMode} ·{" "}
+                          {job.topicMode === "PRESERVE"
+                            ? "Preserve topics"
+                            : job.topicMode === "MERGE"
+                              ? "Merge topics"
+                              : "Unknown topic mode"}
+                        </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">
                         <div>
@@ -674,7 +682,7 @@ export function CloudArchiveManager() {
                         <span translate="no">{record.sourceChatName}</span>
                         {record.sourceTopicId ? (
                           <span className="ml-1 text-xs text-muted-foreground">
-                            topic #{record.sourceTopicId}
+                            {record.sourceTopicName || "Topic"} #{record.sourceTopicId}
                           </span>
                         ) : null}
                         <span className="ml-1 text-xs text-muted-foreground">
@@ -685,7 +693,7 @@ export function CloudArchiveManager() {
                         <span translate="no">{record.targetChatName}</span>
                         {record.targetTopicId ? (
                           <span className="ml-1 text-xs text-muted-foreground">
-                            topic #{record.targetTopicId}
+                            {record.targetTopicName || "Topic"} #{record.targetTopicId}
                           </span>
                         ) : null}
                         {record.targetMessageId ? (
@@ -694,7 +702,21 @@ export function CloudArchiveManager() {
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell>{record.mode}</TableCell>
+                      <TableCell>
+                        <div>{record.mode}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {record.topicMode === "PRESERVE"
+                            ? "Preserve topics"
+                            : "Merge topics"}
+                        </div>
+                        {record.topicMode === "PRESERVE" &&
+                          record.sourceTopicId !== 0 &&
+                          record.targetTopicId === 0 && (
+                            <div className="text-xs text-destructive">
+                              Target topic unresolved
+                            </div>
+                          )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline">{record.status}</Badge>
                       </TableCell>
@@ -859,6 +881,11 @@ export function CloudArchiveManager() {
                 <p className="text-xs text-muted-foreground">
                   Preserve creates and reuses matching topics in the destination forum.
                 </p>
+                {draft.rule.topicMode === "PRESERVE" && (
+                  <p className="text-xs text-muted-foreground">
+                    Telegram can still display them together when the destination is set to View as messages. Switch the destination group to View as topics to see the topic list.
+                  </p>
+                )}
               </div>
             )}
 

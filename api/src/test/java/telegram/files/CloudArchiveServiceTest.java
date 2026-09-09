@@ -96,6 +96,23 @@ class CloudArchiveServiceTest {
     }
 
     @Test
+    void rejectsPreserveModeWithoutResolvedDestinationTopic(VertxTestContext context) {
+        ScriptedTelegramGateway gateway = new ScriptedTelegramGateway(_ -> new TdApi.Ok());
+        SettingAutoRecords.ArchiveRule rule = rule(200, SettingAutoRecords.ArchiveMode.COPY);
+        rule.sourceTopicId = 11;
+        rule.topicMode = SettingAutoRecords.ArchiveTopicMode.PRESERVE;
+
+        CloudArchiveService.archive(telegram(gateway), 100, List.of(11L), rule)
+                .onComplete(context.failing(failure -> context.verify(() -> {
+                    CloudArchiveService.Rejected rejected = assertInstanceOf(
+                            CloudArchiveService.Rejected.class, failure);
+                    assertEquals("TOPIC_TARGET_REQUIRED", rejected.code());
+                    assertTrue(gateway.requests().isEmpty());
+                    context.completeNow();
+                })));
+    }
+
+    @Test
     void extractsTelegramFloodWaitWithSafetyMargin() {
         TdApi.Error error = new TdApi.Error();
         error.code = 429;
@@ -104,6 +121,15 @@ class CloudArchiveServiceTest {
 
         assertTrue(CloudArchiveService.isRetryable(failure));
         assertEquals(47_000L, CloudArchiveService.retryAfterMillis(failure));
+    }
+
+    @Test
+    void recognizesHumanReadableTelegramTopicErrors() {
+        TdApi.Error error = new TdApi.Error();
+        error.code = 400;
+        error.message = "Message thread not found";
+
+        assertTrue(CloudArchiveService.isTopicFailure(new TelegramRunException(error)));
     }
 
     private static TelegramVerticle telegram(ScriptedTelegramGateway gateway) {

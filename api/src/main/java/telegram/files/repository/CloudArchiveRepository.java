@@ -15,7 +15,20 @@ public interface CloudArchiveRepository {
                                     String fileUniqueId,
                                     String mode) {
         return enqueue(telegramId, sourceChatId, 0, sourceMessageId, sourceAlbumId,
-                targetChatId, 0, fileUniqueId, mode);
+                targetChatId, 0, fileUniqueId, mode, "MERGE");
+    }
+
+    default Future<Boolean> enqueue(long telegramId,
+                                    long sourceChatId,
+                                    long sourceTopicId,
+                                    long sourceMessageId,
+                                    long sourceAlbumId,
+                                    long targetChatId,
+                                    long targetTopicId,
+                                    String fileUniqueId,
+                                    String mode) {
+        return enqueue(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode, "MERGE");
     }
 
     Future<Boolean> enqueue(long telegramId,
@@ -26,7 +39,23 @@ public interface CloudArchiveRepository {
                             long targetChatId,
                             long targetTopicId,
                             String fileUniqueId,
-                            String mode);
+                            String mode,
+                            String topicMode);
+
+    default Future<Boolean> stage(long telegramId,
+                                  long sourceChatId,
+                                  long sourceTopicId,
+                                  long sourceMessageId,
+                                  long sourceAlbumId,
+                                  long targetChatId,
+                                  long targetTopicId,
+                                  String fileUniqueId,
+                                  String mode,
+                                  String historyJobId) {
+        return stage(telegramId, sourceChatId, sourceTopicId, sourceMessageId,
+                sourceAlbumId, targetChatId, targetTopicId, fileUniqueId, mode,
+                "MERGE", historyJobId);
+    }
 
     Future<Boolean> stage(long telegramId,
                           long sourceChatId,
@@ -37,7 +66,10 @@ public interface CloudArchiveRepository {
                           long targetTopicId,
                           String fileUniqueId,
                           String mode,
+                          String topicMode,
                           String historyJobId);
+
+    Future<Void> updateTopics(String id, long sourceTopicId, long targetTopicId, String topicMode);
 
     Future<Void> releaseHistory(String historyJobId);
 
