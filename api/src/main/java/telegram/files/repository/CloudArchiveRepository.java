@@ -73,6 +73,8 @@ public interface CloudArchiveRepository {
 
     Future<Void> releaseHistory(String historyJobId);
 
+    Future<Void> releaseCompletedHistory();
+
     Future<Long> countOutstandingHistory(String historyJobId);
 
     Future<Void> cancelHistory(String historyJobId);
@@ -90,6 +92,9 @@ public interface CloudArchiveRepository {
     Future<List<CloudArchiveRecord>> listDue(long now, int limit);
 
     Future<List<CloudArchiveRecord>> listRecent(int limit);
+
+    Future<Long> maxSourceMessageId(long telegramId, long sourceChatId,
+                                    long sourceTopicId, long targetChatId);
 
     Future<Long> countCompletedSince(long telegramId, long since);
 

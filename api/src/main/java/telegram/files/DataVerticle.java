@@ -21,6 +21,7 @@ import telegram.files.repository.impl.FileRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveHistoryRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveTopicRepositoryImpl;
+import telegram.files.repository.impl.CloudArchiveSyncRepositoryImpl;
 import telegram.files.repository.impl.InstallationIdentityRepositoryImpl;
 import telegram.files.repository.impl.NodeTaskRepositoryImpl;
 import telegram.files.repository.impl.ShareRepositoryImpl;
@@ -72,6 +73,8 @@ public class DataVerticle extends AbstractVerticle {
 
     public static CloudArchiveTopicRepository cloudArchiveTopicRepository;
 
+    public static CloudArchiveSyncRepository cloudArchiveSyncRepository;
+
     private static SqlConnectOptions sqlConnectOptions;
 
     public static final List<Definition> definitions;
@@ -108,7 +111,8 @@ public class DataVerticle extends AbstractVerticle {
                 new TorrentUploadSessionRecord.TorrentUploadSessionRecordDefinition(),
                 new CloudArchiveRecord.CloudArchiveRecordDefinition(),
                 new CloudArchiveHistoryJob.CloudArchiveHistoryJobDefinition(),
-                new CloudArchiveTopicMap.CloudArchiveTopicMapDefinition()
+                new CloudArchiveTopicMap.CloudArchiveTopicMapDefinition(),
+                new CloudArchiveSyncState.CloudArchiveSyncStateDefinition()
         );
     }
 
@@ -129,6 +133,7 @@ public class DataVerticle extends AbstractVerticle {
         cloudArchiveRepository = new CloudArchiveRepositoryImpl(pool);
         cloudArchiveHistoryRepository = new CloudArchiveHistoryRepositoryImpl(pool);
         cloudArchiveTopicRepository = new CloudArchiveTopicRepositoryImpl(pool);
+        cloudArchiveSyncRepository = new CloudArchiveSyncRepositoryImpl(pool);
         isCompletelyNewInitialization()
                 .compose(isNew -> createTablesSequentially().map(isNew))
                 .compose(isNew -> settingRepository.<Version>getByKey(SettingKey.version).map(version -> Tuple.tuple(isNew, version)))

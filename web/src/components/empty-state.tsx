@@ -33,6 +33,7 @@ import {
   type DownloadOverviewStatistics,
   normalizeDownloadOverview,
 } from "@/lib/download-activity";
+import { useWebsocket } from "@/hooks/use-websocket";
 
 interface EmptyStateProps {
   isLoadingAccount?: boolean;
@@ -158,6 +159,7 @@ type FileCount = DownloadOverviewStatistics;
 
 function AllFiles() {
   const router = useRouter();
+  const { downloadActivity } = useWebsocket();
   const { data, error, isLoading } = useSWR<FileCount, Error>(`/files/count`);
 
   if (error) {
@@ -186,46 +188,41 @@ function AllFiles() {
 
   return (
     <Card className="mx-auto mb-8 max-w-5xl">
-      <CardContent className="flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between">
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <Check className="text-green-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Downloaded
-            </span>
-            <span className="inline-block w-[7ch] text-right text-sm font-medium tabular-nums">
-              {statistics.completed}
-            </span>
-          </div>
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <Download className="text-blue-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Downloading
-            </span>
-            <span className="whitespace-nowrap text-sm font-medium tabular-nums">
-              {statistics.downloading} / {statistics.downloadLimit}
-            </span>
-          </div>
-          <div className="flex items-center justify-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
-            <HardDrive className="text-purple-500" />
-            <span className="hidden text-sm font-medium md:inline-block">
-              Size
-            </span>
-            <span className="whitespace-nowrap text-sm font-medium tabular-nums">
-              {prettyBytes(statistics.downloadedSize)}
-            </span>
-          </div>
+      <CardContent className="space-y-3 p-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <OverviewMetric
+            icon={<Check className="text-green-500" />}
+            label="Downloaded"
+            value={statistics.completed.toLocaleString()}
+          />
+          <OverviewMetric
+            icon={<Download className="text-blue-500" />}
+            label="Downloading"
+            value={`${statistics.downloading} / ${statistics.downloadLimit}`}
+          />
+          <OverviewMetric
+            icon={<HardDrive className="text-purple-500" />}
+            label="Downloaded size"
+            value={prettyBytes(statistics.downloadedSize)}
+          />
+          <OverviewMetric
+            icon={<Activity className="text-cyan-500" />}
+            label="Current speed"
+            value={`${prettyBytes(downloadActivity.speed)}/s`}
+          />
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           <Button
+            className="w-full"
             variant="outline"
             size="sm"
             onClick={() => router.push("/downloads")}
           >
             <Activity data-icon="inline-start" />
-            Active downloads
+            Download tasks
           </Button>
           <Button
+            className="w-full"
             variant="outline"
             size="sm"
             onClick={() => router.push("/cloud-archive")}
@@ -234,6 +231,7 @@ function AllFiles() {
             Cloud archive
           </Button>
           <Button
+            className="w-full"
             variant="outline"
             size="sm"
             onClick={() => router.push("/local-organize")}
@@ -242,6 +240,7 @@ function AllFiles() {
             Local organization
           </Button>
           <Button
+            className="w-full"
             variant="outline"
             size="sm"
             onClick={() => router.push("/automations")}
@@ -250,6 +249,7 @@ function AllFiles() {
             Automations
           </Button>
           <Button
+            className="w-full"
             variant="outline"
             size="sm"
             onClick={() => router.push("/files")}
@@ -260,5 +260,27 @@ function AllFiles() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function OverviewMetric({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-lg bg-gray-100 p-3 dark:bg-gray-800">
+      <span className="shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs text-muted-foreground">{label}</span>
+        <span className="block min-w-[9ch] whitespace-nowrap text-sm font-semibold tabular-nums">
+          {value}
+        </span>
+      </span>
+    </div>
   );
 }

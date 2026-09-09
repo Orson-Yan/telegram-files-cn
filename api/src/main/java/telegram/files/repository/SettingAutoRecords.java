@@ -171,8 +171,17 @@ public class SettingAutoRecords {
         /** 0 means the destination chat without a forum topic. */
         public long targetTopicId;
 
-        /** MERGE uses targetTopicId; PRESERVE creates and reuses a matching target forum topic. */
+        /** MERGE uses targetTopicId; PRESERVE keeps a dedicated mapping per source forum topic. */
         public ArchiveTopicMode topicMode = ArchiveTopicMode.MERGE;
+
+        /** Hold new messages behind an initial/full recovery until source order is caught up. */
+        public boolean strictOrder;
+
+        /** Automatically verify and recover messages missed during restarts or network outages. */
+        public boolean recoveryEnabled = true;
+
+        /** NOW starts at the current head; FULL requests an initial historical mirror. */
+        public ArchiveInitialSyncMode initialSyncMode = ArchiveInitialSyncMode.NOW;
 
         /** COPY creates an independent message; FORWARD keeps the source header. */
         public ArchiveMode mode = ArchiveMode.COPY;
@@ -199,6 +208,11 @@ public class SettingAutoRecords {
     public enum ArchiveTopicMode {
         MERGE,
         PRESERVE
+    }
+
+    public enum ArchiveInitialSyncMode {
+        NOW,
+        FULL
     }
 
     public enum ArchiveScope {

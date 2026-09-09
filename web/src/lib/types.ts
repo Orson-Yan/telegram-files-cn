@@ -256,6 +256,7 @@ export type AutoDownloadRule = {
 export type ArchiveMode = "COPY" | "FORWARD";
 export type ArchiveScope = "ALL_MESSAGES" | "MEDIA_ONLY";
 export type ArchiveTopicMode = "MERGE" | "PRESERVE";
+export type ArchiveInitialSyncMode = "NOW" | "FULL";
 
 export type AutoArchiveRule = {
   sourceTopicId: number | string;
@@ -269,6 +270,9 @@ export type AutoArchiveRule = {
   filterExpr: string;
   preserveCaption: boolean;
   disableNotification: boolean;
+  strictOrder: boolean;
+  recoveryEnabled: boolean;
+  initialSyncMode: ArchiveInitialSyncMode;
 };
 
 export type TelegramTopic = {
@@ -291,6 +295,16 @@ export type CloudArchiveRuleOverview = {
   targetDownloadEnabled: boolean;
   enabled: boolean;
   rule: AutoArchiveRule;
+  syncStatus?: "INITIALIZING" | "LIVE" | "RECOVERING" | "ERROR" | "PAUSED";
+  syncTopicCount?: number;
+  syncScannedCount?: number;
+  syncMatchedCount?: number;
+  syncQueuedCount?: number;
+  syncLastObservedMessageId?: number;
+  syncRecoveryTargetMessageId?: number;
+  syncRecoveryCursorMessageId?: number;
+  syncError?: string;
+  lastReconciledAt?: number;
 };
 
 export type CloudArchiveStatistics = {
@@ -325,6 +339,7 @@ export type CloudArchiveRecord = {
   mode: ArchiveMode;
   topicMode: ArchiveTopicMode;
   status: string;
+  historyJobId?: string;
   attemptCount: number;
   lastErrorCode?: string;
   lastErrorMessage?: string;

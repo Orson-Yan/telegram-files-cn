@@ -45,7 +45,8 @@ final class CloudArchiveTopicService {
                 .find(telegramId, sourceChatId, source.forumTopicId, targetChatId)
                 .compose(existing -> existing == null
                         ? createMapping(telegram, telegramId, sourceChatId, source, targetChatId)
-                        : validateExisting(telegram, key, existing,
+                        : resolveExisting(telegram, key, existing,
+                                () -> Future.succeededFuture(source),
                                 () -> createMapping(telegram, telegramId, sourceChatId,
                                         source, targetChatId)))));
     }
@@ -88,7 +89,8 @@ final class CloudArchiveTopicService {
                 .find(telegramId, sourceChatId, sourceTopicId, targetChatId)
                 .compose(existing -> {
                     if (existing != null) {
-                        return validateExisting(telegram, key, existing,
+                        return resolveExisting(telegram, key, existing,
+                                () -> sourceTopic(telegram, sourceChatId, sourceTopicId),
                                 () -> sourceTopic(telegram, sourceChatId, sourceTopicId)
                                         .compose(source -> createMapping(telegram, telegramId,
                                                 sourceChatId, source, targetChatId)));
@@ -97,6 +99,23 @@ final class CloudArchiveTopicService {
                             .compose(source -> createMapping(telegram, telegramId, sourceChatId,
                                     source, targetChatId));
                 });
+    }
+
+    private static Future<Long> resolveExisting(
+            TelegramVerticle telegram,
+            String key,
+            CloudArchiveTopicMap existing,
+            Supplier<Future<TdApi.ForumTopicInfo>> source,
+            Supplier<Future<Long>> recreate) {
+        if (existing.general()) {
+            return validateExisting(telegram, key, existing, source, recreate);
+        }
+        return DataVerticle.cloudArchiveTopicRepository.targetMappedToAnotherSource(
+                        existing.telegramId(), existing.sourceChatId(), existing.sourceTopicId(),
+                        existing.targetChatId(), existing.targetTopicId())
+                .compose(collision -> collision
+                        ? recreate.get()
+                        : validateExisting(telegram, key, existing, source, recreate));
     }
 
     private static Future<TdApi.ForumTopicInfo> sourceTopic(TelegramVerticle telegram,
@@ -112,6 +131,7 @@ final class CloudArchiveTopicService {
     private static Future<Long> validateExisting(TelegramVerticle telegram,
                                                   String key,
                                                   CloudArchiveTopicMap existing,
+                                                  Supplier<Future<TdApi.ForumTopicInfo>> source,
                                                   Supplier<Future<Long>> recreate) {
         VerifiedMapping verified = VERIFIED_MAPPINGS.get(key);
         if (verified != null && verified.targetTopicId() == existing.targetTopicId()
@@ -120,13 +140,18 @@ final class CloudArchiveTopicService {
         }
         return telegram.client.execute(new TdApi.GetForumTopic(
                         existing.targetChatId(), Math.toIntExact(existing.targetTopicId())))
-                .map(topic -> topic != null && topic.info != null)
+                .map(topic -> topic == null ? null : topic.info)
                 .recover(failure -> CloudArchiveService.isTopicFailure(failure)
-                        ? Future.succeededFuture(false)
+                        ? Future.succeededFuture(null)
                         : Future.failedFuture(failure))
-                .compose(valid -> valid
-                        ? Future.succeededFuture(existing.targetTopicId())
-                        : recreate.get());
+                .compose(target -> target == null
+                        ? recreate.get()
+                        : source.get()
+                                .compose(sourceTopic -> syncTopicMetadata(
+                                                telegram, sourceTopic, target)
+                                        .compose(_ -> save(existing.telegramId(),
+                                                existing.sourceChatId(), sourceTopic,
+                                                existing.targetChatId(), target))));
     }
 
     private static Future<Long> remember(String key, Future<Long> resolution) {
@@ -140,23 +165,29 @@ final class CloudArchiveTopicService {
                                                long sourceChatId,
                                                TdApi.ForumTopicInfo source,
                                                long targetChatId) {
-        return TelegramTopics.listAll(telegram.client, targetChatId, "")
-                .compose(targets -> {
-                    TdApi.ForumTopicInfo target = findTarget(source, targets);
-                    if (target != null) {
-                        return save(telegramId, sourceChatId, source, targetChatId, target);
-                    }
-                    if (source.isGeneral) {
-                        return Future.failedFuture("The destination forum General topic is unavailable");
-                    }
-                    int color = source.icon == null || source.icon.color == 0
-                            ? DEFAULT_TOPIC_COLOR : source.icon.color;
-                    return telegram.client.execute(new TdApi.CreateForumTopic(
+        Future<TdApi.ForumTopicInfo> target;
+        if (source.isGeneral) {
+            target = TelegramTopics.listAll(telegram.client, targetChatId, "")
+                    .map(targets -> findGeneralTarget(targets))
+                    .compose(found -> found == null
+                            ? Future.failedFuture(
+                                    "The destination forum General topic is unavailable")
+                            : Future.succeededFuture(found));
+        } else {
+            int color = source.icon == null || source.icon.color == 0
+                    ? DEFAULT_TOPIC_COLOR : source.icon.color;
+            long customEmojiId = topicCustomEmojiId(source);
+            target = telegram.client.execute(new TdApi.CreateForumTopic(
+                            targetChatId, topicName(source.name), false,
+                            new TdApi.ForumTopicIcon(color, customEmojiId)))
+                    .recover(failure -> customEmojiId == 0
+                            ? Future.failedFuture(failure)
+                            : telegram.client.execute(new TdApi.CreateForumTopic(
                                     targetChatId, topicName(source.name), false,
-                                    new TdApi.ForumTopicIcon(color, 0)))
-                            .compose(created -> save(telegramId, sourceChatId, source,
-                                    targetChatId, created));
-                });
+                                    new TdApi.ForumTopicIcon(color, 0))));
+        }
+        return target.compose(created -> syncTopicMetadata(telegram, source, created)
+                .compose(_ -> save(telegramId, sourceChatId, source, targetChatId, created)));
     }
 
     private static Future<Long> save(long telegramId,
@@ -173,15 +204,60 @@ final class CloudArchiveTopicService {
                 .map(CloudArchiveTopicMap::targetTopicId);
     }
 
-    private static TdApi.ForumTopicInfo findTarget(TdApi.ForumTopicInfo source,
-                                                    List<TdApi.ForumTopic> targets) {
-        if (source.isGeneral) {
-            return targets.stream().map(topic -> topic.info)
-                    .filter(info -> info.isGeneral).findFirst().orElse(null);
-        }
+    private static TdApi.ForumTopicInfo findGeneralTarget(List<TdApi.ForumTopic> targets) {
         return targets.stream().map(topic -> topic.info)
-                .filter(info -> !info.isGeneral && topicName(info.name).equals(topicName(source.name)))
+                .filter(info -> info != null && info.isGeneral)
                 .findFirst().orElse(null);
+    }
+
+    private static Future<Void> syncTopicMetadata(TelegramVerticle telegram,
+                                                   TdApi.ForumTopicInfo source,
+                                                   TdApi.ForumTopicInfo target) {
+        String sourceName = topicName(source.name);
+        String targetName = topicName(target.name);
+        long sourceEmoji = topicCustomEmojiId(source);
+        long targetEmoji = topicCustomEmojiId(target);
+        boolean editName = !sourceName.equals(targetName);
+        boolean editEmoji = !source.isGeneral && sourceEmoji != targetEmoji;
+
+        Future<Void> chain = Future.succeededFuture();
+        if (editName || editEmoji) {
+            chain = telegram.client.<TdApi.Ok>execute(new TdApi.EditForumTopic(
+                            target.chatId, target.forumTopicId,
+                            editName ? sourceName : "", editEmoji, sourceEmoji))
+                    .<Void>mapEmpty()
+                    .recover(failure -> editEmoji
+                            ? telegram.client.<TdApi.Ok>execute(new TdApi.EditForumTopic(
+                                    target.chatId, target.forumTopicId,
+                                    editName ? sourceName : "", false, 0)).<Void>mapEmpty()
+                            : Future.failedFuture(failure))
+                    .onSuccess(_ -> {
+                        if (editName) {
+                            target.name = sourceName;
+                        }
+                        if (editEmoji && target.icon != null) {
+                            target.icon.customEmojiId = sourceEmoji;
+                        }
+                    });
+        }
+        if (source.isGeneral && source.isHidden != target.isHidden) {
+            chain = chain.compose(_ -> telegram.client.<TdApi.Ok>execute(
+                            new TdApi.ToggleGeneralForumTopicIsHidden(
+                                    target.chatId, source.isHidden))
+                    .<Void>mapEmpty()
+                    .onSuccess(_ -> target.isHidden = source.isHidden));
+        } else if (!source.isGeneral && source.isClosed != target.isClosed) {
+            chain = chain.compose(_ -> telegram.client.<TdApi.Ok>execute(
+                            new TdApi.ToggleForumTopicIsClosed(
+                                    target.chatId, target.forumTopicId, source.isClosed))
+                    .<Void>mapEmpty()
+                    .onSuccess(_ -> target.isClosed = source.isClosed));
+        }
+        return chain;
+    }
+
+    private static long topicCustomEmojiId(TdApi.ForumTopicInfo topic) {
+        return topic == null || topic.icon == null ? 0 : topic.icon.customEmojiId;
     }
 
     private static String topicName(String name) {

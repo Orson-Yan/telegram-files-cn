@@ -98,6 +98,9 @@ function emptyDraft(telegramId = ""): RuleDraft {
       filterExpr: "",
       preserveCaption: true,
       disableNotification: true,
+      strictOrder: false,
+      recoveryEnabled: true,
+      initialSyncMode: "NOW",
     },
   };
 }
@@ -115,6 +118,9 @@ function toDraft(rule: CloudArchiveRuleOverview): RuleDraft {
       targetChatId: String(rule.targetChatId),
       targetTopicId: String(rule.rule.targetTopicId || ""),
       topicMode: rule.rule.topicMode || "MERGE",
+      strictOrder: Boolean(rule.rule.strictOrder),
+      recoveryEnabled: rule.rule.recoveryEnabled !== false,
+      initialSyncMode: rule.rule.initialSyncMode || "NOW",
     },
   };
 }
@@ -283,9 +289,37 @@ export function CloudArchiveManager() {
     setSaving(true);
     try {
       await saveDraft(draft);
-      await Promise.all([reloadOverview(), reloadRecords()]);
+      let historyQueued = false;
+      let historyError: string | undefined;
+      if (
+        !editing &&
+        draft.enabled &&
+        draft.rule.initialSyncMode === "FULL"
+      ) {
+        try {
+          await POST("/cloud-archive/history", {
+            telegramId: draft.telegramId,
+            sourceChatId: draft.sourceChatId,
+            scanMode: "ALL",
+            maxMessages: 0,
+          });
+          historyQueued = true;
+        } catch (failure) {
+          historyError =
+            failure instanceof Error ? failure.message : String(failure);
+        }
+      }
+      await Promise.all([reloadOverview(), reloadRecords(), reloadHistory()]);
       setDialogOpen(false);
-      toast({ variant: "success", title: "Cloud archive rule saved" });
+      toast({
+        variant: historyError ? "warning" : "success",
+        title: historyQueued
+          ? "Rule saved and full history queued"
+          : "Cloud archive rule saved",
+        description: historyError
+          ? `The rule is active, but its history task could not be created: ${historyError}`
+          : undefined,
+      });
     } catch (failure) {
       toast({
         variant: "error",
@@ -467,15 +501,48 @@ export function CloudArchiveManager() {
                           : ""}
                       </p>
                     </div>
-                    <Badge variant={item.enabled ? "default" : "secondary"}>
-                      {item.enabled ? "Running" : "Paused"}
-                    </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={item.enabled ? "default" : "secondary"}>
+                        {item.enabled ? "Running" : "Paused"}
+                      </Badge>
+                      <Badge
+                        variant={
+                          item.syncStatus === "ERROR" ? "destructive" : "outline"
+                        }
+                      >
+                        Sync: {item.syncStatus || "INITIALIZING"}
+                      </Badge>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-muted-foreground">
-                    Target auto download:{" "}
-                    {item.targetDownloadEnabled ? "Enabled" : "Disabled"}
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <div>
+                      Target auto download:{" "}
+                      {item.targetDownloadEnabled ? "Enabled" : "Disabled"}
+                    </div>
+                    <div>
+                      Recovery: {item.rule.recoveryEnabled === false ? "Off" : "On"}
+                      {item.rule.strictOrder ? " · Strict order" : " · Live priority"}
+                      {item.syncTopicCount
+                        ? ` · ${item.syncTopicCount} checkpoint${item.syncTopicCount === 1 ? "" : "s"}`
+                        : ""}
+                      {item.syncLastObservedMessageId
+                        ? ` · checked through #${item.syncLastObservedMessageId}`
+                        : ""}
+                    </div>
+                    {item.syncStatus === "RECOVERING" && (
+                      <div className="tabular-nums">
+                        Gap scan {item.syncScannedCount || 0} · matched{" "}
+                        {item.syncMatchedCount || 0} · queued{" "}
+                        {item.syncQueuedCount || 0}
+                      </div>
+                    )}
+                    {item.syncError && (
+                      <div className="max-w-xl truncate text-destructive" title={item.syncError}>
+                        {item.syncError}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -709,6 +776,15 @@ export function CloudArchiveManager() {
                             ? "Preserve topics"
                             : "Merge topics"}
                         </div>
+                        <div className="text-xs text-muted-foreground">
+                          {!record.historyJobId
+                            ? "Live"
+                            : record.historyJobId.startsWith("sync:")
+                              ? "Gap recovery"
+                              : record.historyJobId.startsWith("live:")
+                                ? "Live held for order"
+                                : "Historical backfill"}
+                        </div>
                         {record.topicMode === "PRESERVE" &&
                           record.sourceTopicId !== 0 &&
                           record.targetTopicId === 0 && (
@@ -718,7 +794,11 @@ export function CloudArchiveManager() {
                           )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{record.status}</Badge>
+                        <Badge variant="outline">
+                          {record.status === "STAGED"
+                            ? "Waiting for ordered release"
+                            : record.status}
+                        </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         {new Date(record.updatedAt).toLocaleString()}
@@ -801,7 +881,7 @@ export function CloudArchiveManager() {
                         sourceTopicId: 0,
                         topicMode:
                           chat.isForum && draft.targetIsForum
-                            ? draft.rule.topicMode
+                            ? "PRESERVE"
                             : "MERGE",
                       },
                     })
@@ -838,7 +918,7 @@ export function CloudArchiveManager() {
                         targetTopicId: 0,
                         topicMode:
                           draft.sourceIsForum && chat.isForum
-                            ? draft.rule.topicMode
+                            ? "PRESERVE"
                             : "MERGE",
                       },
                     })
@@ -879,7 +959,8 @@ export function CloudArchiveManager() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Preserve creates and reuses matching topics in the destination forum.
+                  Preserve creates one durable destination topic for every source
+                  topic, even when names are duplicated.
                 </p>
                 {draft.rule.topicMode === "PRESERVE" && (
                   <p className="text-xs text-muted-foreground">
@@ -931,6 +1012,87 @@ export function CloudArchiveManager() {
                     <SelectItem value="MEDIA_ONLY">Media only</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 rounded-lg border p-4">
+              <div className="grid gap-2">
+                <Label>Initial synchronization</Label>
+                <Select
+                  value={draft.rule.initialSyncMode}
+                  disabled={editing}
+                  onValueChange={(initialSyncMode: "NOW" | "FULL") =>
+                    setDraft({
+                      ...draft,
+                      rule: {
+                        ...draft.rule,
+                        initialSyncMode,
+                        strictOrder:
+                          initialSyncMode === "FULL"
+                            ? true
+                            : draft.rule.strictOrder,
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NOW">Start with new messages</SelectItem>
+                    <SelectItem value="FULL">Mirror all available history</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Full mirror creates an all-history task after this new rule is saved.
+                  Existing archive records are reused, so restarts do not download or send them again.
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label>Strict chronological order</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Hold newer messages until history or an outage gap is caught up,
+                    then release the route oldest first.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.rule.strictOrder}
+                  onCheckedChange={(strictOrder) =>
+                    setDraft({
+                      ...draft,
+                      rule: {
+                        ...draft.rule,
+                        strictOrder,
+                        recoveryEnabled: strictOrder
+                          ? true
+                          : draft.rule.recoveryEnabled,
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label>Recover missed messages</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Persist a Telegram cursor and scan only the missing interval after
+                    a restart, network outage, or temporary container stop.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.rule.recoveryEnabled}
+                  onCheckedChange={(recoveryEnabled) =>
+                    setDraft({
+                      ...draft,
+                      rule: {
+                        ...draft.rule,
+                        recoveryEnabled,
+                        strictOrder: recoveryEnabled
+                          ? draft.rule.strictOrder
+                          : false,
+                      },
+                    })
+                  }
+                />
               </div>
             </div>
 
@@ -1095,8 +1257,9 @@ export function CloudArchiveManager() {
           <DialogHeader>
             <DialogTitle>Archive historical messages</DialogTitle>
             <DialogDescription>
-              The task reads older messages in small pages and feeds the same
-              protected queue as new messages. Media stays inside Telegram.
+              The task reads older messages in small pages. Live delivery remains
+              independent unless strict chronological order is enabled. Media stays
+              inside Telegram.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -1123,10 +1286,13 @@ export function CloudArchiveManager() {
               </Select>
             </div>
             <p className="text-xs text-muted-foreground">
-              Messages are staged while scanning, then released oldest first.
-              Existing archive records are skipped, so rerunning does not
-              duplicate messages. Preserve mode also creates and reuses matching
-              destination topics.
+              Historical messages are staged while scanning, then released oldest
+              first. Existing archive records are skipped, so rerunning does not
+              duplicate messages. Pausing this task does not pause ordinary live
+              delivery; pausing intentionally releases the strict hold. While a
+              strict-order task is running, newly arriving messages wait safely until
+              the scan catches up. Preserve mode maintains a separate durable mapping
+              for every source topic, including duplicate topic names.
             </p>
           </div>
           <DialogFooter>

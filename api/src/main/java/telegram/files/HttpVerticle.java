@@ -39,6 +39,7 @@ import org.jooq.lambda.function.Function2;
 import telegram.files.repository.SettingAutoRecords;
 import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.CloudArchiveRecord;
+import telegram.files.repository.CloudArchiveSyncState;
 import telegram.files.repository.SettingKey;
 import telegram.files.repository.SettingRecord;
 import telegram.files.security.OriginPolicy;
@@ -1104,11 +1105,64 @@ public class HttpVerticle extends AbstractVerticle {
                 })
                 .sorted(Comparator.comparing(item -> item.getString("sourceChatName", "")))
                 .toList();
-        DataVerticle.cloudArchiveRepository.statistics()
-                .onSuccess(statistics -> ctx.json(new JsonObject()
-                        .put("statistics", statistics)
-                        .put("rules", new JsonArray(rules))))
+        Future.all(rules.stream().map(this::withCloudArchiveSync).toList())
+                .compose(enriched -> DataVerticle.cloudArchiveRepository.statistics()
+                        .map(statistics -> new JsonObject()
+                                .put("statistics", statistics)
+                                .put("rules", new JsonArray(rules))))
+                .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
+    }
+
+    private Future<JsonObject> withCloudArchiveSync(JsonObject item) {
+        long telegramId = Convert.toLong(item.getValue("telegramId"));
+        long sourceChatId = Convert.toLong(item.getValue("sourceChatId"));
+        long targetChatId = Convert.toLong(item.getValue("targetChatId"));
+        return DataVerticle.cloudArchiveSyncRepository
+                .listRoute(telegramId, sourceChatId, targetChatId)
+                .map(states -> {
+                    String status;
+                    if (!item.getBoolean("enabled", false)) {
+                        status = "PAUSED";
+                    } else if (states.isEmpty()) {
+                        status = "INITIALIZING";
+                    } else if (states.stream().anyMatch(state -> "ERROR".equals(state.status()))) {
+                        status = "ERROR";
+                    } else if (states.stream().anyMatch(state ->
+                            "RECOVERING".equals(state.status()))) {
+                        status = "RECOVERING";
+                    } else {
+                        status = "LIVE";
+                    }
+                    item.put("syncStatus", status)
+                            .put("syncTopicCount", states.size())
+                            .put("syncScannedCount", states.stream()
+                                    .mapToInt(CloudArchiveSyncState::scannedCount).sum())
+                            .put("syncMatchedCount", states.stream()
+                                    .mapToInt(CloudArchiveSyncState::matchedCount).sum())
+                            .put("syncQueuedCount", states.stream()
+                                    .mapToInt(CloudArchiveSyncState::queuedCount).sum())
+                            .put("syncLastObservedMessageId", states.stream()
+                                    .mapToLong(CloudArchiveSyncState::lastObservedMessageId)
+                                    .max().orElse(0L))
+                            .put("syncRecoveryTargetMessageId", states.stream()
+                                    .mapToLong(CloudArchiveSyncState::recoveryTargetMessageId)
+                                    .max().orElse(0L))
+                            .put("syncRecoveryCursorMessageId", states.stream()
+                                    .mapToLong(CloudArchiveSyncState::recoveryCursorMessageId)
+                                    .max().orElse(0L))
+                            .put("lastReconciledAt", states.stream()
+                                    .mapToLong(CloudArchiveSyncState::lastReconciledAt)
+                                    .max().orElse(0L));
+                    states.stream().map(CloudArchiveSyncState::lastError)
+                            .filter(StrUtil::isNotBlank).findFirst()
+                            .ifPresent(error -> item.put("syncError", error));
+                    return item;
+                })
+                .recover(failure -> Future.succeededFuture(item
+                        .put("syncStatus", "ERROR")
+                        .put("syncError", StrUtil.blankToDefault(
+                                failure.getMessage(), failure.getClass().getSimpleName()))));
     }
 
     private void handleCloudArchiveRecords(RoutingContext ctx) {
@@ -1235,8 +1289,16 @@ public class HttpVerticle extends AbstractVerticle {
         }
         Future<Boolean> transition = Set.of("cancel", "delete").contains(action)
                 ? DataVerticle.cloudArchiveRepository.cancelHistory(jobId)
+                        .compose(_ -> DataVerticle.cloudArchiveRepository.releaseHistory(
+                                AutoCloudArchiveVerticle.liveHistoryKey(jobId)))
                         .compose(_ -> DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action))
                 : DataVerticle.cloudArchiveHistoryRepository.transition(jobId, action);
+        if ("pause".equals(action)) {
+            transition = transition.compose(updated -> updated
+                    ? DataVerticle.cloudArchiveRepository.releaseHistory(
+                            AutoCloudArchiveVerticle.liveHistoryKey(jobId)).map(true)
+                    : Future.succeededFuture(false));
+        }
         transition
                 .onSuccess(updated -> {
                     if (!updated) {

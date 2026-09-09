@@ -144,6 +144,29 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
     }
 
     @Override
+    public Future<Void> releaseCompletedHistory() {
+        long now = clock.millis();
+        return preparedQuery("""
+                        UPDATE telegram_archive_record
+                        SET status = 'PENDING', next_attempt_at = ?, updated_at = ?
+                        WHERE status = 'STAGED' AND (
+                            history_job_id IN (
+                                SELECT id FROM telegram_archive_history_job
+                                WHERE status = 'COMPLETED'
+                            ) OR (
+                                history_job_id LIKE 'live:%'
+                                AND REPLACE(history_job_id, 'live:', '') IN (
+                                    SELECT id FROM telegram_archive_history_job
+                                    WHERE status IN ('PAUSED', 'COMPLETED', 'CANCELLED')
+                                )
+                            )
+                        )
+                        """)
+                .execute(Tuple.of(now, now))
+                .mapEmpty();
+    }
+
+    @Override
     public Future<Long> countOutstandingHistory(String historyJobId) {
         return preparedQuery("""
                         SELECT COUNT(*) AS total FROM telegram_archive_record
@@ -286,6 +309,24 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
     }
 
     @Override
+    public Future<Long> maxSourceMessageId(long telegramId,
+                                           long sourceChatId,
+                                           long sourceTopicId,
+                                           long targetChatId) {
+        String topicClause = sourceTopicId == 0 ? "" : " AND source_topic_id = ?";
+        Tuple parameters = sourceTopicId == 0
+                ? Tuple.of(telegramId, sourceChatId, targetChatId)
+                : Tuple.of(telegramId, sourceChatId, targetChatId, sourceTopicId);
+        return preparedQuery("""
+                        SELECT MAX(source_message_id) AS maximum
+                        FROM telegram_archive_record
+                        WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                        """ + topicClause)
+                .execute(parameters)
+                .map(rows -> value(rows.iterator().next(), "maximum"));
+    }
+
+    @Override
     public Future<Long> countCompletedSince(long telegramId, long since) {
         return preparedQuery("""
                         SELECT COUNT(*) AS total FROM telegram_archive_record
@@ -326,7 +367,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) AS completed,
                                SUM(CASE WHEN status = 'SKIPPED' THEN 1 ELSE 0 END) AS skipped,
                                SUM(CASE WHEN status IN ('FAILED', 'UNKNOWN') THEN 1 ELSE 0 END) AS failed,
-                               SUM(CASE WHEN status IN ('PENDING', 'RETRY', 'SENDING') THEN 1 ELSE 0 END) AS pending
+                               SUM(CASE WHEN status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING') THEN 1 ELSE 0 END) AS pending
                         FROM telegram_archive_record
                         """)
                 .execute()

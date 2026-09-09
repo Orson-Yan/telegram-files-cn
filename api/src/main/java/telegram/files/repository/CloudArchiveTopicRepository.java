@@ -8,6 +8,14 @@ public interface CloudArchiveTopicRepository {
                                       long sourceTopicId,
                                       long targetChatId);
 
+    default Future<Boolean> targetMappedToAnotherSource(long telegramId,
+                                                         long sourceChatId,
+                                                         long sourceTopicId,
+                                                         long targetChatId,
+                                                         long targetTopicId) {
+        return Future.succeededFuture(false);
+    }
+
     Future<CloudArchiveTopicMap> save(long telegramId,
                                       long sourceChatId,
                                       long sourceTopicId,

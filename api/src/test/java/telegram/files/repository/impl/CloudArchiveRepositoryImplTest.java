@@ -10,6 +10,7 @@ import io.vertx.sqlclient.PoolOptions;
 import cn.hutool.core.lang.Version;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.CloudArchiveRecord;
 
 import java.time.Clock;
@@ -23,6 +24,62 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ExtendWith(VertxExtension.class)
 class CloudArchiveRepositoryImplTest {
+
+    @Test
+    void pausedHistoryAutomaticallyReleasesStrictLiveMessages(
+            Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        Clock clock = Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC);
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
+        CloudArchiveHistoryRepositoryImpl histories =
+                new CloudArchiveHistoryRepositoryImpl(pool, clock);
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(CloudArchiveHistoryJob.SCHEME).execute())
+                .compose(_ -> histories.create(7, 100, 0, 200, 0, "{}", "ALL", 0))
+                .compose(job -> repository.stage(
+                                7, 100, 0, 20, 0, 200, 0, null, "COPY",
+                                "live:" + job.id())
+                        .compose(_ -> histories.transition(job.id(), "pause")))
+                .compose(_ -> repository.releaseCompletedHistory())
+                .compose(_ -> repository.listDue(1_000, 10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    assertEquals(1, records.size());
+                    assertEquals("PENDING", records.getFirst().status());
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void cancellingHistoryKeepsLiveMessagesThatWereHeldForStrictOrder(
+            Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(
+                pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> repository.stage(
+                        7, 100, 0, 10, 0, 200, 0, null, "COPY", "job-1"))
+                .compose(_ -> repository.stage(
+                        7, 100, 0, 20, 0, 200, 0, null, "COPY", "live:job-1"))
+                .compose(_ -> repository.cancelHistory("job-1"))
+                .compose(_ -> repository.releaseHistory("live:job-1"))
+                .compose(_ -> repository.listRecent(10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    assertEquals(1, records.size());
+                    assertEquals(20L, records.getFirst().sourceMessageId());
+                    assertEquals("PENDING", records.getFirst().status());
+                    context.completeNow();
+                })));
+    }
 
     @Test
     void stagesReleasesInMessageOrderAndCancelsUnsentHistory(Vertx vertx,

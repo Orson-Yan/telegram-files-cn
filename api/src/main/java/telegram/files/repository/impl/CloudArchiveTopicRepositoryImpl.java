@@ -38,6 +38,23 @@ public final class CloudArchiveTopicRepositoryImpl extends AbstractSqlRepository
     }
 
     @Override
+    public Future<Boolean> targetMappedToAnotherSource(long telegramId,
+                                                        long sourceChatId,
+                                                        long sourceTopicId,
+                                                        long targetChatId,
+                                                        long targetTopicId) {
+        return preparedQuery("""
+                        SELECT source_topic_id FROM telegram_archive_topic_map
+                        WHERE telegram_id = ? AND source_chat_id = ?
+                          AND target_chat_id = ? AND target_topic_id = ?
+                          AND source_topic_id <> ?
+                        """)
+                .execute(Tuple.of(telegramId, sourceChatId, targetChatId,
+                        targetTopicId, sourceTopicId))
+                .map(rows -> rows.iterator().hasNext());
+    }
+
+    @Override
     public Future<CloudArchiveTopicMap> save(long telegramId,
                                              long sourceChatId,
                                              long sourceTopicId,

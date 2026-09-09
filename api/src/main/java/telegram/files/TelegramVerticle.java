@@ -795,6 +795,12 @@ public class TelegramVerticle extends AbstractVerticle {
         if (automation.archive.rule.mode == null) {
             automation.archive.rule.mode = SettingAutoRecords.ArchiveMode.COPY;
         }
+        if (automation.archive.rule.initialSyncMode == null) {
+            automation.archive.rule.initialSyncMode = SettingAutoRecords.ArchiveInitialSyncMode.NOW;
+        }
+        if (automation.archive.rule.strictOrder) {
+            automation.archive.rule.recoveryEnabled = true;
+        }
         if (automation.archive.rule.topicMode == null) {
             automation.archive.rule.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
         }

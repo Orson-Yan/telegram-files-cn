@@ -39,6 +39,9 @@ export function createDefaultAuto(): Auto {
         filterExpr: "",
         preserveCaption: true,
         disableNotification: true,
+        strictOrder: false,
+        recoveryEnabled: true,
+        initialSyncMode: "NOW",
       },
     },
   };
