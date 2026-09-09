@@ -93,8 +93,6 @@ public interface CloudArchiveRepository {
 
     Future<Long> countCompletedSince(long telegramId, long since);
 
-    Future<Long> countPending(long telegramId);
-
     Future<Long> cooldownUntil(long telegramId, long now);
 
     Future<Void> defer(String id, long nextAttemptAt, String code, String message);

@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /** Watches new Telegram messages and archives matching messages inside Telegram. */
 public final class AutoCloudArchiveVerticle extends AbstractVerticle {
@@ -41,6 +42,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     private static final int SCAN_LIMIT = 200;
 
     private static final int MESSAGE_BATCH_SIZE = 20;
+
+    private static final Duration HISTORY_STEP_TIMEOUT = Duration.ofMinutes(2);
 
     private static final int MAX_ATTEMPTS = 8;
 
@@ -369,19 +372,14 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             if ("DISCOVERING".equals(job.stage())) {
                 return initializeHistoryTopics(telegram, job, rule);
             }
-            return DataVerticle.cloudArchiveRepository.countPending(job.telegramId()).compose(pending -> {
-                // Keep historical scans behind delivery so a large channel can't flood the durable queue.
-                if (pending >= 200) {
-                    return Future.succeededFuture();
-                }
-                boolean allHistory = "ALL".equals(job.scanMode());
-                int remaining = allHistory
-                        ? 50 : Math.max(0, job.maxMessages() - job.scannedCount());
-                if (!allHistory && remaining == 0) {
-                    return finishHistoryScan(job, "LIMIT_REACHED");
-                }
-                int pageSize = Math.min(50, remaining);
-                return historyMessages(telegram, job, pageSize).compose(rawMessages -> {
+            boolean allHistory = "ALL".equals(job.scanMode());
+            int remaining = allHistory
+                    ? 50 : Math.max(0, job.maxMessages() - job.scannedCount());
+            if (!allHistory && remaining == 0) {
+                return finishHistoryScan(job, "LIMIT_REACHED");
+            }
+            int pageSize = Math.min(50, remaining);
+            return historyMessages(telegram, job, pageSize).compose(rawMessages -> {
                 TdApi.Message[] messages = Arrays.stream(rawMessages)
                         .filter(Objects::nonNull)
                         .filter(message -> job.fromMessageId() == 0 || message.id != job.fromMessageId())
@@ -426,9 +424,9 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                         : Future.succeededFuture();
                             });
                 });
-                });
-            }).recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
-                        job.id(), safeMessage(failure)));
+            }).timeout(HISTORY_STEP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+                    .recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
+                            job.id(), safeMessage(failure)));
         });
     }
 
@@ -449,9 +447,9 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         ? new TdApi.Message[0] : found.messages);
     }
 
-    private Future<Void> initializeHistoryTopics(TelegramVerticle telegram,
-                                                 CloudArchiveHistoryJob job,
-                                                 SettingAutoRecords.ArchiveRule rule) {
+    Future<Void> initializeHistoryTopics(TelegramVerticle telegram,
+                                         CloudArchiveHistoryJob job,
+                                         SettingAutoRecords.ArchiveRule rule) {
         if (effectiveTopicMode(rule) != SettingAutoRecords.ArchiveTopicMode.PRESERVE) {
             long topicId = job.sourceTopicId();
             return DataVerticle.cloudArchiveHistoryRepository.initializeTopics(
@@ -470,18 +468,16 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     if (selected.isEmpty()) {
                         return Future.failedFuture("No source forum topics were found");
                     }
-                    return Future.all(selected.stream()
-                                    .map(topic -> CloudArchiveTopicService.resolve(
-                                            telegram, job.sourceChatId(), topic.info, job.targetChatId()))
-                                    .toList())
-                            .compose(_ -> {
-                                List<Long> ids = selected.stream()
-                                        .map(topic -> (long) topic.info.forumTopicId)
-                                        .toList();
-                                return DataVerticle.cloudArchiveHistoryRepository.initializeTopics(
-                                        job.id(), new JsonArray(ids).encode(), ids.size(), ids.getFirst());
-                            });
+                    // Don't create every destination topic up front. Large forums can otherwise
+                    // remain at 0 scanned while Telegram serializes or rate-limits topic creation.
+                    // Each mapping is resolved lazily when its source topic starts scanning.
+                    List<Long> ids = selected.stream()
+                            .map(topic -> (long) topic.info.forumTopicId)
+                            .toList();
+                    return DataVerticle.cloudArchiveHistoryRepository.initializeTopics(
+                            job.id(), new JsonArray(ids).encode(), ids.size(), ids.getFirst());
                 })
+                .timeout(HISTORY_STEP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
                 .recover(failure -> DataVerticle.cloudArchiveHistoryRepository.fail(
                         job.id(), safeMessage(failure)));
     }

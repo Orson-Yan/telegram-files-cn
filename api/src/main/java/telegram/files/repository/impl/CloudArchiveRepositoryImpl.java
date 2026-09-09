@@ -296,16 +296,6 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
     }
 
     @Override
-    public Future<Long> countPending(long telegramId) {
-        return preparedQuery("""
-                        SELECT COUNT(*) AS total FROM telegram_archive_record
-                        WHERE telegram_id = ? AND status IN ('PENDING', 'RETRY', 'SENDING')
-                        """)
-                .execute(Tuple.of(telegramId))
-                .map(rows -> value(rows.iterator().next(), "total"));
-    }
-
-    @Override
     public Future<Long> cooldownUntil(long telegramId, long now) {
         return preparedQuery("""
                         SELECT MAX(next_attempt_at) AS cooldown_until
