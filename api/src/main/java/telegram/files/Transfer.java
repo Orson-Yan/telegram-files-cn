@@ -154,10 +154,10 @@ public abstract class Transfer {
                     log.info("Hardlinked file {} to {}", fileRecord.id(), transferPath);
                 } catch (Exception linkError) {
                     log.warn("Hardlink failed ({}), falling back to copy for {}", linkError.getMessage(), fileRecord.id());
-                    FileUtil.copy(sourcePath, destPath, isOverwrite);
+                    FileUtil.copy(fileRecord.localPath(), transferPath, isOverwrite);
                 }
             } else if (transferMode == SettingAutoRecords.TransferMode.COPY) {
-                FileUtil.copy(sourcePath, destPath, isOverwrite);
+                FileUtil.copy(fileRecord.localPath(), transferPath, isOverwrite);
                 log.info("Copied file {} to {}", fileRecord.id(), transferPath);
             } else {
                 FileUtil.move(sourcePath, destPath, isOverwrite);
