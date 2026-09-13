@@ -127,7 +127,7 @@ export function AccountList({
                 </div>
 
                 <span className="flex items-center text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                  Open
+                  Open account
                   <ArrowRight className="ml-1 size-3 transition-transform duration-200 group-hover:translate-x-0.5" />
                 </span>
               </div>

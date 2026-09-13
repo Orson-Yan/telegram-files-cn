@@ -787,8 +787,8 @@ export const zhCNMessages: Readonly<Record<string, string>> = {
   "Auto-sort, deduplicate & rename files": "按规则智能分类、去重与文件重命名",
   "Chat listeners and download filters": "监听指定聊天并自动触发下载流",
   "Browse, batch download and search files": "浏览所有历史文件、批量下载与深度搜索",
-  "Enter": "进入",
-  "Open": "打开",
+  "Open account": "打开账号",
+  "Open feature": "进入功能",
   "Manage accounts, automated downloads and cloud archives": "管理账号矩阵、自动化下载与云端归档",
 };
 

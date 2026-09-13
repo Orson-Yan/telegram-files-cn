@@ -397,7 +397,7 @@ function FeatureCard({
         </div>
 
         <div className="flex items-center pt-2 text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <span>Enter</span>
+          <span>Open feature</span>
           <ArrowRight className="ml-1 size-3 transition-transform duration-200 group-hover:translate-x-0.5" />
         </div>
       </CardContent>
