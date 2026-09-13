@@ -29,6 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /** Watches new Telegram messages and archives matching messages inside Telegram. */
@@ -308,7 +309,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 return false;
             }
             if (CollUtil.isNotEmpty(rule.extensions)) {
-                String name = fileRecord.name();
+                String name = fileRecord.fileName();
                 String ext = StrUtil.isNotBlank(name) && name.contains(".")
                         ? name.substring(name.lastIndexOf(".") + 1).toLowerCase(Locale.ROOT).trim()
                         : "";

@@ -8,8 +8,8 @@ import telegram.files.repository.SettingAutoRecords;
 
 import cn.hutool.core.lang.Pair;
 import cn.hutool.core.util.StrUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import cn.hutool.log.Log;
+import cn.hutool.log.LogFactory;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
 /** Executes Telegram server-side copies/forwards without downloading media locally. */
 public final class CloudArchiveService {
 
-    private static final Logger log = LoggerFactory.getLogger(CloudArchiveService.class);
+    private static final Log log = LogFactory.get();
 
     private static final Pattern TELEGRAM_WAIT = Pattern.compile(
             "(?:FLOOD|FLOOD_PREMIUM|SLOWMODE)_WAIT_?(\\d+)", Pattern.CASE_INSENSITIVE);
