@@ -38,6 +38,8 @@ public abstract class Transfer {
 
     public TransferPolicy transferPolicy;
 
+    public SettingAutoRecords.TransferMode transferMode;
+
     public DuplicationPolicy duplicationPolicy;
 
     public boolean transferHistory;
@@ -62,6 +64,7 @@ public abstract class Transfer {
     public Transfer(SettingAutoRecords.TransferRule transferRule) {
         this.destination = transferRule.destination;
         this.transferPolicy = transferRule.transferPolicy;
+        this.transferMode = transferRule.transferMode != null ? transferRule.transferMode : SettingAutoRecords.TransferMode.MOVE;
         this.duplicationPolicy = transferRule.duplicationPolicy;
         this.transferHistory = transferRule.transferHistory;
         this.useCaptionName = transferRule.useCaptionName;
@@ -81,6 +84,7 @@ public abstract class Transfer {
     public boolean isRuleUpdated(SettingAutoRecords.TransferRule transferRule) {
         return !Objects.equals(this.destination, transferRule.destination)
                || this.transferPolicy != transferRule.transferPolicy
+               || this.transferMode != transferRule.transferMode
                || this.duplicationPolicy != transferRule.duplicationPolicy
                || this.transferHistory != transferRule.transferHistory
                || this.useCaptionName != transferRule.useCaptionName
@@ -124,7 +128,9 @@ public abstract class Transfer {
                             && MessyUtils.compareFilesMD5(originFile, targetFile);
                     if (isSame) {
                         log.trace("File {} is the same as {}", fileRecord.id(), transferPath);
-                        FileUtil.del(fileRecord.localPath());
+                        if (transferMode == SettingAutoRecords.TransferMode.MOVE) {
+                            FileUtil.del(fileRecord.localPath());
+                        }
                         applyTelegramMessageTimestamp(fileRecord, transferPath);
                         transferStatusUpdated.accept(new TransferStatusUpdated(fileRecord, FileRecord.TransferStatus.completed, transferPath));
                         return;
@@ -135,8 +141,28 @@ public abstract class Transfer {
                 }
             }
 
-            FileUtil.move(Path.of(fileRecord.localPath()), Path.of(transferPath), isOverwrite);
-            log.info("Transfer file {} to {}, duplication policy: {} overwrite: {}", fileRecord.id(), transferPath, duplicationPolicy, isOverwrite);
+            Path sourcePath = Path.of(fileRecord.localPath());
+            Path destPath = Path.of(transferPath);
+            FileUtil.mkdir(destPath.getParent());
+
+            if (transferMode == SettingAutoRecords.TransferMode.HARDLINK) {
+                try {
+                    if (isOverwrite) {
+                        FileUtil.del(destPath);
+                    }
+                    java.nio.file.Files.createLink(destPath, sourcePath);
+                    log.info("Hardlinked file {} to {}", fileRecord.id(), transferPath);
+                } catch (Exception linkError) {
+                    log.warn("Hardlink failed ({}), falling back to copy for {}", linkError.getMessage(), fileRecord.id());
+                    FileUtil.copy(sourcePath, destPath, isOverwrite);
+                }
+            } else if (transferMode == SettingAutoRecords.TransferMode.COPY) {
+                FileUtil.copy(sourcePath, destPath, isOverwrite);
+                log.info("Copied file {} to {}", fileRecord.id(), transferPath);
+            } else {
+                FileUtil.move(sourcePath, destPath, isOverwrite);
+                log.info("Moved file {} to {}, duplication policy: {} overwrite: {}", fileRecord.id(), transferPath, duplicationPolicy, isOverwrite);
+            }
 
             applyTelegramMessageTimestamp(fileRecord, transferPath);
             transferStatusUpdated.accept(new TransferStatusUpdated(fileRecord, FileRecord.TransferStatus.completed, transferPath));

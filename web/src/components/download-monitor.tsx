@@ -3,7 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import prettyBytes from "pretty-bytes";
-import { Activity, Download, ListChecks, TriangleAlert } from "lucide-react";
+import {
+  Activity,
+  Download,
+  ListChecks,
+  Pause,
+  Play,
+  RefreshCw,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -11,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { useWebsocket } from "@/hooks/use-websocket";
 import { useSettings } from "@/hooks/use-settings";
 import { type TDFile, type TelegramFile } from "@/lib/types";
+import { POST } from "@/lib/api";
+import { toast } from "@/hooks/use-toast";
 import {
   type DownloadOverviewStatistics,
   normalizeDownloadOverview,
@@ -63,14 +74,172 @@ export function DownloadMonitor({
   const { lastJsonMessage, downloadActivity } = useWebsocket();
   const { settings } = useSettings();
   const overview = normalizeDownloadOverview(statistics);
-  const { data, error } = useSWR<DownloadingFilesResponse>(
+  const { data, error, mutate } = useSWR<DownloadingFilesResponse>(
     DOWNLOADING_FILES_URL,
     { refreshInterval: 15_000, refreshWhenHidden: false },
   );
   const [downloads, setDownloads] = useState<TrackedDownload[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const [operatingId, setOperatingId] = useState<string | null>(null);
   const downloadsRef = useRef<TrackedDownload[]>([]);
   const samples = useRef(new Map<string, FileSample>());
+
+  const handleTogglePause = async (file: TrackedDownload) => {
+    try {
+      setOperatingId(file.uniqueId);
+      const isCurrentlyDownloading = file.downloadStatus === "downloading";
+      await POST(
+        file.source === "SEED"
+          ? "/files/toggle-pause-download-multiple"
+          : `/${file.telegramId}/file/toggle-pause-download`,
+        file.source === "SEED"
+          ? {
+              files: [
+                {
+                  telegramId: 0,
+                  uniqueId: file.uniqueId,
+                  id: file.id,
+                  chatId: file.chatId,
+                },
+              ],
+              isPaused: isCurrentlyDownloading,
+            }
+          : { fileId: file.id, isPaused: isCurrentlyDownloading },
+      );
+      toast({
+        title: isCurrentlyDownloading ? "Download paused" : "Download resumed",
+        description: file.fileName || `${file.type} #${file.id}`,
+      });
+      void mutate();
+    } catch (err: any) {
+      toast({
+        variant: "error",
+        title: "Action failed",
+        description: err?.message || "Failed to update download status",
+      });
+    } finally {
+      setOperatingId(null);
+    }
+  };
+
+  const handleCancel = async (file: TrackedDownload) => {
+    try {
+      setOperatingId(file.uniqueId);
+      await POST(
+        file.source === "SEED"
+          ? "/files/cancel-download-multiple"
+          : `/${file.telegramId}/file/cancel-download`,
+        file.source === "SEED"
+          ? {
+              files: [
+                {
+                  telegramId: 0,
+                  uniqueId: file.uniqueId,
+                  id: file.id,
+                  chatId: file.chatId,
+                },
+              ],
+            }
+          : { fileId: file.id },
+      );
+      toast({
+        title: "Download cancelled",
+        description: file.fileName || `${file.type} #${file.id}`,
+      });
+      setDownloads((prev) => prev.filter((d) => d.uniqueId !== file.uniqueId));
+      void mutate();
+    } catch (err: any) {
+      toast({
+        variant: "error",
+        title: "Cancel failed",
+        description: err?.message || "Failed to cancel download",
+      });
+    } finally {
+      setOperatingId(null);
+    }
+  };
+
+  const handleRetry = async (file: TrackedDownload) => {
+    try {
+      setOperatingId(file.uniqueId);
+      await POST(`/${file.telegramId}/file/cancel-download`, { fileId: file.id });
+      await new Promise((r) => setTimeout(r, 500));
+      await POST(`/${file.telegramId}/file/start-download`, {
+        chatId: file.chatId,
+        messageId: file.messageId,
+        fileId: file.id,
+      });
+      toast({
+        title: "Restarted stalled download",
+        description: file.fileName || `${file.type} #${file.id}`,
+      });
+      void mutate();
+    } catch (err: any) {
+      toast({
+        variant: "error",
+        title: "Restart failed",
+        description: err?.message || "Failed to restart download",
+      });
+    } finally {
+      setOperatingId(null);
+    }
+  };
+
+  const handlePauseAll = async () => {
+    if (downloads.length === 0) return;
+    try {
+      setOperatingId("global");
+      await POST("/files/toggle-pause-download-multiple", {
+        files: downloads.map((f) => ({
+          telegramId: f.telegramId,
+          uniqueId: f.uniqueId,
+          id: f.id,
+          chatId: f.chatId,
+        })),
+        isPaused: true,
+      });
+      toast({
+        title: "Paused all active downloads",
+      });
+      void mutate();
+    } catch (err: any) {
+      toast({
+        variant: "error",
+        title: "Pause all failed",
+        description: err?.message || "Failed to pause all downloads",
+      });
+    } finally {
+      setOperatingId(null);
+    }
+  };
+
+  const handleResumeAll = async () => {
+    if (downloads.length === 0) return;
+    try {
+      setOperatingId("global");
+      await POST("/files/toggle-pause-download-multiple", {
+        files: downloads.map((f) => ({
+          telegramId: f.telegramId,
+          uniqueId: f.uniqueId,
+          id: f.id,
+          chatId: f.chatId,
+        })),
+        isPaused: false,
+      });
+      toast({
+        title: "Resumed all downloads",
+      });
+      void mutate();
+    } catch (err: any) {
+      toast({
+        variant: "error",
+        title: "Resume all failed",
+        description: err?.message || "Failed to resume downloads",
+      });
+    } finally {
+      setOperatingId(null);
+    }
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 5_000);
@@ -213,9 +382,35 @@ export function DownloadMonitor({
               Live speed, traffic, queue and per-file progress
             </p>
           </div>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/files">View all files</Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {downloads.length > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={operatingId !== null}
+                  onClick={handlePauseAll}
+                  className="gap-1 text-xs"
+                >
+                  <Pause className="size-3.5" />
+                  Pause all
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={operatingId !== null}
+                  onClick={handleResumeAll}
+                  className="gap-1 text-xs"
+                >
+                  <Play className="size-3.5" />
+                  Resume all
+                </Button>
+              </>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <Link href="/files">View all files</Link>
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
@@ -291,6 +486,44 @@ export function DownloadMonitor({
                         {prettyBytes(stalled ? 0 : file.speed, speedOptions)}/s
                       </Badge>
                       <Badge variant="outline">{progress.toFixed(1)}%</Badge>
+                      <div className="flex items-center gap-1 border-l pl-2">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-foreground"
+                          title={file.downloadStatus === "paused" ? "Resume" : "Pause"}
+                          disabled={operatingId === file.uniqueId}
+                          onClick={() => handleTogglePause(file)}
+                        >
+                          {file.downloadStatus === "paused" ? (
+                            <Play className="size-3.5" />
+                          ) : (
+                            <Pause className="size-3.5" />
+                          )}
+                        </Button>
+                        {stalled && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7 text-amber-500 hover:text-amber-600"
+                            title="Restart stalled download"
+                            disabled={operatingId === file.uniqueId}
+                            onClick={() => handleRetry(file)}
+                          >
+                            <RefreshCw className="size-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
+                          title="Cancel download"
+                          disabled={operatingId === file.uniqueId}
+                          onClick={() => handleCancel(file)}
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                   <Progress

@@ -4,9 +4,12 @@ import { Button } from "@/components/ui/button";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
+  Copy,
+  ExternalLink,
   Loader2,
   Maximize,
   Minimize,
+  MonitorPlay,
   Pause,
   Play,
   RotateCcw,
@@ -15,6 +18,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { getApiUrl } from "@/lib/api";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { cn } from "@/lib/utils";
@@ -86,20 +90,85 @@ const LOAD_SPEED_IDLE_TIMEOUT_MS = 1500;
 const VideoErrorFallback = ({
   className = "",
   message = "Video loading failed!",
-}) => (
-  <div
-    className={cn(
-      "flex flex-col items-center justify-center rounded-lg border border-white/10 bg-zinc-950/90 p-6 text-center shadow-2xl ring-1 ring-white/10",
-      className,
-    )}
-  >
-    <div className="mb-3 rounded-full bg-white/10 p-3">
-      <VideoOff className="h-7 w-7 text-white/70" />
+  url = "",
+}: {
+  className?: string;
+  message?: string;
+  url?: string;
+}) => {
+  const fullUrl =
+    typeof window !== "undefined" && url
+      ? new URL(url, window.location.origin).href
+      : url;
+
+  const copyLink = () => {
+    if (fullUrl) {
+      void navigator.clipboard.writeText(fullUrl);
+      toast({ title: "Stream URL copied to clipboard" });
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center rounded-lg border border-white/10 bg-zinc-950/90 p-6 text-center shadow-2xl ring-1 ring-white/10",
+        className,
+      )}
+    >
+      <div className="mb-3 rounded-full bg-white/10 p-3">
+        <VideoOff className="h-7 w-7 text-white/70" />
+      </div>
+      <p className="text-sm font-medium text-white">Video unavailable in browser</p>
+      <p className="mt-1 max-w-sm text-sm text-white/60">{message}</p>
+      <p className="mt-2 max-w-md text-xs text-white/40">
+        Browsers often cannot decode H.265 / MKV / AC3 formats. Play via external players:
+      </p>
+      {fullUrl && (
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-white/20 bg-white/5 text-white hover:bg-white/15"
+            onClick={() => {
+              window.location.href = `potplayer://${fullUrl}`;
+            }}
+          >
+            PotPlayer
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-white/20 bg-white/5 text-white hover:bg-white/15"
+            onClick={() => {
+              window.location.href = `vlc://${fullUrl}`;
+            }}
+          >
+            VLC
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-white/20 bg-white/5 text-white hover:bg-white/15"
+            onClick={() => {
+              window.location.href = `iina://weblink?url=${encodeURIComponent(fullUrl)}`;
+            }}
+          >
+            IINA
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="gap-1.5"
+            onClick={copyLink}
+          >
+            <Copy className="size-3.5" />
+            Copy Stream Link
+          </Button>
+        </div>
+      )}
     </div>
-    <p className="text-sm font-medium text-white">Video unavailable</p>
-    <p className="mt-1 max-w-sm text-sm text-white/60">{message}</p>
-  </div>
-);
+  );
+};
 
 const Slider = React.forwardRef<
   React.ComponentRef<typeof SliderPrimitive.Root>,
@@ -158,6 +227,7 @@ const DesktopControls = ({
   previewTime,
   previewPos,
   canvasRef,
+  url,
 }: {
   isPlaying: boolean;
   currentTime: number;
@@ -179,6 +249,7 @@ const DesktopControls = ({
   previewTime: number;
   previewPos: number;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  url?: string;
 }) => {
   const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const formatTime = (seconds: number) => {
@@ -290,6 +361,77 @@ const DesktopControls = ({
               </div>
             </PopoverContent>
           </Popover>
+
+          {url && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
+                  title="Play in external player"
+                >
+                  <MonitorPlay className="h-5 w-5" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-44 p-1.5" modal={true} side="top">
+                <div className="flex flex-col gap-1 text-xs">
+                  <div className="px-2 py-1 font-semibold text-muted-foreground">
+                    External Player
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 justify-start gap-2"
+                    onClick={() => {
+                      const full = new URL(url, window.location.origin).href;
+                      window.location.href = `potplayer://${full}`;
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" />
+                    PotPlayer
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 justify-start gap-2"
+                    onClick={() => {
+                      const full = new URL(url, window.location.origin).href;
+                      window.location.href = `vlc://${full}`;
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" />
+                    VLC
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 justify-start gap-2"
+                    onClick={() => {
+                      const full = new URL(url, window.location.origin).href;
+                      window.location.href = `iina://weblink?url=${encodeURIComponent(full)}`;
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" />
+                    IINA
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 justify-start gap-2 rounded-none border-t pt-2"
+                    onClick={() => {
+                      const full = new URL(url, window.location.origin).href;
+                      void navigator.clipboard.writeText(full);
+                      toast({ title: "Stream link copied to clipboard" });
+                    }}
+                  >
+                    <Copy className="size-3.5" />
+                    Copy Stream URL
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
 
           <Button
             variant="ghost"
@@ -818,6 +960,7 @@ const FileVideo = ({
       <VideoErrorFallback
         className="h-dvh min-h-[240px] w-dvw rounded-none"
         message={errorMessage}
+        url={url}
       />
     );
   }
@@ -953,6 +1096,7 @@ const FileVideo = ({
                   previewTime={previewTime}
                   previewPos={previewPos}
                   canvasRef={canvasRef}
+                  url={url}
                 />
               )}
             </motion.div>

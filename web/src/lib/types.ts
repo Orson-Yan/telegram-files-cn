@@ -235,12 +235,16 @@ export const DuplicationPolicies = [
 ] as const;
 export type DuplicationPolicy = (typeof DuplicationPolicies)[number];
 
+export const TransferModes = ["MOVE", "COPY", "HARDLINK"] as const;
+export type TransferMode = (typeof TransferModes)[number];
+
 export type AutoTransferRule = {
   transferHistory: boolean;
   sourceTopicId?: number | string;
   destination: string;
   transferPolicy: TransferPolicy;
   duplicationPolicy: DuplicationPolicy;
+  transferMode?: TransferMode;
   useCaptionName?: boolean;
   extra: Record<string, any>;
 };
@@ -251,6 +255,8 @@ export type AutoDownloadRule = {
   downloadHistory: boolean;
   downloadCommentFiles: boolean;
   filterExpr: string;
+  minSize?: number;
+  maxSize?: number;
 };
 
 export type ArchiveMode = "COPY" | "FORWARD";

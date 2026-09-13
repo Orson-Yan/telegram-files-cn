@@ -226,7 +226,7 @@ public class TransferVerticle extends AbstractVerticle {
             return;
         }
         try {
-            WaitingTransferFile waitingTransferFile = waitingTransferFiles.poll(1, TimeUnit.SECONDS);
+            WaitingTransferFile waitingTransferFile = waitingTransferFiles.poll();
             if (waitingTransferFile == null) {
                 log.trace("No file to transfer");
                 return;

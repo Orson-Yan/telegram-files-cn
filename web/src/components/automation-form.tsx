@@ -7,6 +7,8 @@ import {
   DuplicationPolicies,
   type DuplicationPolicy,
   type FileType,
+  TransferModes,
+  type TransferMode,
   TransferPolices,
   type TransferPolicy,
 } from "@/lib/types";
@@ -359,6 +361,61 @@ function DownloadRule({ value, onChange }: DownloadRuleProps) {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 gap-3 rounded-md border bg-background p-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="min-size">Min File Size (MB)</Label>
+                <Input
+                  id="min-size"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  placeholder="0 (no minimum limit)"
+                  value={
+                    value.minSize ? (value.minSize / (1024 * 1024)).toString() : ""
+                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    onChange({
+                      ...value,
+                      minSize:
+                        Number.isFinite(val) && val > 0
+                          ? Math.round(val * 1024 * 1024)
+                          : 0,
+                    });
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Ignore files smaller than this (e.g. 5MB to filter out stickers/emojis).
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="max-size">Max File Size (MB)</Label>
+                <Input
+                  id="max-size"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  placeholder="0 (no maximum limit)"
+                  value={
+                    value.maxSize ? (value.maxSize / (1024 * 1024)).toString() : ""
+                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    onChange({
+                      ...value,
+                      maxSize:
+                        Number.isFinite(val) && val > 0
+                          ? Math.round(val * 1024 * 1024)
+                          : 0,
+                    });
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Ignore files larger than this (e.g. avoid downloading massive discs).
+                </p>
+              </div>
+            </div>
+
             <div className="rounded-md border bg-background p-4">
               <div className="flex items-center justify-between">
                 <Label htmlFor="download-history">Download History</Label>
@@ -487,6 +544,27 @@ function TransferRule({ value, onChange }: TransferRuleProps) {
                   })
                 }
               />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="transfer-mode">Transfer Mode</Label>
+              <Select
+                value={value.transferMode ?? "MOVE"}
+                onValueChange={(mode: TransferMode) =>
+                  handleTransferRuleChange({ transferMode: mode })
+                }
+              >
+                <SelectTrigger id="transfer-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MOVE">Move (移走原文件)</SelectItem>
+                  <SelectItem value="HARDLINK">
+                    Hardlink (硬链接：保留原文件，不占双倍空间)
+                  </SelectItem>
+                  <SelectItem value="COPY">Copy (复制：保留原文件建立副本)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="rounded-md border bg-background p-4">

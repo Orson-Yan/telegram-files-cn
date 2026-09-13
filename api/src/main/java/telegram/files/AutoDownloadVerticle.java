@@ -11,6 +11,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
+import org.jooq.lambda.tuple.Tuple2;
 import org.jooq.lambda.tuple.Tuple3;
 import telegram.files.repository.FileRecord;
 import telegram.files.repository.SettingAutoRecords;
@@ -285,6 +286,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                         List<TdApi.Message> messages = Stream.of(foundChatMessages.messages)
                                 .parallel()
                                 .filter(predicate)
+                                .filter(message -> matchMessageSize(message, params.rule))
                                 .filter(message -> {
                                     String uniqueId = TdApiHelp.getFileUniqueId(message);
                                     if (!existFiles.containsKey(uniqueId)) {
@@ -556,11 +558,17 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         autoRecords.getDownloadEnabledItems().stream()
                 .filter(item -> item.telegramId == telegramId && item.chatId == chatId)
                 .findFirst()
-                .flatMap(_ -> TelegramVerticles.get(telegramId))
-                .ifPresent(telegramVerticle -> {
+                .flatMap(auto -> TelegramVerticles.get(telegramId).map(verticle -> new Tuple2<>(auto, verticle)))
+                .ifPresent(tuple -> {
+                    SettingAutoRecords.Automation auto = tuple.v1;
+                    TelegramVerticle telegramVerticle = tuple.v2;
                     if (telegramVerticle.authorized) {
                         telegramVerticle.client.execute(new TdApi.GetMessage(chatId, messageId))
-                                .onSuccess(message -> addWaitingDownloadMessages(telegramId, List.of(message), true, false))
+                                .onSuccess(message -> {
+                                    if (matchNewMessage(message, auto.download.rule)) {
+                                        addWaitingDownloadMessages(telegramId, List.of(message), true, false);
+                                    }
+                                })
                                 .onFailure(e -> log.error("Auto download fail. Get message failed: %s".formatted(e.getMessage())));
                     }
                 });
@@ -631,5 +639,60 @@ public class AutoDownloadVerticle extends AbstractVerticle {
     }
 
     private record MessageWrapper(TdApi.Message message, boolean isHistorical) {
+    }
+
+    static long getMessageFileSize(TdApi.Message message) {
+        if (message == null) return 0;
+        return TdApiHelp.getFileHandler(message)
+                .map(TdApiHelp.FileHandler::getFile)
+                .map(file -> file.size > 0 ? (long) file.size : (long) file.expectedSize)
+                .orElse(0L);
+    }
+
+    static boolean matchMessageSize(TdApi.Message message, SettingAutoRecords.DownloadRule rule) {
+        if (rule == null) return true;
+        if (rule.minSize <= 0 && rule.maxSize <= 0) return true;
+        long size = getMessageFileSize(message);
+        if (size <= 0) {
+            return true;
+        }
+        if (rule.minSize > 0 && size < rule.minSize) {
+            return false;
+        }
+        if (rule.maxSize > 0 && size > rule.maxSize) {
+            return false;
+        }
+        return true;
+    }
+
+    static boolean matchNewMessage(TdApi.Message message, SettingAutoRecords.DownloadRule rule) {
+        if (message == null || message.content == null) return false;
+        if (!TdApiHelp.FILE_CONTENT_CONSTRUCTORS.contains(message.content.getConstructor())) {
+            return false;
+        }
+        if (rule != null) {
+            if (CollUtil.isNotEmpty(rule.fileTypes)) {
+                String fileType = switch (message.content.getConstructor()) {
+                    case TdApi.MessagePhoto.CONSTRUCTOR -> "photo";
+                    case TdApi.MessageVideo.CONSTRUCTOR -> "video";
+                    case TdApi.MessageAudio.CONSTRUCTOR -> "audio";
+                    case TdApi.MessageDocument.CONSTRUCTOR -> "file";
+                    default -> "";
+                };
+                if (!rule.fileTypes.contains(fileType) && !rule.fileTypes.contains("all")) {
+                    return false;
+                }
+            }
+            if (StrUtil.isNotBlank(rule.filterExpr)) {
+                Predicate<TdApi.Message> exprPredicate = MessageFilter.filter(rule.filterExpr);
+                if (!exprPredicate.test(message)) {
+                    return false;
+                }
+            }
+            if (!matchMessageSize(message, rule)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

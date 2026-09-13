@@ -46,6 +46,7 @@ import type {
   LocalOrganizeOverview,
   LocalOrganizeRuleOverview,
   TelegramChat,
+  TransferMode,
   TransferPolicy,
 } from "@/lib/types";
 
@@ -78,6 +79,7 @@ function emptyDraft(telegramId = ""): OrganizeDraft {
       destination: "",
       transferPolicy: "GROUP_BY_DATE",
       duplicationPolicy: "RENAME",
+      transferMode: "MOVE",
       useCaptionName: false,
       extra: {
         timezone: "Asia/Shanghai",
@@ -95,6 +97,7 @@ function toDraft(rule: LocalOrganizeRuleOverview): OrganizeDraft {
     enabled: rule.enabled,
     rule: {
       ...rule.rule,
+      transferMode: rule.rule.transferMode ?? "MOVE",
       extra: {
         timezone: "Asia/Shanghai",
         dateGrouping: "YEAR_MONTH",
@@ -282,8 +285,12 @@ export function LocalOrganizeManager() {
                     </span>
                   </CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Move files · {item.rule.transferPolicy} ·{" "}
-                    {item.rule.duplicationPolicy}
+                    {item.rule.transferMode === "HARDLINK"
+                      ? "Hardlink"
+                      : item.rule.transferMode === "COPY"
+                        ? "Copy"
+                        : "Move"}{" "}
+                    files · {item.rule.transferPolicy} · {item.rule.duplicationPolicy}
                   </p>
                 </div>
                 <Badge variant={item.enabled ? "default" : "secondary"}>
@@ -442,6 +449,36 @@ export function LocalOrganizeManager() {
                     <SelectItem value="OVERWRITE">Overwrite</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-2 sm:col-span-2">
+                <Label>Transfer mode</Label>
+                <Select
+                  value={draft.rule.transferMode ?? "MOVE"}
+                  onValueChange={(transferMode: TransferMode) =>
+                    setDraft({
+                      ...draft,
+                      rule: { ...draft.rule, transferMode },
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MOVE">
+                      Move (移走原文件，释放下载目录空间)
+                    </SelectItem>
+                    <SelectItem value="HARDLINK">
+                      Hardlink (硬链接：保留原文件做种/查看，同时在目标目录创建链接，不占双倍空间)
+                    </SelectItem>
+                    <SelectItem value="COPY">
+                      Copy (复制：保留原文件，在目标目录创建副本)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  硬链接要求源路径与目标路径在同一物理磁盘/挂载分区内。跨分区会自动降级为复制。
+                </p>
               </div>
             </div>
 

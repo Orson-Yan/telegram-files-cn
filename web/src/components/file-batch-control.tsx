@@ -25,6 +25,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { BatchFileTags } from "@/components/file-tags";
 import Image from "next/image";
+import prettyBytes from "pretty-bytes";
 import { useShareEnabled } from "@/hooks/use-share-enabled";
 
 function getSeedResourceId(file: TelegramFile): string | null {
@@ -64,6 +65,11 @@ export default function FileBatchControl({
   const selectedFileObjects = Array.from(selectedFiles)
     .map((id) => files.find((f) => f.id === id))
     .filter(Boolean) as TelegramFile[];
+
+  const totalSelectedSize = selectedFileObjects.reduce(
+    (acc, f) => acc + (f.size || 0),
+    0,
+  );
 
   // Calculate counts for different file states
   const downloadableCounts = selectedFileObjects.filter(
@@ -220,10 +226,15 @@ export default function FileBatchControl({
     <>
       {selectedFiles.size > 0 && (
         <div className="flex flex-col rounded-lg bg-muted/50 p-4 transition-all duration-300 animate-in slide-in-from-bottom-2 md:flex-row md:items-center md:justify-between">
-          <span className="mb-3 text-sm font-medium md:mb-0">
-            {selectedFiles.size} {selectedFiles.size === 1 ? "file" : "files"}{" "}
-            selected
-          </span>
+          <div className="mb-3 flex items-center gap-2 md:mb-0">
+            <span className="text-sm font-medium">
+              {selectedFiles.size} {selectedFiles.size === 1 ? "file" : "files"}{" "}
+              selected
+            </span>
+            <span className="font-mono text-xs text-muted-foreground">
+              ({prettyBytes(totalSelectedSize)})
+            </span>
+          </div>
           <div className="flex flex-wrap gap-2">
             {loadedFiles.length > 0 && (
               <BatchFileTags

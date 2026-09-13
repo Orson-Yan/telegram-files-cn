@@ -109,6 +109,10 @@ public class SettingAutoRecords {
         public boolean downloadCommentFiles;
 
         public String filterExpr;
+
+        public long minSize;
+
+        public long maxSize;
     }
 
     public static class TransferConfig {
@@ -127,6 +131,12 @@ public class SettingAutoRecords {
         }
     }
 
+    public enum TransferMode {
+        MOVE,
+        COPY,
+        HARDLINK
+    }
+
     public static class TransferRule {
         public boolean transferHistory;
 
@@ -138,6 +148,8 @@ public class SettingAutoRecords {
         public Transfer.TransferPolicy transferPolicy;
 
         public Transfer.DuplicationPolicy duplicationPolicy;
+
+        public TransferMode transferMode = TransferMode.MOVE;
 
         // When true, the post caption is appended to the destination file name.
         public boolean useCaptionName;
