@@ -2,6 +2,8 @@
 import Files from "@/components/files";
 import { Card, CardContent } from "@/components/ui/card";
 import ThemeToggleButton from "@/components/theme-toggle-button";
+import { LanguageToggleButton } from "@/i18n/language-toggle-button";
+import { SettingsDialog } from "@/components/settings-dialog";
 import Link from "next/link";
 import { PlatformTelegramIcon } from "@/components/platform-telegram-icon";
 
@@ -17,7 +19,11 @@ export default function AccountPage() {
 
             <h3 className="text-lg font-semibold">Telegram Files Manager</h3>
 
-            <ThemeToggleButton />
+            <div className="flex items-center gap-1">
+              <ThemeToggleButton />
+              <LanguageToggleButton />
+              <SettingsDialog />
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -34,6 +34,9 @@ import {
   normalizeDownloadOverview,
 } from "@/lib/download-activity";
 import { useWebsocket } from "@/hooks/use-websocket";
+import ThemeToggleButton from "@/components/theme-toggle-button";
+import { LanguageToggleButton } from "@/i18n/language-toggle-button";
+import { SettingsDialog } from "@/components/settings-dialog";
 
 interface EmptyStateProps {
   isLoadingAccount?: boolean;
@@ -78,8 +81,11 @@ export function EmptyState({
 
   return (
     <div className="container mx-auto px-4 py-6">
-      <div className="mb-2 flex justify-end">
+      <div className="mb-2 flex items-center justify-end gap-1">
+        <ThemeToggleButton />
+        <LanguageToggleButton />
         <PlatformBindingShortcut />
+        <SettingsDialog />
         <TooltipWrapper content="Log out">
           <Button
             type="button"
