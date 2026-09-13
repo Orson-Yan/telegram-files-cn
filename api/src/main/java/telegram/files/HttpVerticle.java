@@ -1002,7 +1002,8 @@ public class HttpVerticle extends AbstractVerticle {
                         return true;
                     });
                     ctx.end();
-                });
+                })
+                .onFailure(ctx::fail);
     }
 
     private void handleTelegrams(RoutingContext ctx) {

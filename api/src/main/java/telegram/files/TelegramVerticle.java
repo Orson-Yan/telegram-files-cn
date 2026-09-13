@@ -187,7 +187,9 @@ public class TelegramVerticle extends AbstractVerticle {
             permanentClose = true;
             idleClose = false;
             wakeAfterClose = false;
-            if (clientLifecycle == ClientLifecycle.CLOSED) return Future.succeededFuture();
+            if (clientLifecycle == ClientLifecycle.CLOSED) {
+                return needDelete ? deleteAccountData() : Future.succeededFuture();
+            }
             if (clientLifecycle == ClientLifecycle.SLEEPING) {
                 clientLifecycle = ClientLifecycle.CLOSED;
                 return needDelete ? deleteAccountData() : Future.succeededFuture();
@@ -1528,10 +1530,17 @@ public class TelegramVerticle extends AbstractVerticle {
                     idleClose = false;
                     wakeAfterClose = false;
                 }
-                if (completedClose != null && !completedClose.future().isComplete()) completedClose.complete();
-                log.info("[%s] Account <%s> closed".formatted(this.getRootId(), this.telegramRecord.firstName()));
+                String accountName = this.telegramRecord != null ? this.telegramRecord.firstName() : this.getRootId();
+                log.info("[%s] Account <%s> closed".formatted(this.getRootId(), accountName));
                 if (needDelete) {
-                    deleteAccountData();
+                    deleteAccountData().onComplete(res -> {
+                        if (completedClose != null && !completedClose.future().isComplete()) {
+                            if (res.succeeded()) completedClose.complete();
+                            else completedClose.fail(res.cause());
+                        }
+                    });
+                } else {
+                    if (completedClose != null && !completedClose.future().isComplete()) completedClose.complete();
                 }
                 if (restart) {
                     vertx.runOnContext(_ -> initializeTelegramGateway());
@@ -1543,15 +1552,27 @@ public class TelegramVerticle extends AbstractVerticle {
     }
 
     private Future<Void> deleteAccountData() {
-        File root = FileUtil.file(this.rootPath);
-        if (root.exists()) FileUtil.del(root);
-        Future<Void> deletion = getId() instanceof Long telegramId
-                ? DataVerticle.telegramRepository.delete(telegramId).mapEmpty()
-                : Future.succeededFuture();
-        return deletion
-                .onSuccess(_ -> log.info("[%s] Telegram account deleted".formatted(this.getRootId())))
-                .onFailure(e -> log.error("[%s] Failed to delete telegram record: %s"
-                        .formatted(this.getRootId(), e.getMessage())));
+        return vertx.<Void>executeBlocking(() -> {
+            File root = FileUtil.file(this.rootPath);
+            if (root.exists()) {
+                boolean deleted = FileUtil.del(root);
+                if (!deleted && root.exists()) {
+                    try {
+                        Thread.sleep(200);
+                    } catch (InterruptedException ignored) {}
+                    FileUtil.del(root);
+                }
+            }
+            return null;
+        }).compose(_ -> {
+            Future<Void> deletion = getId() instanceof Long telegramId
+                    ? DataVerticle.telegramRepository.delete(telegramId).mapEmpty()
+                    : Future.succeededFuture();
+            return deletion
+                    .onSuccess(_ -> log.info("[%s] Telegram account deleted".formatted(this.getRootId())))
+                    .onFailure(e -> log.error("[%s] Failed to delete telegram record: %s"
+                            .formatted(this.getRootId(), e.getMessage())));
+        });
     }
 
     private void onFileUpdated(TdApi.UpdateFile updateFile) {

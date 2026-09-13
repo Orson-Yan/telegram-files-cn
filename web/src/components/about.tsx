@@ -1,6 +1,6 @@
 import React from "react";
 import useSWR from "swr";
-import { ExternalLink, Github, RefreshCw, Sparkles } from "lucide-react";
+import { ExternalLink, GitFork, Github, RefreshCw, Sparkles } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -69,13 +69,15 @@ export default function About() {
     GitHubReleaseData,
     Error
   >(
-    "https://api.github.com/repos/jarvis2f/telegram-files/releases/latest",
+    "https://api.github.com/repos/Orson-Yan/telegram-files-cn/releases/latest",
     fetcher,
   );
 
   const projectInfo = {
-    repository: "https://github.com/jarvis2f/telegram-files",
-    author: "Jarvis2f",
+    repository: "https://github.com/Orson-Yan/telegram-files-cn",
+    author: "Orson-Yan",
+    upstreamRepository: "https://github.com/jarvis2f/telegram-files",
+    upstreamAuthor: "Jarvis2f",
   };
 
   const currentVersion = apiData?.version;
@@ -90,15 +92,30 @@ export default function About() {
         <CardHeader className="relative gap-4 p-6 pb-3 md:p-8 md:pb-4">
           <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
-              <Badge variant="secondary" className="mb-3">
-                Self-hosted Telegram files manager
-              </Badge>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">
+                  telegram-files-cn
+                </Badge>
+                <Badge variant="outline" className="gap-1 text-xs font-normal">
+                  <GitFork className="size-3 text-muted-foreground" />
+                  Forked from jarvis2f/telegram-files
+                </Badge>
+              </div>
               <CardTitle className="text-2xl tracking-normal md:text-3xl">
-                Telegram Files
+                Telegram Files (中文增强版)
               </CardTitle>
-              <CardDescription className="mt-2 max-w-xl text-base">
-                A self-hosted Telegram file downloader for continuous, stable,
-                and unattended downloads.
+              <CardDescription className="mt-2 max-w-xl text-sm md:text-base">
+                A self-hosted Telegram file downloader enhanced with complete Chinese localization,
+                cloud forwarding, and local organization. Forked with gratitude from{" "}
+                <Link
+                  href={projectInfo.upstreamRepository}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-primary underline underline-offset-4 hover:text-primary/80"
+                >
+                  jarvis2f/telegram-files
+                </Link>
+                .
               </CardDescription>
             </div>
             <div className="relative mx-auto size-28 shrink-0 md:mx-0">
@@ -115,7 +132,7 @@ export default function About() {
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-md border bg-background/80 p-3 shadow-sm backdrop-blur">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Author
+                Maintainer
               </p>
               <p className="mt-2 font-medium">{projectInfo.author}</p>
             </div>
@@ -168,15 +185,25 @@ export default function About() {
             )
           )}
 
-          <div className="flex justify-end">
-            <Button asChild variant="outline">
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+            <Button asChild variant="outline" size="sm">
+              <Link
+                href={projectInfo.upstreamRepository}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <GitFork className="mr-1.5 size-4" />
+                Upstream (jarvis2f)
+              </Link>
+            </Button>
+            <Button asChild size="sm">
               <Link
                 href={projectInfo.repository}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <Github />
-                GitHub
+                <Github className="mr-1.5 size-4" />
+                GitHub (Orson-Yan)
               </Link>
             </Button>
           </div>

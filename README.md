@@ -67,7 +67,7 @@ Compose 默认使用中文 fork 镜像：
 ghcr.io/orson-yan/telegram-files-cn:latest
 ```
 
-`main` 分支更新后会构建 `main`、`latest` 和根目录 `VERSION` 对应的版本镜像；正式 release 也会更新 `latest`。如需锁定版本，可在 `.env` 中设置 `IMAGE_TAG`（例如 `0.8.3`）。
+`main` 分支更新后会构建 `main`、`latest` 和根目录 `VERSION` 对应的版本镜像；正式 release 也会更新 `latest`。如需锁定版本，可在 `.env` 中设置 `IMAGE_TAG`（例如 `0.8.4`）。
 
 ### 云端转发与本地整理
 
