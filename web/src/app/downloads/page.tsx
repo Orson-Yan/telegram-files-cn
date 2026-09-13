@@ -1,13 +1,10 @@
 "use client";
 
 import { DownloadMonitor } from "@/components/download-monitor";
-import { PlatformTelegramIcon } from "@/components/platform-telegram-icon";
-import ThemeToggleButton from "@/components/theme-toggle-button";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { type DownloadOverviewStatistics } from "@/lib/download-activity";
-import { Activity, ArrowLeft, Loader2, TriangleAlert } from "lucide-react";
-import Link from "next/link";
+import { Activity, Loader2, TriangleAlert } from "lucide-react";
 import useSWR from "swr";
 
 const REFRESH_INTERVAL_MILLIS = 15_000;
@@ -23,28 +20,10 @@ export default function DownloadsPage() {
 
   return (
     <div className="container mx-auto px-4 py-6">
-      <Card className="mb-6">
-        <CardContent className="p-4">
-          <div className="relative flex items-center justify-between gap-4">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/">
-                <ArrowLeft data-icon="inline-start" />
-                Home
-              </Link>
-            </Button>
-
-            <div className="flex min-w-0 items-center gap-2">
-              <PlatformTelegramIcon className="size-6 shrink-0" />
-              <h3 className="flex items-center gap-2 truncate text-lg font-semibold">
-                <Activity className="size-5 text-blue-500" />
-                Download tasks
-              </h3>
-            </div>
-
-            <ThemeToggleButton />
-          </div>
-        </CardContent>
-      </Card>
+      <PageHeader
+        title="Download tasks"
+        icon={<Activity className="size-5 text-blue-500" />}
+      />
 
       {error ? (
         <Card className="mx-auto mb-8 max-w-5xl">
