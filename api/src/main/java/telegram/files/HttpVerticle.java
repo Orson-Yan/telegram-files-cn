@@ -237,6 +237,8 @@ public class HttpVerticle extends AbstractVerticle {
         router.post("/cloud-archive/history/:jobId/:action").handler(this::handleCloudArchiveHistoryAction);
         router.post("/cloud-archive/validate").handler(this::handleCloudArchiveValidate);
         router.post("/cloud-archive/test").handler(this::handleCloudArchiveTest);
+        router.post("/cloud-archive/records/retry-all").handler(this::handleCloudArchiveRetryAll);
+        router.post("/cloud-archive/records/clear").handler(this::handleCloudArchiveClearRecords);
         router.post("/cloud-archive/records/:recordId/retry").handler(this::handleCloudArchiveRetry);
         router.get("/local-organize/overview").handler(this::handleLocalOrganizeOverview);
         router.get("/local-organize/sources").handler(this::handleLocalOrganizeSources);
@@ -1382,6 +1384,7 @@ public class HttpVerticle extends AbstractVerticle {
             ctx.fail(400);
             return;
         }
+        AutoCloudArchiveVerticle.QUEUED_RECORD_AT.remove(recordId);
         DataVerticle.cloudArchiveRepository.retry(recordId)
                 .onSuccess(updated -> {
                     if (!updated) {
@@ -1390,6 +1393,25 @@ public class HttpVerticle extends AbstractVerticle {
                         ctx.json(JsonObject.of("queued", true));
                     }
                 })
+                .onFailure(ctx::fail);
+    }
+
+    private void handleCloudArchiveRetryAll(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        long telegramId = body != null ? Convert.toLong(body.getValue("telegramId"), 0L) : 0L;
+        Long chatId = body != null && body.getValue("chatId") != null ? Convert.toLong(body.getValue("chatId")) : null;
+        AutoCloudArchiveVerticle.QUEUED_RECORD_AT.clear();
+        DataVerticle.cloudArchiveRepository.retryAll(telegramId, chatId)
+                .onSuccess(count -> ctx.json(JsonObject.of("count", count, "queued", true)))
+                .onFailure(ctx::fail);
+    }
+
+    private void handleCloudArchiveClearRecords(RoutingContext ctx) {
+        JsonObject body = ctx.body().asJsonObject();
+        long telegramId = body != null ? Convert.toLong(body.getValue("telegramId"), 0L) : 0L;
+        String status = body != null ? body.getString("status", "ALL") : "ALL";
+        DataVerticle.cloudArchiveRepository.clearRecords(telegramId, status)
+                .onSuccess(count -> ctx.json(JsonObject.of("count", count)))
                 .onFailure(ctx::fail);
     }
 

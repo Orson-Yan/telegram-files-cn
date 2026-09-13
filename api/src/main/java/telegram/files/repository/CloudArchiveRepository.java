@@ -105,4 +105,8 @@ public interface CloudArchiveRepository {
     Future<JsonObject> statistics();
 
     Future<Boolean> retry(String id);
+
+    Future<Integer> retryAll(long telegramId, Long chatId);
+
+    Future<Integer> clearRecords(long telegramId, String status);
 }

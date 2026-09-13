@@ -6,6 +6,11 @@ import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
 import telegram.files.repository.SettingAutoRecords;
 
+import cn.hutool.core.lang.Pair;
+import cn.hutool.core.util.StrUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +23,8 @@ import java.util.regex.Pattern;
 
 /** Executes Telegram server-side copies/forwards without downloading media locally. */
 public final class CloudArchiveService {
+
+    private static final Logger log = LoggerFactory.getLogger(CloudArchiveService.class);
 
     private static final Pattern TELEGRAM_WAIT = Pattern.compile(
             "(?:FLOOD|FLOOD_PREMIUM|SLOWMODE)_WAIT_?(\\d+)", Pattern.CASE_INSENSITIVE);
@@ -82,9 +89,16 @@ public final class CloudArchiveService {
                             rule.mode != SettingAutoRecords.ArchiveMode.FORWARD,
                             !rule.preserveCaption
                     );
-                    return telegram.client.execute(request);
+                    return telegram.client.execute(request)
+                            .map(result -> Pair.of(messages, result));
                 })
-                .map(result -> mapTargets(ids, result));
+                .compose(pair -> {
+                    Map<Long, Long> targets = mapTargets(ids, pair.getValue());
+                    if (rule.mode != SettingAutoRecords.ArchiveMode.FORWARD && rule.cleanCaption) {
+                        applyCaptionCleaning(telegram, rule, pair.getKey(), targets);
+                    }
+                    return Future.succeededFuture(targets);
+                });
     }
 
     private static Future<Void> validateMessages(TelegramGateway gateway,
@@ -301,6 +315,101 @@ public final class CloudArchiveService {
     private static int nonZeroHash(long... values) {
         int result = Arrays.hashCode(values);
         return result == 0 ? 1 : result;
+    }
+
+    public static String cleanCaptionText(String raw, SettingAutoRecords.ArchiveRule rule) {
+        if (rule == null || !rule.cleanCaption) {
+            return raw == null ? "" : raw;
+        }
+        String text = raw == null ? "" : raw;
+        if (rule.stripLinks) {
+            text = text.replaceAll("(?i)https?://\\S+", "");
+            text = text.replaceAll("(?i)(?:^|\\s)(?:telegram|t)\\.me/\\S+", "");
+        }
+        if (rule.stripUsernames) {
+            text = text.replaceAll("(?i)@\\w+", "");
+        }
+        if (rule.captionReplacements != null && !rule.captionReplacements.isEmpty()) {
+            for (SettingAutoRecords.CaptionReplacement cr : rule.captionReplacements) {
+                if (cr != null && StrUtil.isNotBlank(cr.pattern)) {
+                    try {
+                        String replacement = cr.replacement == null ? "" : cr.replacement;
+                        text = text.replaceAll(cr.pattern, replacement);
+                    } catch (Exception e) {
+                        text = text.replace(cr.pattern, cr.replacement == null ? "" : cr.replacement);
+                    }
+                }
+            }
+        }
+        if (StrUtil.isNotBlank(rule.captionSuffix)) {
+            String suffix = rule.captionSuffix.trim();
+            if (StrUtil.isNotBlank(text)) {
+                text = text.trim() + "\n" + suffix;
+            } else {
+                text = suffix;
+            }
+        } else {
+            text = text.trim();
+        }
+        return text;
+    }
+
+    private static void applyCaptionCleaning(TelegramVerticle telegram,
+                                              SettingAutoRecords.ArchiveRule rule,
+                                              TdApi.Messages sourceMessages,
+                                              Map<Long, Long> targets) {
+        if (sourceMessages == null || sourceMessages.messages == null) {
+            return;
+        }
+        for (TdApi.Message sourceMsg : sourceMessages.messages) {
+            if (sourceMsg == null) {
+                continue;
+            }
+            Long targetMsgId = targets.get(sourceMsg.id);
+            if (targetMsgId == null || targetMsgId == 0) {
+                continue;
+            }
+            String rawText = getMessageText(sourceMsg);
+            String cleanedText = cleanCaptionText(rawText, rule);
+            if (Objects.equals(rawText, cleanedText)) {
+                continue;
+            }
+            if (sourceMsg.content instanceof TdApi.MessageText) {
+                TdApi.FormattedText formatted = new TdApi.FormattedText(cleanedText, new TdApi.TextEntity[0]);
+                telegram.client.execute(new TdApi.EditMessageText(
+                        rule.targetChatId,
+                        targetMsgId,
+                        null,
+                        new TdApi.InputMessageText(formatted, null, false)
+                )).onFailure(err -> log.warn(
+                        "Failed to edit target text message {}: {}", targetMsgId, err.getMessage()));
+            } else {
+                TdApi.FormattedText formatted = new TdApi.FormattedText(cleanedText, new TdApi.TextEntity[0]);
+                telegram.client.execute(new TdApi.EditMessageCaption(
+                        rule.targetChatId,
+                        targetMsgId,
+                        null,
+                        formatted,
+                        false
+                )).onFailure(err -> log.warn(
+                        "Failed to edit target caption message {}: {}", targetMsgId, err.getMessage()));
+            }
+        }
+    }
+
+    private static String getMessageText(TdApi.Message message) {
+        if (message == null || message.content == null) {
+            return "";
+        }
+        return switch (message.content) {
+            case TdApi.MessageText value -> value.text != null && value.text.text != null ? value.text.text : "";
+            case TdApi.MessagePhoto value -> value.caption != null && value.caption.text != null ? value.caption.text : "";
+            case TdApi.MessageVideo value -> value.caption != null && value.caption.text != null ? value.caption.text : "";
+            case TdApi.MessageAudio value -> value.caption != null && value.caption.text != null ? value.caption.text : "";
+            case TdApi.MessageDocument value -> value.caption != null && value.caption.text != null ? value.caption.text : "";
+            case TdApi.MessageAnimation value -> value.caption != null && value.caption.text != null ? value.caption.text : "";
+            default -> "";
+        };
     }
 
     public static final class Rejected extends RuntimeException {

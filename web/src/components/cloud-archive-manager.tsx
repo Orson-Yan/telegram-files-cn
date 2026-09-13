@@ -101,6 +101,14 @@ function emptyDraft(telegramId = ""): RuleDraft {
       strictOrder: false,
       recoveryEnabled: true,
       initialSyncMode: "NOW",
+      minSize: 0,
+      maxSize: 0,
+      extensions: [],
+      cleanCaption: false,
+      stripLinks: false,
+      stripUsernames: false,
+      captionReplacements: [],
+      captionSuffix: "",
     },
   };
 }
@@ -121,6 +129,14 @@ function toDraft(rule: CloudArchiveRuleOverview): RuleDraft {
       strictOrder: Boolean(rule.rule.strictOrder),
       recoveryEnabled: rule.rule.recoveryEnabled !== false,
       initialSyncMode: rule.rule.initialSyncMode || "NOW",
+      minSize: rule.rule.minSize || 0,
+      maxSize: rule.rule.maxSize || 0,
+      extensions: rule.rule.extensions || [],
+      cleanCaption: Boolean(rule.rule.cleanCaption),
+      stripLinks: Boolean(rule.rule.stripLinks),
+      stripUsernames: Boolean(rule.rule.stripUsernames),
+      captionReplacements: rule.rule.captionReplacements || [],
+      captionSuffix: rule.rule.captionSuffix || "",
     },
   };
 }
@@ -141,6 +157,16 @@ async function saveDraft(draft: RuleDraft) {
       sourceTopicId: Number(draft.rule.sourceTopicId || 0),
       targetChatId: Number(draft.rule.targetChatId),
       targetTopicId: Number(draft.rule.targetTopicId || 0),
+      minSize: Number(draft.rule.minSize || 0),
+      maxSize: Number(draft.rule.maxSize || 0),
+      extensions: (draft.rule.extensions || []).map((ext) => ext.trim().toLowerCase()).filter(Boolean),
+      cleanCaption: Boolean(draft.rule.cleanCaption),
+      stripLinks: Boolean(draft.rule.stripLinks),
+      stripUsernames: Boolean(draft.rule.stripUsernames),
+      captionReplacements: (draft.rule.captionReplacements || []).filter(
+        (cr) => cr.pattern && cr.pattern.trim().length > 0,
+      ),
+      captionSuffix: draft.rule.captionSuffix || "",
     },
   };
   await POST(
@@ -355,6 +381,48 @@ export function CloudArchiveManager() {
       toast({
         variant: "error",
         title: "Retry failed",
+        description:
+          failure instanceof Error ? failure.message : String(failure),
+      });
+    }
+  };
+
+  const retryAllFailed = async () => {
+    try {
+      const res = (await POST("/cloud-archive/records/retry-all", {
+        telegramId: 0,
+      })) as { count?: number };
+      await reloadRecords();
+      toast({
+        variant: "success",
+        title: "Retried failed records",
+        description: `Successfully queued ${res?.count ?? 0} record(s) for retry.`,
+      });
+    } catch (failure) {
+      toast({
+        variant: "error",
+        title: "Retry all failed",
+        description:
+          failure instanceof Error ? failure.message : String(failure),
+      });
+    }
+  };
+
+  const clearRecords = async () => {
+    try {
+      const res = (await POST("/cloud-archive/records/clear", {
+        telegramId: 0,
+      })) as { count?: number };
+      await reloadRecords();
+      toast({
+        variant: "success",
+        title: "Records cleared",
+        description: `Removed ${res?.count ?? 0} record(s).`,
+      });
+    } catch (failure) {
+      toast({
+        variant: "error",
+        title: "Clear failed",
         description:
           failure instanceof Error ? failure.message : String(failure),
       });
@@ -729,6 +797,38 @@ export function CloudArchiveManager() {
 
         <TabsContent value="records" className="mt-4">
           <Card>
+            <CardHeader className="flex flex-row items-center justify-between border-b px-4 py-3 sm:px-6">
+              <div className="text-sm font-medium text-muted-foreground">
+                Archive delivery logs & queue history
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void reloadRecords()}
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void retryAllFailed()}
+                >
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-amber-500" />
+                  Retry Failed
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:bg-destructive/10"
+                  onClick={() => void clearRecords()}
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Clear Logs
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent className="overflow-x-auto p-0">
               <Table>
                 <TableHeader>
@@ -1162,6 +1262,240 @@ export function CloudArchiveManager() {
                 }
               />
             </div>
+
+            <div className="grid gap-3 rounded-lg border p-4">
+              <div>
+                <Label className="text-base font-semibold">Media & File Filtering</Label>
+                <p className="text-xs text-muted-foreground">
+                  Filter messages by file size and extensions (leave empty for unlimited).
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="archive-min-size">Min file size (MB)</Label>
+                  <Input
+                    id="archive-min-size"
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 10"
+                    value={
+                      draft.rule.minSize
+                        ? Number((draft.rule.minSize / (1024 * 1024)).toFixed(2))
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDraft({
+                        ...draft,
+                        rule: {
+                          ...draft.rule,
+                          minSize: val ? Math.round(Number(val) * 1024 * 1024) : 0,
+                        },
+                      });
+                    }}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="archive-max-size">Max file size (MB)</Label>
+                  <Input
+                    id="archive-max-size"
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 2048"
+                    value={
+                      draft.rule.maxSize
+                        ? Number((draft.rule.maxSize / (1024 * 1024)).toFixed(2))
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDraft({
+                        ...draft,
+                        rule: {
+                          ...draft.rule,
+                          maxSize: val ? Math.round(Number(val) * 1024 * 1024) : 0,
+                        },
+                      });
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="archive-extensions">Allowed extensions</Label>
+                <Input
+                  id="archive-extensions"
+                  placeholder="e.g. mp4, mkv, zip, rar"
+                  value={draft.rule.extensions?.join(", ") ?? ""}
+                  onChange={(e) => {
+                    const exts = e.target.value
+                      .split(/[,，\s]+/)
+                      .map((s) => s.trim().replace(/^\./, ""))
+                      .filter(Boolean);
+                    setDraft({
+                      ...draft,
+                      rule: { ...draft.rule, extensions: exts },
+                    });
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Comma separated. Only messages with matching file extensions will be archived.
+                </p>
+              </div>
+            </div>
+
+            {draft.rule.mode === "COPY" && (
+              <div className="grid gap-4 rounded-lg border p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <Label className="text-base font-semibold">Caption Cleaning & Replacement</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Automatically sanitize spam, remove ads, replace keywords, and append signature.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={draft.rule.cleanCaption}
+                    onCheckedChange={(cleanCaption) =>
+                      setDraft({
+                        ...draft,
+                        rule: { ...draft.rule, cleanCaption },
+                      })
+                    }
+                  />
+                </div>
+
+                {draft.rule.cleanCaption && (
+                  <div className="grid gap-3 pt-2">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Strip links & URLs</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Remove http(s):// and t.me/ invite links from captions.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={draft.rule.stripLinks}
+                        onCheckedChange={(stripLinks) =>
+                          setDraft({
+                            ...draft,
+                            rule: { ...draft.rule, stripLinks },
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Strip @usernames</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Remove @mentions and Telegram channel tags.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={draft.rule.stripUsernames}
+                        onCheckedChange={(stripUsernames) =>
+                          setDraft({
+                            ...draft,
+                            rule: { ...draft.rule, stripUsernames },
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div className="grid gap-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Keyword / Regex replacements</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const list = [...(draft.rule.captionReplacements || [])];
+                            list.push({ pattern: "", replacement: "" });
+                            setDraft({
+                              ...draft,
+                              rule: { ...draft.rule, captionReplacements: list },
+                            });
+                          }}
+                        >
+                          <Plus className="mr-1 h-3.5 w-3.5" />
+                          Add rule
+                        </Button>
+                      </div>
+                      {(draft.rule.captionReplacements || []).map((cr, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <Input
+                            placeholder="Pattern / Regex"
+                            value={cr.pattern}
+                            onChange={(e) => {
+                              const list = [...(draft.rule.captionReplacements || [])];
+                              list[idx] = {
+                                pattern: e.target.value,
+                                replacement: list[idx]?.replacement ?? "",
+                              };
+                              setDraft({
+                                ...draft,
+                                rule: { ...draft.rule, captionReplacements: list },
+                              });
+                            }}
+                          />
+                          <Input
+                            placeholder="Replace with"
+                            value={cr.replacement}
+                            onChange={(e) => {
+                              const list = [...(draft.rule.captionReplacements || [])];
+                              list[idx] = {
+                                pattern: list[idx]?.pattern ?? "",
+                                replacement: e.target.value,
+                              };
+                              setDraft({
+                                ...draft,
+                                rule: { ...draft.rule, captionReplacements: list },
+                              });
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              const list = (draft.rule.captionReplacements || []).filter(
+                                (_, i) => i !== idx,
+                              );
+                              setDraft({
+                                ...draft,
+                                rule: { ...draft.rule, captionReplacements: list },
+                              });
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {(draft.rule.captionReplacements || []).length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          No custom replacement rules defined.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="archive-caption-suffix">Append caption signature / suffix</Label>
+                      <Textarea
+                        id="archive-caption-suffix"
+                        placeholder="Optional footer text or watermark (e.g. Channel: @my_channel)"
+                        value={draft.rule.captionSuffix || ""}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            rule: { ...draft.rule, captionSuffix: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid gap-3 rounded-lg border p-4">
               <div className="flex items-center justify-between gap-4">

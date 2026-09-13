@@ -68,7 +68,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private final Map<Long, AccountQueue> queues = new HashMap<>();
 
-    private final Set<String> queuedRecordIds = new HashSet<>();
+    public static final Map<String, Long> QUEUED_RECORD_AT = new ConcurrentHashMap<>();
 
     private final Set<Long> busyAccounts = new HashSet<>();
 
@@ -106,7 +106,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         albumBuffers.values().forEach(buffer -> vertx.cancelTimer(buffer.timerId));
         albumBuffers.clear();
         queues.clear();
-        queuedRecordIds.clear();
+        QUEUED_RECORD_AT.clear();
         busyAccounts.clear();
         accountCooldownUntil.clear();
         log.info("Cloud archive verticle stopped");
@@ -281,7 +281,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     }
 
     private boolean matches(TdApi.Message message, SettingAutoRecords.ArchiveRule rule) {
-        boolean hasFile = TdApiHelp.getFileHandler(message).isPresent();
+        var fileOpt = TdApiHelp.getFileHandler(message);
+        boolean hasFile = fileOpt.isPresent();
         SettingAutoRecords.ArchiveScope scope = rule.scope == null
                 ? SettingAutoRecords.ArchiveScope.ALL_MESSAGES
                 : rule.scope;
@@ -290,12 +291,37 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         }
         if (scope == SettingAutoRecords.ArchiveScope.MEDIA_ONLY
             && CollUtil.isNotEmpty(rule.fileTypes)) {
-            String type = TdApiHelp.getFileHandler(message)
+            String type = fileOpt
                     .map(handler -> handler.convertFileRecord(0).type())
                     .orElse("");
             if (!rule.fileTypes.contains(type)) {
                 return false;
             }
+        }
+        if (hasFile) {
+            var fileRecord = fileOpt.get().convertFileRecord(0);
+            long size = fileRecord.size();
+            if (rule.minSize > 0 && size < rule.minSize) {
+                return false;
+            }
+            if (rule.maxSize > 0 && size > rule.maxSize) {
+                return false;
+            }
+            if (CollUtil.isNotEmpty(rule.extensions)) {
+                String name = fileRecord.name();
+                String ext = StrUtil.isNotBlank(name) && name.contains(".")
+                        ? name.substring(name.lastIndexOf(".") + 1).toLowerCase(Locale.ROOT).trim()
+                        : "";
+                boolean matchExt = rule.extensions.stream()
+                        .map(e -> e == null ? "" : e.trim().toLowerCase(Locale.ROOT).replaceFirst("^\\.", ""))
+                        .filter(StrUtil::isNotBlank)
+                        .anyMatch(e -> e.equals(ext));
+                if (!matchExt) {
+                    return false;
+                }
+            }
+        } else if (CollUtil.isNotEmpty(rule.extensions)) {
+            return false;
         }
         if (StrUtil.isNotBlank(rule.query)) {
             String text = messageText(message).toLowerCase(Locale.ROOT);
@@ -341,11 +367,19 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 .compose(_ -> DataVerticle.cloudArchiveRepository.listDue(
                         System.currentTimeMillis(), SCAN_LIMIT))
                 .onSuccess(records -> {
+                    long nowTs = System.currentTimeMillis();
+                    QUEUED_RECORD_AT.entrySet().removeIf(entry -> {
+                        boolean expired = nowTs - entry.getValue() > 10 * 60 * 1000L;
+                        if (expired) {
+                            log.warn("Cloud archive queued record {} timed out after 10m, releasing from in-memory cache", entry.getKey());
+                        }
+                        return expired;
+                    });
                     List<List<CloudArchiveRecord>> batches = new ArrayList<>();
                     String previousKey = null;
                     List<CloudArchiveRecord> current = null;
                     for (CloudArchiveRecord record : records) {
-                        if (queuedRecordIds.contains(record.id())) {
+                        if (QUEUED_RECORD_AT.containsKey(record.id())) {
                             continue;
                         }
                         SettingAutoRecords.Automation automation = autoRecords.getItem(
@@ -827,7 +861,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         if (records.isEmpty()) {
             return;
         }
-        records.forEach(record -> queuedRecordIds.add(record.id()));
+        long now = System.currentTimeMillis();
+        records.forEach(record -> QUEUED_RECORD_AT.put(record.id(), now));
         long telegramId = records.getFirst().telegramId();
         queues.computeIfAbsent(telegramId, _ -> new AccountQueue())
                 .add(new ArchiveWork(List.copyOf(records)));
@@ -844,13 +879,20 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return;
         }
         busyAccounts.add(telegramId);
-        process(work)
-                .onFailure(failure -> log.error(failure, "Cloud archive work failed"))
-                .onComplete(_ -> {
-                    busyAccounts.remove(telegramId);
-                    work.records.forEach(record -> queuedRecordIds.remove(record.id()));
-                    vertx.setTimer(3_000L, _ -> drain(telegramId));
-                });
+        try {
+            process(work)
+                    .onFailure(failure -> log.error(failure, "Cloud archive work failed"))
+                    .onComplete(_ -> {
+                        busyAccounts.remove(telegramId);
+                        work.records.forEach(record -> QUEUED_RECORD_AT.remove(record.id()));
+                        vertx.setTimer(3_000L, _ -> drain(telegramId));
+                    });
+        } catch (Throwable t) {
+            log.error(t, "Unexpected error processing cloud archive work");
+            busyAccounts.remove(telegramId);
+            work.records.forEach(record -> QUEUED_RECORD_AT.remove(record.id()));
+            vertx.setTimer(3_000L, _ -> drain(telegramId));
+        }
     }
 
     private Future<Void> process(ArchiveWork work) {

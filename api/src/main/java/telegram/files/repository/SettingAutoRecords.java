@@ -210,6 +210,34 @@ public class SettingAutoRecords {
         public boolean preserveCaption = true;
 
         public boolean disableNotification = true;
+
+        public long minSize;
+
+        public long maxSize;
+
+        public List<String> extensions = new ArrayList<>();
+
+        public boolean cleanCaption;
+
+        public boolean stripLinks;
+
+        public boolean stripUsernames;
+
+        public List<CaptionReplacement> captionReplacements = new ArrayList<>();
+
+        public String captionSuffix;
+    }
+
+    public static class CaptionReplacement {
+        public String pattern;
+        public String replacement;
+
+        public CaptionReplacement() {}
+
+        public CaptionReplacement(String pattern, String replacement) {
+            this.pattern = pattern;
+            this.replacement = replacement;
+        }
     }
 
     public enum ArchiveMode {

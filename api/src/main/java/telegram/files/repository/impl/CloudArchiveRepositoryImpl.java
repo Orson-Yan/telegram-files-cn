@@ -9,9 +9,12 @@ import io.vertx.sqlclient.Tuple;
 import telegram.files.repository.CloudArchiveRecord;
 import telegram.files.repository.CloudArchiveRepository;
 
+import cn.hutool.core.util.StrUtil;
+
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -393,6 +396,48 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         """)
                 .execute(Tuple.of(now, now, id))
                 .map(rows -> rows.rowCount() == 1);
+    }
+
+    @Override
+    public Future<Integer> retryAll(long telegramId, Long chatId) {
+        long now = clock.millis();
+        StringBuilder sql = new StringBuilder("""
+                UPDATE telegram_archive_record
+                SET status = 'RETRY', next_attempt_at = ?,
+                    last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                WHERE status IN ('FAILED', 'UNKNOWN', 'SKIPPED')
+                """);
+        List<Object> params = new ArrayList<>();
+        params.add(now);
+        params.add(now);
+        if (telegramId != 0) {
+            sql.append(" AND telegram_id = ?");
+            params.add(telegramId);
+        }
+        if (chatId != null && chatId != 0) {
+            sql.append(" AND source_chat_id = ?");
+            params.add(chatId);
+        }
+        return preparedQuery(sql.toString())
+                .execute(Tuple.from(params))
+                .map(RowSet::rowCount);
+    }
+
+    @Override
+    public Future<Integer> clearRecords(long telegramId, String status) {
+        StringBuilder sql = new StringBuilder("DELETE FROM telegram_archive_record WHERE 1=1");
+        List<Object> params = new ArrayList<>();
+        if (telegramId != 0) {
+            sql.append(" AND telegram_id = ?");
+            params.add(telegramId);
+        }
+        if (StrUtil.isNotBlank(status) && !"ALL".equalsIgnoreCase(status)) {
+            sql.append(" AND status = ?");
+            params.add(status.toUpperCase(Locale.ROOT));
+        }
+        return preparedQuery(sql.toString())
+                .execute(Tuple.from(params))
+                .map(RowSet::rowCount);
     }
 
     private List<CloudArchiveRecord> records(RowSet<Row> rows) {

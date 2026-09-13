@@ -264,6 +264,11 @@ export type ArchiveScope = "ALL_MESSAGES" | "MEDIA_ONLY";
 export type ArchiveTopicMode = "MERGE" | "PRESERVE";
 export type ArchiveInitialSyncMode = "NOW" | "FULL";
 
+export type CaptionReplacement = {
+  pattern: string;
+  replacement: string;
+};
+
 export type AutoArchiveRule = {
   sourceTopicId: number | string;
   targetChatId: number | string;
@@ -279,6 +284,14 @@ export type AutoArchiveRule = {
   strictOrder: boolean;
   recoveryEnabled: boolean;
   initialSyncMode: ArchiveInitialSyncMode;
+  minSize?: number;
+  maxSize?: number;
+  extensions?: string[];
+  cleanCaption?: boolean;
+  stripLinks?: boolean;
+  stripUsernames?: boolean;
+  captionReplacements?: CaptionReplacement[];
+  captionSuffix?: string;
 };
 
 export type TelegramTopic = {
