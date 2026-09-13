@@ -165,7 +165,7 @@ export function EmptyState({
               <PlatformTelegramIcon className="size-6 text-muted-foreground" />
             </div>
             <h3 className="text-base font-semibold text-foreground">
-              No Accounts Connected
+              No Accounts Found
             </h3>
             <p className="mt-1 max-w-sm text-xs text-muted-foreground">
               Connect a Telegram account to start downloading, organizing, and archiving files.
