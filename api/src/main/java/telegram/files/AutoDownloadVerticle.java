@@ -360,13 +360,30 @@ public class AutoDownloadVerticle extends AbstractVerticle {
         }
     }
 
+    private final Map<Long, DownloadingCountCache> downloadingCountCaches = new ConcurrentHashMap<>();
+    private static final long COUNT_CACHE_TTL_MILLIS = 3000L;
+
+    private record DownloadingCountCache(int count, long timestamp) {}
+
+    private int getCachedDownloadingCount(long telegramId) {
+        DownloadingCountCache cached = downloadingCountCaches.get(telegramId);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.timestamp < COUNT_CACHE_TTL_MILLIS) {
+            return cached.count;
+        }
+        Integer dbCount = Future.await(DataVerticle.fileRepository.countByStatus(
+                telegramId, FileRecord.DownloadStatus.downloading));
+        int count = dbCount == null ? 0 : dbCount;
+        downloadingCountCaches.put(telegramId, new DownloadingCountCache(count, now));
+        return count;
+    }
+
     private int getScanCapacity(long telegramId) {
         List<MessageWrapper> waitingMessages = this.waitingDownloadMessages.get(telegramId);
-        Integer downloading = Future.await(DataVerticle.fileRepository.countByStatus(
-                telegramId, FileRecord.DownloadStatus.downloading));
+        int downloading = getCachedDownloadingCount(telegramId);
         int inFlight = inFlightDownloadUniqueIds.getOrDefault(telegramId, Set.of()).size();
         return getScanCapacity(
-                (downloading == null ? 0 : downloading) + inFlight,
+                downloading + inFlight,
                 waitingMessages == null ? 0 : waitingMessages.size()
         );
     }
@@ -379,9 +396,9 @@ public class AutoDownloadVerticle extends AbstractVerticle {
     }
 
     private int getSurplusSize(long telegramId) {
-        Integer downloading = Future.await(DataVerticle.fileRepository.countByStatus(telegramId, FileRecord.DownloadStatus.downloading));
+        int downloading = getCachedDownloadingCount(telegramId);
         int inFlight = inFlightDownloadUniqueIds.getOrDefault(telegramId, Set.of()).size();
-        return getSurplusSize(limit, downloading == null ? 0 : downloading, inFlight);
+        return getSurplusSize(limit, downloading, inFlight);
     }
 
     static int getSurplusSize(int limit, int downloading, int inFlight) {
@@ -507,10 +524,10 @@ public class AutoDownloadVerticle extends AbstractVerticle {
 
     private void releaseInFlight(long telegramId, String uniqueId) {
         Set<String> inFlightUniqueIds = inFlightDownloadUniqueIds.get(telegramId);
-        if (inFlightUniqueIds == null) {
-            return;
+        if (inFlightUniqueIds != null) {
+            inFlightUniqueIds.remove(uniqueId);
         }
-        inFlightUniqueIds.remove(uniqueId);
+        downloadingCountCaches.remove(telegramId);
     }
 
     private void removeWaitingMessages(long telegramId, long chatId) {

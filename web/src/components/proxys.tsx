@@ -59,7 +59,13 @@ export default function Proxys({
   onProxyNameChange,
 }: ProxysProps) {
   const { settings, updateSettings } = useSettings();
-  const [innerProxyName, setInnerProxyName] = useState(proxyName ?? "");
+  const [innerProxyName, setInnerProxyName] = useState(() => {
+    if (proxyName !== undefined) return proxyName;
+    if (!telegramId && typeof window !== "undefined") {
+      return localStorage.getItem("default_proxy_name") ?? "";
+    }
+    return "";
+  });
   const [isDialogOpen, setDialogOpen] = useState(false);
   const [editingProxy, setEditingProxy] = useState<Proxy | null>(null);
   const [formState, setFormState] = useState<Proxy>({
@@ -165,6 +171,19 @@ export default function Proxys({
     if (telegramId) {
       await triggerProxy();
     } else {
+      if (typeof window !== "undefined") {
+        if (innerProxyName) {
+          localStorage.setItem("default_proxy_name", innerProxyName);
+        } else {
+          localStorage.removeItem("default_proxy_name");
+        }
+      }
+      toast({
+        variant: "success",
+        description: innerProxyName
+          ? `已设为新账号默认代理: ${innerProxyName}`
+          : "已禁用默认代理",
+      });
       onProxyNameChange?.(innerProxyName);
     }
   };

@@ -28,8 +28,10 @@ export function AccountDialog({
   useEffect(() => {
     if (account) {
       setProxyName(account.proxy);
+    } else if (isAdd && typeof window !== "undefined") {
+      setProxyName(localStorage.getItem("default_proxy_name") ?? undefined);
     }
-  }, [account]);
+  }, [account, isAdd]);
 
   return (
     <Dialog
@@ -37,7 +39,9 @@ export function AccountDialog({
       onOpenChange={(open) => {
         if (isAdd) {
           setNewAccountId(undefined);
-          setProxyName(undefined);
+          if (typeof window !== "undefined") {
+            setProxyName(localStorage.getItem("default_proxy_name") ?? undefined);
+          }
         }
         setOpen(open);
       }}
@@ -48,12 +52,17 @@ export function AccountDialog({
         className="h-full w-full md:h-auto md:min-h-40 md:min-w-[550px]"
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            Add Telegram Account
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <span>Add Telegram Account</span>
             {(account ?? newAccountId) && (
               <p className="rounded-md bg-gray-100 p-1 text-xs text-muted-foreground dark:bg-gray-800 dark:text-gray-300">
                 {account ? account.id : newAccountId}
               </p>
+            )}
+            {proxyName && (
+              <span className="rounded-md border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                代理: {proxyName}
+              </span>
             )}
           </DialogTitle>
         </DialogHeader>
@@ -68,13 +77,19 @@ export function AccountDialog({
             <ProxysDialog
               telegramId={account ? account.id : newAccountId}
               proxyName={proxyName}
-              onProxyNameChange={(proxyName) => {
-                // Only set with new account
-                setProxyName(proxyName);
+              onProxyNameChange={(newProxy) => {
+                setProxyName(newProxy);
+                if (typeof window !== "undefined") {
+                  if (newProxy) {
+                    localStorage.setItem("default_proxy_name", newProxy);
+                  } else {
+                    localStorage.removeItem("default_proxy_name");
+                  }
+                }
                 toast({
                   variant: "success",
-                  description: proxyName
-                    ? `Proxy is set to ${proxyName} with new account`
+                  description: newProxy
+                    ? `Proxy is set to ${newProxy} with new account`
                     : "Proxy is disabled",
                 });
               }}

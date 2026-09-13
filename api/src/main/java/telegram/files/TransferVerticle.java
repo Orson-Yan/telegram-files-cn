@@ -64,19 +64,27 @@ public class TransferVerticle extends AbstractVerticle {
     @Override
     public void stop(Promise<Void> stopPromise) {
         isStopped = true;
-        if (beingTransferred != null) {
-            log.info("Wait for transfer to complete, file: %s".formatted(beingTransferred.getTransferRecord().uniqueId()));
-            while (beingTransferred != null) {
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    log.error("Stop transfer verticle error: %s".formatted(e.getMessage()));
-                    stopPromise.fail(e);
-                }
-            }
+        if (beingTransferred == null) {
+            log.info("Transfer verticle stopped");
+            stopPromise.complete();
+            return;
         }
-        log.info("Transfer verticle stopped");
-        stopPromise.complete();
+
+        log.info("Wait for transfer to complete, file: %s".formatted(
+                beingTransferred.getTransferRecord() == null ? "unknown" : beingTransferred.getTransferRecord().uniqueId()));
+        long deadline = System.currentTimeMillis() + 5000L;
+        vertx.setPeriodic(200, timerId -> {
+            if (beingTransferred == null || System.currentTimeMillis() >= deadline) {
+                vertx.cancelTimer(timerId);
+                if (beingTransferred != null) {
+                    log.warn("Transfer shutdown timeout reached, proceeding with verticle stop");
+                } else {
+                    log.info("Active transfer completed during shutdown");
+                }
+                log.info("Transfer verticle stopped");
+                stopPromise.complete();
+            }
+        });
     }
 
     private Future<Void> initEventConsumer() {

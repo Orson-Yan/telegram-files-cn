@@ -66,7 +66,7 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private volatile TdApi.ConnectionState lastConnectionState;
 
-    private long lastFileEventTime;
+    private final Map<Integer, Long> fileLastEventTimes = new ConcurrentHashMap<>();
 
     private long lastFileDownloadEventTime;
 
@@ -1560,9 +1560,15 @@ public class TelegramVerticle extends AbstractVerticle {
             enqueueFileStatusUpdate(file);
 
             boolean completed = file.local != null && file.local.isDownloadingCompleted;
-            if (completed || lastFileEventTime == 0 || System.currentTimeMillis() - lastFileEventTime > 1000) {
+            long now = System.currentTimeMillis();
+            Long lastTime = fileLastEventTimes.get(file.id);
+            if (completed || lastTime == null || now - lastTime >= 500) {
                 sendEvent(EventPayload.build(EventPayload.TYPE_FILE, updateFile));
-                lastFileEventTime = System.currentTimeMillis();
+                if (completed) {
+                    fileLastEventTimes.remove(file.id);
+                } else {
+                    fileLastEventTimes.put(file.id, now);
+                }
             }
         }
     }

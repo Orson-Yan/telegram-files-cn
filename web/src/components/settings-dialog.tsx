@@ -97,6 +97,7 @@ export const SettingsDialog: React.FC = () => {
                 telegramId={accountId}
                 proxyName={account?.proxy}
                 enableSelect={true}
+                onProxyNameChange={() => setIsOpen(false)}
               />
             </div>
           </TabsContent>

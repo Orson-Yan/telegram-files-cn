@@ -119,7 +119,10 @@ public abstract class Transfer {
                 }
 
                 if (duplicationPolicy == DuplicationPolicy.HASH) {
-                    if (MessyUtils.compareFilesMD5(FileUtil.file(fileRecord.localPath()), FileUtil.file(transferPath))) {
+                    File targetFile = new File(transferPath);
+                    boolean isSame = originFile.length() == targetFile.length()
+                            && MessyUtils.compareFilesMD5(originFile, targetFile);
+                    if (isSame) {
                         log.trace("File {} is the same as {}", fileRecord.id(), transferPath);
                         FileUtil.del(fileRecord.localPath());
                         applyTelegramMessageTimestamp(fileRecord, transferPath);
