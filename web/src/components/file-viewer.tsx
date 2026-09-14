@@ -5,7 +5,7 @@ import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import FileVideo from "./file-video";
-import { ChevronLeft, ChevronRight, CircleX } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleX, MonitorPlay } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { type useFiles } from "@/hooks/use-files";
 import FileExtra from "@/components/file-extra";
@@ -14,6 +14,7 @@ import useFileSwitch from "@/hooks/use-file-switch";
 import FileImage from "./file-image";
 import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
 import FileTags from "./file-tags";
+import { ExternalPlayerDropdown } from "@/components/external-players";
 
 type FileViewerProps = {
   open: boolean;
@@ -121,6 +122,22 @@ export default function FileViewer({
                   <div className="min-w-0 rounded-md border border-white/10 bg-white/10 px-3 py-2 shadow-2xl backdrop-blur-md">
                     <FileExtra file={file} rowHeight="s" ellipsis />
                   </div>
+                  {file.type === "video" && (
+                    <ExternalPlayerDropdown
+                      file={file}
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Play in external player"
+                          className="rounded-full border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur-md hover:bg-white/20 hover:text-white [&_svg]:size-5"
+                          title="Play in external player (PotPlayer, VLC, Infuse, etc.)"
+                        >
+                          <MonitorPlay className="size-5 text-amber-400" />
+                        </Button>
+                      }
+                    />
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"

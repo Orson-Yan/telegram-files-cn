@@ -13,6 +13,7 @@ import { request, SESSION_TERMINAL_EVENT } from "@/lib/api";
 
 export interface AdminSession {
   authenticated: true;
+  token?: string;
   username: string;
   idleExpiresAt: number;
   absoluteExpiresAt: number;

@@ -26,6 +26,10 @@ import useIsMobile from "@/hooks/use-is-mobile";
 import * as SliderPrimitive from "@radix-ui/react-slider";
 import prettyBytes from "pretty-bytes";
 import { MobilePreviewTagOverlay } from "@/components/mobile/mobile-preview-tag-overlay";
+import {
+  ExternalPlayerDropdown,
+  ExternalPlayerFallbackCard,
+} from "@/components/external-players";
 
 // 检测浏览器是否支持特定视频格式
 const checkVideoSupport = (mimeType: string): "probably" | "maybe" | "" => {
@@ -228,6 +232,7 @@ const DesktopControls = ({
   previewPos,
   canvasRef,
   url,
+  file,
 }: {
   isPlaying: boolean;
   currentTime: number;
@@ -250,6 +255,7 @@ const DesktopControls = ({
   previewPos: number;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   url?: string;
+  file?: TelegramFile;
 }) => {
   const playbackRates = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const formatTime = (seconds: number) => {
@@ -362,75 +368,20 @@ const DesktopControls = ({
             </PopoverContent>
           </Popover>
 
-          {url && (
-            <Popover>
-              <PopoverTrigger asChild>
+          {file && (
+            <ExternalPlayerDropdown
+              file={file}
+              trigger={
                 <Button
                   variant="ghost"
                   size="icon"
                   className="rounded-full text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
-                  title="Play in external player"
+                  title="Play in external player (PotPlayer, VLC, Infuse, etc.)"
                 >
-                  <MonitorPlay className="h-5 w-5" />
+                  <MonitorPlay className="h-5 w-5 text-amber-400" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-44 p-1.5" modal={true} side="top">
-                <div className="flex flex-col gap-1 text-xs">
-                  <div className="px-2 py-1 font-semibold text-muted-foreground">
-                    External Player
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 justify-start gap-2"
-                    onClick={() => {
-                      const full = new URL(url, window.location.origin).href;
-                      window.location.href = `potplayer://${full}`;
-                    }}
-                  >
-                    <ExternalLink className="size-3.5" />
-                    PotPlayer
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 justify-start gap-2"
-                    onClick={() => {
-                      const full = new URL(url, window.location.origin).href;
-                      window.location.href = `vlc://${full}`;
-                    }}
-                  >
-                    <ExternalLink className="size-3.5" />
-                    VLC
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 justify-start gap-2"
-                    onClick={() => {
-                      const full = new URL(url, window.location.origin).href;
-                      window.location.href = `iina://weblink?url=${encodeURIComponent(full)}`;
-                    }}
-                  >
-                    <ExternalLink className="size-3.5" />
-                    IINA
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 justify-start gap-2 rounded-none border-t pt-2"
-                    onClick={() => {
-                      const full = new URL(url, window.location.origin).href;
-                      void navigator.clipboard.writeText(full);
-                      toast({ title: "Stream link copied to clipboard" });
-                    }}
-                  >
-                    <Copy className="size-3.5" />
-                    Copy Stream URL
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
+              }
+            />
           )}
 
           <Button
@@ -459,6 +410,7 @@ const MobileControls = ({
   onSeek,
   onSkipForward,
   onSkipBackward,
+  file,
 }: {
   isPlaying: boolean;
   currentTime: number;
@@ -467,6 +419,7 @@ const MobileControls = ({
   onSeek: (time: number) => void;
   onSkipForward: () => void;
   onSkipBackward: () => void;
+  file?: TelegramFile;
 }) => {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -501,37 +454,53 @@ const MobileControls = ({
         />
       </div>
 
-      <div className="flex items-center justify-center gap-9">
+      <div className="flex items-center justify-center gap-6">
         <Button
           variant="ghost"
           size="icon"
-          className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
+          className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
           onClick={onSkipBackward}
         >
-          <RotateCcw className="h-8 w-8" />
+          <RotateCcw className="h-7 w-7" />
         </Button>
 
         <Button
           variant="ghost"
           size="icon"
-          className="h-14 w-14 rounded-full bg-white text-black shadow-2xl hover:bg-white/90 hover:text-black [&_svg]:size-7"
+          className="h-13 w-13 rounded-full bg-white text-black shadow-2xl hover:bg-white/90 hover:text-black [&_svg]:size-7"
           onClick={onPlayPause}
         >
           {isPlaying ? (
-            <Pause className="h-12 w-12" />
+            <Pause className="h-10 w-10" />
           ) : (
-            <Play className="h-12 w-12" />
+            <Play className="h-10 w-10" />
           )}
         </Button>
 
         <Button
           variant="ghost"
           size="icon"
-          className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
+          className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
           onClick={onSkipForward}
         >
-          <RotateCw className="h-8 w-8" />
+          <RotateCw className="h-7 w-7" />
         </Button>
+
+        {file && (
+          <ExternalPlayerDropdown
+            file={file}
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-11 w-11 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white [&_svg]:size-5"
+                title="External Player"
+              >
+                <MonitorPlay className="h-6 w-6 text-amber-400" />
+              </Button>
+            }
+          />
+        )}
       </div>
     </div>
   );
@@ -957,10 +926,10 @@ const FileVideo = ({
 
   if (error) {
     return (
-      <VideoErrorFallback
+      <ExternalPlayerFallbackCard
+        file={file}
         className="h-dvh min-h-[240px] w-dvw rounded-none"
-        message={errorMessage}
-        url={url}
+        errorMessage={errorMessage}
       />
     );
   }
@@ -1073,6 +1042,7 @@ const FileVideo = ({
                   onSeek={handleSeek}
                   onSkipForward={handleSkipForward}
                   onSkipBackward={handleSkipBackward}
+                  file={file}
                 />
               ) : (
                 <DesktopControls
@@ -1097,6 +1067,7 @@ const FileVideo = ({
                   previewPos={previewPos}
                   canvasRef={canvasRef}
                   url={url}
+                  file={file}
                 />
               )}
             </motion.div>

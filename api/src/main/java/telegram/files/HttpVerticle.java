@@ -464,11 +464,18 @@ public class HttpVerticle extends AbstractVerticle {
 
     private void handleAuthentication(RoutingContext ctx) {
         Cookie cookie = ctx.request().getCookie(ADMIN_SESSION_COOKIE_NAME);
-        if (cookie == null) {
+        String token = cookie != null ? cookie.getValue() : ctx.request().getParam("token");
+        if (StrUtil.isBlank(token)) {
+            String authHeader = ctx.request().getHeader("Authorization");
+            if (StrUtil.isNotBlank(authHeader) && authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7).trim();
+            }
+        }
+        if (StrUtil.isBlank(token)) {
             respondJson(ctx, 401, "AUTHENTICATION_REQUIRED", "Authentication is required");
             return;
         }
-        adminAuthService.authenticate(cookie.getValue())
+        adminAuthService.authenticate(token)
                 .onSuccess(principal -> {
                     ctx.put(AUTH_PRINCIPAL_KEY, principal);
                     ctx.next();
@@ -499,8 +506,11 @@ public class HttpVerticle extends AbstractVerticle {
 
     private void handleSession(RoutingContext ctx) {
         AdminPrincipal principal = principal(ctx);
+        Cookie cookie = ctx.request().getCookie(ADMIN_SESSION_COOKIE_NAME);
+        String token = cookie != null ? cookie.getValue() : ctx.request().getParam("token");
         ctx.json(JsonObject.of(
                 "authenticated", true,
+                "token", token == null ? "" : token,
                 "username", principal.username(),
                 "idleExpiresAt", principal.idleExpiresAt(),
                 "absoluteExpiresAt", principal.absoluteExpiresAt()
@@ -682,6 +692,7 @@ public class HttpVerticle extends AbstractVerticle {
     private static JsonObject sessionBody(IssuedSession session) {
         return JsonObject.of(
                 "authenticated", true,
+                "token", session.sessionToken(),
                 "username", session.principal().username(),
                 "idleExpiresAt", session.principal().idleExpiresAt(),
                 "absoluteExpiresAt", session.principal().absoluteExpiresAt()

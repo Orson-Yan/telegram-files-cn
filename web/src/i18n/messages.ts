@@ -4,6 +4,13 @@ export const DEFAULT_LOCALE: Locale = "en";
 export const LANGUAGE_STORAGE_KEY = "telegram-files:locale";
 
 export const zhCNMessages: Readonly<Record<string, string>> = {
+  "videos": "个视频",
+  "photos": "张照片",
+  "External Players": "外部播放器",
+  "Copy Stream URL": "复制串流播放直链",
+  "Stream link copied to clipboard!": "串流直链已复制到剪贴板！",
+  "Browser cannot decode this video format": "浏览器无法直接解码此视频格式",
+  "Formats such as HEVC/H.265 10-bit, MKV, or audio tracks like DTS/AC3 require external player decoding.": "HEVC/H.265 10-bit、MKV 封装或 DTS/AC3 音轨等格式建议调用外部专业播放器解码。",
   "Library & Navigation": "文件库与导航",
   "Channels": "频道列表",
   "Loading channels...": "正在加载频道...",
