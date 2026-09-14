@@ -466,18 +466,18 @@ export function LocalOrganizeManager() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="MOVE">
-                      Move (移走原文件，释放下载目录空间)
+                      Move (transfer original)
                     </SelectItem>
                     <SelectItem value="HARDLINK">
-                      Hardlink (硬链接：保留原文件做种/查看，同时在目标目录创建链接，不占双倍空间)
+                      Hardlink (zero extra space)
                     </SelectItem>
                     <SelectItem value="COPY">
-                      Copy (复制：保留原文件，在目标目录创建副本)
+                      Copy (create duplicate)
                     </SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  硬链接要求源路径与目标路径在同一物理磁盘/挂载分区内。跨分区会自动降级为复制。
+                  Hard links require source and target paths to be on the same physical disk partition. Cross-partition links will automatically fall back to copy.
                 </p>
               </div>
             </div>

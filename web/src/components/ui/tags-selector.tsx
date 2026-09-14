@@ -38,7 +38,7 @@ export function TagsSelector({
   if (tags.length === 0) {
     return (
       <div className="py-2 text-center text-xs text-muted-foreground">
-        暂无可选标签
+        No tags available
       </div>
     );
   }

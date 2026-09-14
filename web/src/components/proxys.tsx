@@ -181,8 +181,8 @@ export default function Proxys({
       toast({
         variant: "success",
         description: innerProxyName
-          ? `已设为新账号默认代理: ${innerProxyName}`
-          : "已禁用默认代理",
+          ? `Default proxy enabled for new accounts: ${innerProxyName}`
+          : "Default proxy disabled",
       });
       onProxyNameChange?.(innerProxyName);
     }

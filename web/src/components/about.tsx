@@ -102,7 +102,7 @@ export default function About() {
                 </Badge>
               </div>
               <CardTitle className="text-2xl tracking-normal md:text-3xl">
-                Telegram Files (中文增强版)
+                Telegram Files (Enhanced Edition)
               </CardTitle>
               <CardDescription className="mt-2 max-w-xl text-sm md:text-base">
                 A self-hosted Telegram file downloader enhanced with complete Chinese localization,

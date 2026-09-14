@@ -484,7 +484,7 @@ export function CloudArchiveManager() {
       });
       await reloadHistory();
       setAdjustLimitJob(null);
-      toast({ variant: "success", title: "Daily limit updated / 每日配额已更新" });
+      toast({ variant: "success", title: "Daily limit updated" });
     } catch (failure) {
       toast({
         variant: "error",
@@ -542,27 +542,26 @@ export function CloudArchiveManager() {
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
             <div className="space-y-1 text-sm">
               <p className="font-semibold">
-                Telegram 平台正在实行频控防封保护 (Flood Control Active)
+                Flood Control Active
               </p>
               <div className="text-xs opacity-90 space-y-0.5">
                 {Object.entries(overview.accountCooldowns)
                   .filter(([_, c]) => c && c.remainingSeconds > 0)
                   .map(([accId, c]) => {
                     const acc = accounts.find((a) => String(a.id) === accId);
-                    const name = acc ? acc.name : `账号 #${accId}`;
+                    const name = acc ? acc.name : `Account #${accId}`;
                     const minutes = Math.floor(c.remainingSeconds / 60);
                     const seconds = c.remainingSeconds % 60;
                     const timeText =
                       minutes > 0
-                        ? `${minutes} 分 ${seconds} 秒`
-                        : `${seconds} 秒`;
+                        ? `${minutes}m ${seconds}s`
+                        : `${seconds}s`;
                     return (
                       <p key={accId}>
-                        • {name}：触发 Telegram 平台临时冷却，预计{" "}
+                        • {name}: Telegram platform temporary flood wait triggered. Resuming automatically in{" "}
                         <span className="font-mono font-bold text-amber-700 dark:text-amber-300">
                           {timeText}
-                        </span>{" "}
-                        后自动恢复转存，期间系统会自动挂起等待，切勿频繁操作。
+                        </span>.
                       </p>
                     );
                   })}
@@ -792,7 +791,7 @@ export function CloudArchiveManager() {
                           </span>
                           <span className="text-muted-foreground">/</span>
                           <span className="text-muted-foreground">
-                            {job.dailyLimit === 0 ? "不限" : `${job.dailyLimit} 条/天`}
+                            {job.dailyLimit === 0 ? "Unlimited" : `${job.dailyLimit} items/day`}
                           </span>
                         </div>
                         {job.dailyLimit > 0 &&
@@ -804,7 +803,7 @@ export function CloudArchiveManager() {
                               variant="secondary"
                               className="mt-1 border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400 py-0 px-1"
                             >
-                              今日已达上限
+                              Daily quota reached
                             </Badge>
                           )}
                       </TableCell>
@@ -839,7 +838,7 @@ export function CloudArchiveManager() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            title="调整每日转存配额"
+                            title="Adjust daily quota"
                             onClick={() => {
                               setAdjustLimitJob(job);
                               if (
@@ -855,7 +854,7 @@ export function CloudArchiveManager() {
                               }
                             }}
                           >
-                            <Settings2 /> 配额
+                            <Settings2 /> Quota
                           </Button>
                           {["PENDING", "RUNNING"].includes(job.status) && (
                             <Button
@@ -1730,32 +1729,32 @@ export function CloudArchiveManager() {
               <span translate="no">{historyRule?.targetChatName}</span>
             </p>
             <div className="grid gap-2">
-              <Label>History range / 历史拉取范围</Label>
+              <Label>History range</Label>
               <Select value={historyLimit} onValueChange={setHistoryLimit}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL">All history (全部历史)</SelectItem>
-                  <SelectItem value="100">100 条</SelectItem>
-                  <SelectItem value="500">500 条</SelectItem>
-                  <SelectItem value="1000">1,000 条</SelectItem>
-                  <SelectItem value="5000">5,000 条</SelectItem>
-                  <SelectItem value="10000">10,000 条</SelectItem>
-                  <SelectItem value="100000">100,000 条</SelectItem>
+                  <SelectItem value="ALL">All history</SelectItem>
+                  <SelectItem value="100">100 items</SelectItem>
+                  <SelectItem value="500">500 items</SelectItem>
+                  <SelectItem value="1000">1,000 items</SelectItem>
+                  <SelectItem value="5000">5,000 items</SelectItem>
+                  <SelectItem value="10000">10,000 items</SelectItem>
+                  <SelectItem value="100000">100,000 items</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="grid gap-2 rounded-lg border p-3 bg-muted/20">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">每日执行限制 / Daily Quota</Label>
+                <Label className="text-sm font-medium">Daily Quota</Label>
                 <span className="text-xs text-muted-foreground font-mono">
                   {historyDailyLimitType === "0"
-                    ? "不限制"
+                    ? "Unlimited"
                     : historyDailyLimitType === "custom"
-                      ? `${historyCustomDailyLimit || 0} 条/天`
-                      : `${historyDailyLimitType} 条/天`}
+                      ? `${historyCustomDailyLimit || 0} items/day`
+                      : `${historyDailyLimitType} items/day`}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1766,8 +1765,8 @@ export function CloudArchiveManager() {
                   className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                   onClick={() => setHistoryDailyLimitType("200")}
                 >
-                  <span className="font-semibold text-xs">200 条/天</span>
-                  <span className="text-[10px] opacity-80">安全防封 (新号推荐)</span>
+                  <span className="font-semibold text-xs">200 items/day</span>
+                  <span className="text-[10px] opacity-80">Safe (Recommended for new accounts)</span>
                 </Button>
                 <Button
                   type="button"
@@ -1776,8 +1775,8 @@ export function CloudArchiveManager() {
                   className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                   onClick={() => setHistoryDailyLimitType("500")}
                 >
-                  <span className="font-semibold text-xs">500 条/天</span>
-                  <span className="text-[10px] opacity-80">稳健推荐 (日常均衡)</span>
+                  <span className="font-semibold text-xs">500 items/day</span>
+                  <span className="text-[10px] opacity-80">Balanced (Recommended for daily use)</span>
                 </Button>
                 <Button
                   type="button"
@@ -1786,8 +1785,8 @@ export function CloudArchiveManager() {
                   className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                   onClick={() => setHistoryDailyLimitType("1000")}
                 >
-                  <span className="font-semibold text-xs">1000 条/天</span>
-                  <span className="text-[10px] opacity-80">极速推进 (老号/会员)</span>
+                  <span className="font-semibold text-xs">1000 items/day</span>
+                  <span className="text-[10px] opacity-80">Fast (Older accounts / Premium)</span>
                 </Button>
                 <Button
                   type="button"
@@ -1796,8 +1795,8 @@ export function CloudArchiveManager() {
                   className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                   onClick={() => setHistoryDailyLimitType("0")}
                 >
-                  <span className="font-semibold text-xs">不限 (0)</span>
-                  <span className="text-[10px] opacity-80">全速转存 (底线兜底)</span>
+                  <span className="font-semibold text-xs">Unlimited</span>
+                  <span className="text-[10px] opacity-80">Unlimited (Maximum speed)</span>
                 </Button>
               </div>
               <div className="flex items-center gap-2 mt-1">
@@ -1808,7 +1807,7 @@ export function CloudArchiveManager() {
                   className="shrink-0 text-xs h-8"
                   onClick={() => setHistoryDailyLimitType("custom")}
                 >
-                  自定义限制
+                  Custom limit
                 </Button>
                 {historyDailyLimitType === "custom" && (
                   <div className="flex items-center gap-1.5 flex-1">
@@ -1816,17 +1815,17 @@ export function CloudArchiveManager() {
                       type="number"
                       min="0"
                       max="50000"
-                      placeholder="每日上限条数"
+                      placeholder="Daily maximum items"
                       value={historyCustomDailyLimit}
                       onChange={(e) => setHistoryCustomDailyLimit(e.target.value)}
                       className="h-8 text-xs tabular-nums"
                     />
-                    <span className="text-xs text-muted-foreground shrink-0">条/天</span>
+                    <span className="text-xs text-muted-foreground shrink-0">items/day</span>
                   </div>
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed mt-1">
-                达到每日配额后当天自动挂起，次日 00:00 自动恢复推进，防止短时间高频请求被 Telegram 限制或风控封禁。
+                Automatically pauses when the daily quota is reached and resumes at 00:00 next day to prevent rate limiting or temporary bans from Telegram.
               </p>
             </div>
 
@@ -1858,9 +1857,9 @@ export function CloudArchiveManager() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>调整每日转存配额 / Adjust Daily Quota</DialogTitle>
+            <DialogTitle>Adjust Daily Quota</DialogTitle>
             <DialogDescription>
-              随时调整历史任务的每日转存上限。若今日已达上限，调高后任务将自动恢复。
+              Adjust the daily transfer limit for historical tasks anytime. If the limit was reached today, increasing it will automatically resume the task.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -1877,8 +1876,8 @@ export function CloudArchiveManager() {
                 className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                 onClick={() => setAdjustLimitType("200")}
               >
-                <span className="font-semibold text-xs">200 条/天</span>
-                <span className="text-[10px] opacity-80">安全防封</span>
+                <span className="font-semibold text-xs">200 items/day</span>
+                <span className="text-[10px] opacity-80">Safe</span>
               </Button>
               <Button
                 type="button"
@@ -1887,8 +1886,8 @@ export function CloudArchiveManager() {
                 className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                 onClick={() => setAdjustLimitType("500")}
               >
-                <span className="font-semibold text-xs">500 条/天</span>
-                <span className="text-[10px] opacity-80">稳健推荐</span>
+                <span className="font-semibold text-xs">500 items/day</span>
+                <span className="text-[10px] opacity-80">Balanced</span>
               </Button>
               <Button
                 type="button"
@@ -1897,8 +1896,8 @@ export function CloudArchiveManager() {
                 className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                 onClick={() => setAdjustLimitType("1000")}
               >
-                <span className="font-semibold text-xs">1000 条/天</span>
-                <span className="text-[10px] opacity-80">极速档</span>
+                <span className="font-semibold text-xs">1000 items/day</span>
+                <span className="text-[10px] opacity-80">Fast</span>
               </Button>
               <Button
                 type="button"
@@ -1907,8 +1906,8 @@ export function CloudArchiveManager() {
                 className="flex flex-col h-auto py-1.5 px-2 text-left items-start"
                 onClick={() => setAdjustLimitType("0")}
               >
-                <span className="font-semibold text-xs">不限 (0)</span>
-                <span className="text-[10px] opacity-80">全速转存</span>
+                <span className="font-semibold text-xs">Unlimited</span>
+                <span className="text-[10px] opacity-80">Unlimited</span>
               </Button>
             </div>
             <div className="flex items-center gap-2 mt-1">
@@ -1919,7 +1918,7 @@ export function CloudArchiveManager() {
                 className="shrink-0 text-xs h-8"
                 onClick={() => setAdjustLimitType("custom")}
               >
-                自定义限制
+                Custom limit
               </Button>
               {adjustLimitType === "custom" && (
                 <div className="flex items-center gap-1.5 flex-1">
@@ -1927,23 +1926,23 @@ export function CloudArchiveManager() {
                     type="number"
                     min="0"
                     max="50000"
-                    placeholder="输入上限"
+                    placeholder="Daily maximum items"
                     value={adjustCustomLimit}
                     onChange={(e) => setAdjustCustomLimit(e.target.value)}
                     className="h-8 text-xs tabular-nums"
                   />
-                  <span className="text-xs text-muted-foreground shrink-0">条/天</span>
+                  <span className="text-xs text-muted-foreground shrink-0">items/day</span>
                 </div>
               )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAdjustLimitJob(null)}>
-              取消
+              Cancel
             </Button>
             <Button disabled={adjustSaving} onClick={() => void saveDailyLimit()}>
               {adjustSaving ? <Loader2 className="animate-spin mr-1 h-4 w-4" /> : null}
-              保存设置
+              Save Settings
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -16,10 +16,11 @@ import {
   translateText,
 } from "@/i18n/messages";
 
-interface LanguageContextValue {
+export interface LanguageContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   toggleLocale: () => void;
+  t: (text: string) => string;
 }
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
@@ -62,6 +63,9 @@ function localizeTextNode(node: Text, locale: Locale) {
     node.nodeValue = translated;
   }
   appliedText.set(node, translated);
+  if (locale === "en") {
+    originalText.set(node, translated);
+  }
 }
 
 function localizeAttributes(element: Element, locale: Locale) {
@@ -199,9 +203,11 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, [locale]);
 
+  const t = useCallback((text: string) => translateText(text, locale), [locale]);
+
   const value = useMemo(
-    () => ({ locale, setLocale, toggleLocale }),
-    [locale, setLocale, toggleLocale],
+    () => ({ locale, setLocale, toggleLocale, t }),
+    [locale, setLocale, toggleLocale, t],
   );
 
   return (

@@ -247,11 +247,11 @@ const PRESETS: {
   description?: string;
   isPremium?: boolean;
 }[] = [
-  { label: "全部", unit: "GB", range: [0, 4] },
+  { label: "All", unit: "GB", range: [0, 4] },
   { label: "< 10 MB", unit: "MB", range: [0, 10] },
   { label: "10-100 MB", unit: "MB", range: [10, 100] },
-  { label: "100 MB-2 GB", unit: "MB", range: [100, 2000], description: "普通上限" },
-  { label: "2 GB-4 GB", unit: "GB", range: [2, 4], isPremium: true, description: "Premium 专属" },
+  { label: "100 MB-2 GB", unit: "MB", range: [100, 2000], description: "Standard limit" },
+  { label: "2 GB-4 GB", unit: "GB", range: [2, 4], isPremium: true, description: "Premium only" },
 ];
 
 const SizeFilter = ({ sizeRange, sizeUnit, onChange }: SizeFilterProps) => {

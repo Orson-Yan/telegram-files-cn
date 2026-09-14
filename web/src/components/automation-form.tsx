@@ -597,11 +597,11 @@ function TransferRule({ value, onChange }: TransferRuleProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="MOVE">Move (移走原文件)</SelectItem>
+                  <SelectItem value="MOVE">Move (transfer original)</SelectItem>
                   <SelectItem value="HARDLINK">
-                    Hardlink (硬链接：保留原文件，不占双倍空间)
+                    Hardlink (zero extra space)
                   </SelectItem>
-                  <SelectItem value="COPY">Copy (复制：保留原文件建立副本)</SelectItem>
+                  <SelectItem value="COPY">Copy (create duplicate)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

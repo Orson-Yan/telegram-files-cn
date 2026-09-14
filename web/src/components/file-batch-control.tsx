@@ -783,9 +783,9 @@ function BatchArchiveButton({
                 value={transferMode}
                 onChange={(e) => setTransferMode(e.target.value as any)}
               >
-                <option value="HARDLINK">Hardlink (硬链接：保留原文件，不占额外空间)</option>
-                <option value="MOVE">Move (移动原文件至目标目录)</option>
-                <option value="COPY">Copy (复制文件副本)</option>
+                <option value="HARDLINK">Hardlink (zero extra space)</option>
+                <option value="MOVE">Move (transfer original)</option>
+                <option value="COPY">Copy (create duplicate)</option>
               </select>
             </div>
           </div>

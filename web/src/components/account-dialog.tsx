@@ -61,7 +61,7 @@ export function AccountDialog({
             )}
             {proxyName && (
               <span className="rounded-md border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                代理: {proxyName}
+                Proxy: {proxyName}
               </span>
             )}
           </DialogTitle>
