@@ -491,8 +491,8 @@ public class TelegramVerticle extends AbstractVerticle {
                         return client.execute(new TdApi.DownloadFile(fileRecord.id(), 32, 0, 0, false))
                                 .compose(file -> {
                                     if (file.local != null && StrUtil.isNotBlank(file.local.path) && FileUtil.exist(file.local.path)) {
-                                        DataVerticle.fileRepository.updateDownloadStatus(file.id, file.local.path,
-                                                FileRecord.DownloadStatus.completed.name(), file.local.downloadedSize, System.currentTimeMillis());
+                                        DataVerticle.fileRepository.updateDownloadStatus(file.id, fileRecord.uniqueId(), file.local.path,
+                                                FileRecord.DownloadStatus.completed, System.currentTimeMillis());
                                         return Future.succeededFuture(Tuple.tuple(file.local.path, fileRecord.mimeType()));
                                     }
                                     return Future.failedFuture("Thumbnail download pending");
