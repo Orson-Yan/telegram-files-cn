@@ -1174,17 +1174,12 @@ public class HttpVerticle extends AbstractVerticle {
                     states.stream().map(CloudArchiveSyncState::lastError)
                             .filter(StrUtil::isNotBlank).findFirst()
                             .ifPresent(error -> item.put("syncError", error));
-                .find(telegramId, sourceChatId, 0, targetChatId)
-                .map(sync -> {
-                    if (sync != null) {
-                        item.put("syncStatus", sync.status())
-                                .put("lastObservedMessageId", sync.lastObservedMessageId())
-                                .put("lastReconciledMessageId", sync.lastReconciledMessageId())
-                                .put("lastReconciledAt", sync.lastReconciledAt())
-                                .put("lastError", sync.lastError());
-                    }
                     return item;
-                });
+                })
+                .recover(failure -> Future.succeededFuture(item
+                        .put("syncStatus", "ERROR")
+                        .put("syncError", StrUtil.blankToDefault(
+                                failure.getMessage(), failure.getClass().getSimpleName()))));
     }
 
     private void handleCloudArchiveRecords(RoutingContext ctx) {
