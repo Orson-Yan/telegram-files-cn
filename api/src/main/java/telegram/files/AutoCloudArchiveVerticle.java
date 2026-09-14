@@ -142,7 +142,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         queues.clear();
         QUEUED_RECORD_AT.clear();
         busyAccounts.clear();
-        accountCooldownUntil.clear();
+        ACCOUNT_COOLDOWN_UNTIL.clear();
+        QUOTA_EXHAUSTED_JOB_DATES.clear();
         log.info("Cloud archive verticle stopped");
     }
 
