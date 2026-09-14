@@ -71,6 +71,7 @@ export function FileThumb({
           fill={fill}
           unoptimized
           priority={priority}
+          loading={priority ? "eager" : "lazy"}
           onLoad={() => setHighResLoaded(true)}
           onError={() => setHighResError(true)}
           className={cn(

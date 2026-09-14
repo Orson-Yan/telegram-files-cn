@@ -3,6 +3,8 @@ package telegram.files;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.convert.Convert;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.log.Log;
+import cn.hutool.log.LogFactory;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import org.drinkless.tdlib.TdApi;
@@ -12,6 +14,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class FileRecordRetriever {
+    private static final Log log = LogFactory.get();
 
     public static Future<JsonObject> getFiles(long chatId, Map<String, String> filter) {
         if (chatId == 0 && Convert.toBool(filter.get("seedOnly"), false)) {
@@ -27,8 +30,17 @@ public class FileRecordRetriever {
                         .put("size", page.v1.size());
             });
         }
+
+        boolean skipRemoteTdMessages = chatId == 0 || Convert.toBool(filter.get("offline"), false);
+
         return DataVerticle.fileRepository.getFiles(chatId, filter)
-                .compose(r -> getTdMessages(r.v1).map(r::concat))
+                .compose(r -> {
+                    if (skipRemoteTdMessages) {
+                        Map<String, TdApi.Message> emptyMap = Collections.emptyMap();
+                        return Future.succeededFuture(r.concat(emptyMap));
+                    }
+                    return getTdMessages(r.v1).map(r::concat);
+                })
                 .compose(r -> getThumbnails(r.v1).map(r::concat))
                 .compose(r -> {
                     Map<String, TdApi.Message> messageMap = r.v4;
@@ -37,7 +49,7 @@ public class FileRecordRetriever {
                             .map(fileRecord -> TelegramConverter.withSource(fileRecord.telegramId(),
                                     fileRecord,
                                     StrUtil.isBlank(fileRecord.thumbnailUniqueId()) ? null : thumbnailMap.get(fileRecord.thumbnailUniqueId()),
-                                    messageMap.get(fileRecord.uniqueId())
+                                    messageMap == null ? null : messageMap.get(fileRecord.uniqueId())
                             ))
                             .filter(Objects::nonNull)
                             .toList();
@@ -72,10 +84,15 @@ public class FileRecordRetriever {
             Map<String, TdApi.Message> combinedMessageMap = new HashMap<>();
             for (int i = 0; i < compositeFuture.size(); i++) {
                 Map<String, TdApi.Message> partialMessageMap = compositeFuture.resultAt(i);
-                combinedMessageMap.putAll(partialMessageMap);
+                if (partialMessageMap != null) {
+                    combinedMessageMap.putAll(partialMessageMap);
+                }
             }
             return combinedMessageMap;
-        }).recover(throwable -> Future.failedFuture(new RuntimeException("Failed to get Telegram message", throwable)));
+        }).recover(throwable -> {
+            log.warn("Failed to get Telegram messages, fallback to local: {}", throwable.getMessage());
+            return Future.succeededFuture(Collections.emptyMap());
+        });
     }
 
     /**
@@ -90,7 +107,7 @@ public class FileRecordRetriever {
 
         Optional<TelegramVerticle> telegramVerticleOptional = TelegramVerticles.get(telegramId);
         if (telegramVerticleOptional.isEmpty()) {
-            return Future.failedFuture("Telegram verticle not found，unable to get the message. telegramId: " + telegramId);
+            return Future.succeededFuture(Collections.emptyMap());
         }
 
         Map<Long, List<FileRecord>> groupingByChatIdMap = fileRecords.stream()
@@ -110,7 +127,11 @@ public class FileRecordRetriever {
                             .get()
                             .client
                             .execute(new TdApi.GetMessages(chatId, messageIds), true)
-                            .map(m -> m == null ? Collections.emptyMap() : createMessageMap(chatId, m.messages, records));
+                            .map(m -> m == null ? Collections.emptyMap() : createMessageMap(chatId, m.messages, records))
+                            .recover(e -> {
+                                log.warn("Failed to get TDLib messages for chat {}: {}", chatId, e.getMessage());
+                                return Future.succeededFuture(Collections.emptyMap());
+                            });
                 })
                 .collect(Collectors.toList())
         ).map(compositeFuture -> {
@@ -123,7 +144,10 @@ public class FileRecordRetriever {
                 combinedMessageMap.putAll(partialMessageMap);
             }
             return combinedMessageMap;
-        }).recover(throwable -> Future.failedFuture(new RuntimeException("Failed to get Telegram message", throwable)));
+        }).recover(throwable -> {
+            log.warn("Failed to get Telegram messages for telegramId {}, fallback: {}", telegramId, throwable.getMessage());
+            return Future.succeededFuture(Collections.emptyMap());
+        });
     }
 
     private static Map<String, TdApi.Message> createMessageMap(long chatId, TdApi.Message[] messages, List<FileRecord> records) {

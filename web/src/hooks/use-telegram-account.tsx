@@ -31,7 +31,10 @@ export const TelegramAccountProvider: React.FC<
     data: accounts,
     isLoading,
     isValidating,
-  } = useSWR<TelegramAccount[]>(`/telegrams`);
+  } = useSWR<TelegramAccount[]>(`/telegrams`, {
+    revalidateOnFocus: false,
+    dedupingInterval: 10000,
+  });
   const router = useRouter();
   const searchParams = useSearchParams();
   const routerAccountId = searchParams.get("id") ?? undefined;
@@ -87,7 +90,7 @@ export const TelegramAccountProvider: React.FC<
   return (
     <TelegramAccountContext.Provider
       value={{
-        isLoading: isLoading || isValidating,
+        isLoading: !accounts && isLoading,
         getAccounts,
         accountId,
         account,

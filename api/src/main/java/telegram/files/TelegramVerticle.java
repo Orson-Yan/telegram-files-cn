@@ -273,6 +273,9 @@ public class TelegramVerticle extends AbstractVerticle {
         return true;
     }
 
+    private volatile JsonObject cachedAccountJson;
+    private volatile long lastAccountFetchTime = 0;
+
     public Future<JsonObject> getTelegramAccount() {
         return Future.future(promise -> {
             if (!authorized) {
@@ -295,24 +298,70 @@ public class TelegramVerticle extends AbstractVerticle {
                 promise.complete(jsonObject);
                 return;
             }
-            client.execute(new TdApi.GetMe())
-                    .onSuccess(user -> {
-                        JsonObject result = new JsonObject()
-                                .put("id", Convert.toStr(user.id))
-                                .put("name", StrUtil.join(user.firstName, " ", user.lastName))
-                                .put("phoneNumber", user.phoneNumber)
-                                .put("avatar", Base64.encode((byte[]) BeanUtil.getProperty(user, "profilePhoto.minithumbnail.data")))
-                                .put("status", "active")
-                                .put("rootPath", this.rootPath)
-                                .put("isPremium", user.isPremium)
-                                .put("proxy", this.proxyName);
-                        promise.complete(result);
-                    })
-                    .onFailure(e -> {
-                        log.error("[%s] Failed to get telegram account: %s".formatted(this.getRootId(), e.getMessage()));
-                        promise.fail(e);
-                    });
+
+            // Return cached account info immediately (0ms)
+            long now = System.currentTimeMillis();
+            if (cachedAccountJson != null) {
+                promise.complete(cachedAccountJson.copy());
+                // Silently refresh in background if cache is older than 60s
+                if (now - lastAccountFetchTime > 60_000L) {
+                    refreshAccountCache();
+                }
+                return;
+            }
+
+            // No cache yet: fetch from TDLib with fallback
+            fetchAccountFromTdLib(promise);
         });
+    }
+
+    private void refreshAccountCache() {
+        if (!authorized) return;
+        client.execute(new TdApi.GetMe())
+                .onSuccess(user -> {
+                    this.cachedAccountJson = buildAccountJson(user);
+                    this.lastAccountFetchTime = System.currentTimeMillis();
+                })
+                .onFailure(e -> log.debug("[%s] Background refresh account failed: %s".formatted(this.getRootId(), e.getMessage())));
+    }
+
+    private void fetchAccountFromTdLib(Promise<JsonObject> promise) {
+        client.execute(new TdApi.GetMe())
+                .onSuccess(user -> {
+                    JsonObject result = buildAccountJson(user);
+                    this.cachedAccountJson = result;
+                    this.lastAccountFetchTime = System.currentTimeMillis();
+                    promise.complete(result.copy());
+                })
+                .onFailure(e -> {
+                    log.warn("[%s] Failed to get telegram account from TDLib, fallback to local: %s"
+                            .formatted(this.getRootId(), e.getMessage()));
+                    // Fallback to local record to avoid HTTP 500
+                    JsonObject fallback = new JsonObject()
+                            .put("id", this.telegramRecord != null ? Convert.toStr(this.telegramRecord.id()) : this.getRootId())
+                            .put("name", this.telegramRecord != null ? this.telegramRecord.firstName() : this.getRootId())
+                            .put("phoneNumber", this.telegramRecord != null ? this.telegramRecord.phoneNumber() : "")
+                            .put("avatar", "")
+                            .put("status", "active")
+                            .put("rootPath", this.rootPath)
+                            .put("isPremium", false)
+                            .put("proxy", this.proxyName);
+                    this.cachedAccountJson = fallback;
+                    this.lastAccountFetchTime = System.currentTimeMillis();
+                    promise.complete(fallback);
+                });
+    }
+
+    private JsonObject buildAccountJson(TdApi.User user) {
+        return new JsonObject()
+                .put("id", Convert.toStr(user.id))
+                .put("name", StrUtil.join(" ", user.firstName, user.lastName))
+                .put("phoneNumber", user.phoneNumber)
+                .put("avatar", Base64.encode((byte[]) BeanUtil.getProperty(user, "profilePhoto.minithumbnail.data")))
+                .put("status", "active")
+                .put("rootPath", this.rootPath)
+                .put("isPremium", user.isPremium)
+                .put("proxy", this.proxyName);
     }
 
     public Future<JsonArray> getChats(Long activatedChatId, String query, boolean archived) {
@@ -1506,6 +1555,7 @@ public class TelegramVerticle extends AbstractVerticle {
                     log.info("[%s] Account <%s> Authorization Ready".formatted(getRootId(), this.telegramRecord.firstName()));
                     reconcileDownloadStatuses();
                 }
+                refreshAccountCache();
                 sendEvent(EventPayload.build(EventPayload.TYPE_AUTHORIZATION, authorizationState));
                 telegramChats.loadMainChatList();
                 telegramChats.loadArchivedChatList();
@@ -1513,10 +1563,12 @@ public class TelegramVerticle extends AbstractVerticle {
                 break;
             case TdApi.AuthorizationStateLoggingOut.CONSTRUCTOR:
                 authorized = false;
+                cachedAccountJson = null;
                 sendEvent(EventPayload.build(EventPayload.TYPE_AUTHORIZATION, authorizationState));
                 break;
             case TdApi.AuthorizationStateClosing.CONSTRUCTOR:
                 authorized = false;
+                cachedAccountJson = null;
                 break;
             case TdApi.AuthorizationStateClosed.CONSTRUCTOR:
                 authorized = false;
