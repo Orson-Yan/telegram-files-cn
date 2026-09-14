@@ -340,7 +340,7 @@ public class TelegramVerticle extends AbstractVerticle {
                     JsonObject fallback = new JsonObject()
                             .put("id", this.telegramRecord != null ? Convert.toStr(this.telegramRecord.id()) : this.getRootId())
                             .put("name", this.telegramRecord != null ? this.telegramRecord.firstName() : this.getRootId())
-                            .put("phoneNumber", this.telegramRecord != null ? this.telegramRecord.phoneNumber() : "")
+                            .put("phoneNumber", "")
                             .put("avatar", "")
                             .put("status", "active")
                             .put("rootPath", this.rootPath)
