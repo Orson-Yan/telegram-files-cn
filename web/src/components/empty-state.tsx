@@ -267,56 +267,42 @@ function DashboardMetricsAndFeatures() {
         <h2 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
           Features & Tools
         </h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {/* 1. Downloads */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {/* 1. Cloud Archive */}
           <FeatureCard
-            icon={<Activity className="size-5 text-blue-500" />}
-            iconBg="bg-blue-500/10"
-            title="Download tasks"
-            description="Monitor live speed, queue and active files"
+            icon={<CloudUpload className="size-5 text-sky-500" />}
+            iconBg="bg-sky-500/10"
+            title="Cloud archive"
+            description="Telegram-to-Telegram server-side copying and backfilling without consuming local bandwidth or disk space."
+            onClick={() => router.push("/cloud-archive")}
+          />
+
+          {/* 2. Automations */}
+          <FeatureCard
+            icon={<Workflow className="size-5 text-violet-500" />}
+            iconBg="bg-violet-500/10"
+            title="Channel automations"
+            description="Listen for new messages, filter by extensions/size, and automatically download and organize by channel and date."
+            onClick={() => router.push("/automations")}
+          />
+
+          {/* 3. Files & Downloads */}
+          <FeatureCard
+            icon={<FolderOpen className="size-5 text-emerald-500" />}
+            iconBg="bg-emerald-500/10"
+            title="Files & Downloads"
+            description="Browse all media files, filter by channel, preview online, and inspect live download queue."
             badge={
               statistics.downloading > 0
                 ? `${statistics.downloading} active`
                 : undefined
             }
             badgeVariant="default"
-            onClick={() => router.push("/downloads")}
-          />
-
-          {/* 2. Cloud Archive */}
-          <FeatureCard
-            icon={<CloudUpload className="size-5 text-sky-500" />}
-            iconBg="bg-sky-500/10"
-            title="Cloud archive"
-            description="Archive channels and chats to cloud storage"
-            onClick={() => router.push("/cloud-archive")}
-          />
-
-          {/* 3. Local Organize */}
-          <FeatureCard
-            icon={<FolderSync className="size-5 text-amber-500" />}
-            iconBg="bg-amber-500/10"
-            title="Local organization"
-            description="Auto-sort, deduplicate & rename files"
-            onClick={() => router.push("/local-organize")}
-          />
-
-          {/* 4. Automations */}
-          <FeatureCard
-            icon={<Workflow className="size-5 text-violet-500" />}
-            iconBg="bg-violet-500/10"
-            title="Automations"
-            description="Chat listeners and download filters"
-            onClick={() => router.push("/automations")}
-          />
-
-          {/* 5. All Files */}
-          <FeatureCard
-            icon={<FolderOpen className="size-5 text-emerald-500" />}
-            iconBg="bg-emerald-500/10"
-            title="Files"
-            description="Browse, batch download and search files"
             onClick={() => router.push("/files")}
+            extraLink={{
+              text: "Download monitor",
+              onClick: () => router.push("/downloads"),
+            }}
           />
         </div>
       </section>
@@ -362,6 +348,7 @@ function FeatureCard({
   badge,
   badgeVariant = "secondary",
   onClick,
+  extraLink,
 }: {
   icon: React.ReactNode;
   iconBg: string;
@@ -370,16 +357,20 @@ function FeatureCard({
   badge?: string;
   badgeVariant?: "default" | "secondary" | "outline";
   onClick: () => void;
+  extraLink?: {
+    text: string;
+    onClick: (e: React.MouseEvent) => void;
+  };
 }) {
   return (
     <Card
       onClick={onClick}
       className="group relative cursor-pointer border-border/70 bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
     >
-      <CardContent className="flex flex-col justify-between gap-3 p-4 h-full">
+      <CardContent className="flex flex-col justify-between gap-4 p-5 h-full">
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <div className={`flex size-9 items-center justify-center rounded-lg ${iconBg}`}>
+            <div className={`flex size-10 items-center justify-center rounded-xl ${iconBg}`}>
               {icon}
             </div>
             {badge && (
@@ -388,17 +379,31 @@ function FeatureCard({
               </Badge>
             )}
           </div>
-          <h3 className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors">
+          <h3 className="font-semibold text-base text-foreground group-hover:text-primary transition-colors">
             {title}
           </h3>
-          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+          <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
             {description}
           </p>
         </div>
 
-        <div className="flex items-center pt-2 text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <span>Open feature</span>
-          <ArrowRight className="ml-1 size-3 transition-transform duration-200 group-hover:translate-x-0.5" />
+        <div className="flex items-center justify-between pt-2 text-xs">
+          <div className="flex items-center font-medium text-primary">
+            <span>Open feature</span>
+            <ArrowRight className="ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-1" />
+          </div>
+          {extraLink && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline transition-colors z-10"
+              onClick={(e) => {
+                e.stopPropagation();
+                extraLink.onClick(e);
+              }}
+            >
+              {extraLink.text}
+            </button>
+          )}
         </div>
       </CardContent>
     </Card>

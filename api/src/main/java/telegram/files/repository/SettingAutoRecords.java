@@ -110,6 +110,10 @@ public class SettingAutoRecords {
 
         public String filterExpr;
 
+        public String allowedExtensions;
+
+        public String deniedExtensions;
+
         public long minSize;
 
         public long maxSize;

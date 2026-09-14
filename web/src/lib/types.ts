@@ -43,6 +43,7 @@ export type TelegramFile = {
   uniqueId: string;
   messageId: number;
   chatId: number;
+  mediaAlbumId?: number | string;
   fileName: string;
   type: FileType;
   mimeType?: string;
@@ -255,6 +256,8 @@ export type AutoDownloadRule = {
   downloadHistory: boolean;
   downloadCommentFiles: boolean;
   filterExpr: string;
+  allowedExtensions?: string;
+  deniedExtensions?: string;
   minSize?: number;
   maxSize?: number;
 };

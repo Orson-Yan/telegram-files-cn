@@ -163,11 +163,11 @@ export function localStorageProvider() {
   return map;
 }
 
-export async function POST(api: string, data?: any): Promise<any> {
-  return await request(api, {
+export async function POST<T = any>(api: string, data?: any): Promise<T> {
+  return (await request(api, {
     method: "POST",
     body: JSON.stringify(data),
-  });
+  })) as T;
 }
 
 export type TelegramApiArg = {

@@ -3,13 +3,15 @@ import {
   CircleStop,
   Download,
   FileX,
+  FolderSync,
+  HardDrive,
   LoaderCircle,
   Pause,
   RadioTower,
   SquareX,
   StepForward,
 } from "lucide-react";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import useSWRMutation from "swr/mutation";
 import { POST, request } from "@/lib/api";
 import { type TelegramFile } from "@/lib/types";
@@ -119,6 +121,9 @@ export default function FileBatchControl({
     : [];
   const loadedFiles = selectedFileObjects.filter(
     (file) => file.loaded && file.source !== "SEED",
+  );
+  const transferableFiles = selectedFileObjects.filter(
+    (file) => file.downloadStatus === "completed",
   );
 
   const controlButtons = [
@@ -254,6 +259,12 @@ export default function FileBatchControl({
             {sharableFiles.length > 0 && (
               <BatchShareButton
                 sharableFiles={sharableFiles}
+                setSelectedFiles={setSelectedFiles}
+              />
+            )}
+            {transferableFiles.length > 0 && (
+              <BatchArchiveButton
+                transferableFiles={transferableFiles}
                 setSelectedFiles={setSelectedFiles}
               />
             )}
@@ -650,6 +661,149 @@ function BatchShareButton({
                 <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
               )}
               Share
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function BatchArchiveButton({
+  transferableFiles,
+  setSelectedFiles,
+}: {
+  transferableFiles: TelegramFile[];
+  setSelectedFiles: (files: Set<number>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [destination, setDestination] = useState("");
+  const [transferMode, setTransferMode] = useState<"MOVE" | "HARDLINK" | "COPY">("HARDLINK");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const savedDest = localStorage.getItem("tf:last_archive_destination");
+    if (savedDest) {
+      setDestination(savedDest);
+    }
+  }, []);
+
+  const handleArchive = async () => {
+    if (!destination.trim()) {
+      toast({
+        title: "Target path required",
+        description: "Please specify the destination directory on the server.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      localStorage.setItem("tf:last_archive_destination", destination.trim());
+      const res = await POST<{ transferredCount: number }>("/files/transfer-multiple", {
+        files: transferableFiles.map((f) => ({
+          telegramId: f.telegramId,
+          uniqueId: f.uniqueId,
+          fileId: f.id,
+        })),
+        destination: destination.trim(),
+        transferMode,
+        transferPolicy: "DIRECT",
+        duplicationPolicy: "OVERWRITE",
+      });
+
+      toast({
+        title: "Archive Completed",
+        description: `Successfully archived ${res.transferredCount ?? transferableFiles.length} files to ${destination.trim()}`,
+      });
+      setSelectedFiles(new Set());
+      setOpen(false);
+    } catch (e: any) {
+      toast({
+        title: "Archive Failed",
+        description: e?.message || "Failed to transfer files",
+        variant: "error",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <TooltipWrapper content={`Archive ${transferableFiles.length} downloaded files to NAS/local storage`}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 hover:text-sky-700 dark:text-sky-400"
+          onClick={() => setOpen(true)}
+        >
+          <FolderSync className="mr-1.5 size-4" />
+          Archive to NAS ({transferableFiles.length})
+        </Button>
+      </TooltipWrapper>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HardDrive className="size-5 text-sky-500" />
+              <span>Archive to NAS / Local Storage</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-4 py-2">
+            <p className="text-xs text-muted-foreground">
+              Archive {transferableFiles.length} selected files to a target directory on your TG File server or NAS mount.
+            </p>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Destination Folder Path
+              </label>
+              <input
+                type="text"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="/nas/media/downloads or D:\media"
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+              />
+              <span className="text-[11px] text-muted-foreground">
+                Absolute path on the server or NAS mount point.
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-foreground">
+                Transfer Mode
+              </label>
+              <select
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={transferMode}
+                onChange={(e) => setTransferMode(e.target.value as any)}
+              >
+                <option value="HARDLINK">Hardlink (硬链接：保留原文件，不占额外空间)</option>
+                <option value="MOVE">Move (移动原文件至目标目录)</option>
+                <option value="COPY">Copy (复制文件副本)</option>
+              </select>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <DialogClose asChild>
+              <Button variant="outline" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              className="bg-sky-600 text-white hover:bg-sky-700"
+              onClick={handleArchive}
+              disabled={submitting}
+            >
+              {submitting && <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />}
+              Start Archiving
             </Button>
           </DialogFooter>
         </DialogContent>

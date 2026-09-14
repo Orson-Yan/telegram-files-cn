@@ -276,6 +276,7 @@ public class HttpVerticle extends AbstractVerticle {
         router.post("/files/set-upload-limit-multiple").handler(this::handleFileSetUploadLimitMultiple);
         router.post("/files/remove-multiple").handler(this::handleFileRemoveMultiple);
         router.post("/files/update-tags").handler(this::handleFileTagsUpdateMultiple);
+        router.post("/files/transfer-multiple").handler(this::handleFileTransferMultiple);
         router.post("/file/:uniqueId/update-tags").handler(this::handleFileTagsUpdate);
 
         router.route()
@@ -1945,6 +1946,94 @@ public class HttpVerticle extends AbstractVerticle {
             }
             return DataVerticle.fileRepository.updateTags(uniqueId, tags);
         });
+    }
+
+    private void handleFileTransferMultiple(RoutingContext ctx) {
+        JsonObject jsonObject = ctx.body().asJsonObject();
+        if (jsonObject == null) {
+            ctx.fail(400);
+            return;
+        }
+        JsonArray files = jsonObject.getJsonArray("files");
+        String destination = jsonObject.getString("destination");
+        if (CollUtil.isEmpty(files) || StrUtil.isBlank(destination)) {
+            ctx.response().setStatusCode(400).end(JsonObject.of("error", "Destination and files are required").encode());
+            return;
+        }
+
+        String modeStr = jsonObject.getString("transferMode", "MOVE");
+        SettingAutoRecords.TransferMode transferMode;
+        try {
+            transferMode = SettingAutoRecords.TransferMode.valueOf(modeStr);
+        } catch (Exception e) {
+            transferMode = SettingAutoRecords.TransferMode.MOVE;
+        }
+
+        String policyStr = jsonObject.getString("transferPolicy", "DIRECT");
+        Transfer.TransferPolicy transferPolicy;
+        try {
+            transferPolicy = Transfer.TransferPolicy.valueOf(policyStr);
+        } catch (Exception e) {
+            transferPolicy = Transfer.TransferPolicy.DIRECT;
+        }
+
+        String dupStr = jsonObject.getString("duplicationPolicy", "OVERWRITE");
+        Transfer.DuplicationPolicy duplicationPolicy;
+        try {
+            duplicationPolicy = Transfer.DuplicationPolicy.valueOf(dupStr);
+        } catch (Exception e) {
+            duplicationPolicy = Transfer.DuplicationPolicy.OVERWRITE;
+        }
+
+        boolean useCaptionName = jsonObject.getBoolean("useCaptionName", false);
+
+        SettingAutoRecords.TransferRule rule = new SettingAutoRecords.TransferRule();
+        rule.destination = destination;
+        rule.transferMode = transferMode;
+        rule.transferPolicy = transferPolicy;
+        rule.duplicationPolicy = duplicationPolicy;
+        rule.useCaptionName = useCaptionName;
+        rule.extra = jsonObject.getJsonObject("extra", new JsonObject());
+
+        List<String> uniqueIds = files.stream()
+                .map(f -> ((JsonObject) f).getString("uniqueId"))
+                .filter(StrUtil::isNotBlank)
+                .toList();
+
+        if (uniqueIds.isEmpty()) {
+            ctx.json(JsonObject.of("transferredCount", 0));
+            return;
+        }
+
+        Transfer transfer = Transfer.create(rule);
+        transfer.transferStatusUpdated = updated -> {
+            DataVerticle.fileRepository.updateTransferStatus(
+                    updated.fileRecord().uniqueId(),
+                    updated.transferStatus(),
+                    updated.localPath()
+            );
+        };
+
+        DataVerticle.fileRepository.getFilesByUniqueId(uniqueIds)
+                .onSuccess(recordsMap -> {
+                    int count = 0;
+                    for (FileRecord record : recordsMap.values()) {
+                        if (record.isDownloadStatus(FileRecord.DownloadStatus.completed)
+                                && StrUtil.isNotBlank(record.localPath())) {
+                            try {
+                                transfer.transfer(record);
+                                count++;
+                            } catch (Exception e) {
+                                log.warn("Failed to transfer file {}: {}", record.uniqueId(), e.getMessage());
+                            }
+                        }
+                    }
+                    ctx.json(JsonObject.of("transferredCount", count));
+                })
+                .onFailure(r -> {
+                    log.error("Failed to query files for transfer", r);
+                    ctx.fail(500);
+                });
     }
 
     private void handleFileMultiple(RoutingContext ctx, Function2<TelegramVerticle, JsonObject, Future<?>> handler) {

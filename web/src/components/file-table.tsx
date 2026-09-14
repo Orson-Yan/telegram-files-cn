@@ -8,7 +8,9 @@ import React, {
 } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { SquareChevronLeft, WandSparkles } from "lucide-react";
+import { LayoutGrid, LayoutList, SquareChevronLeft, WandSparkles } from "lucide-react";
+import FilesSidebar from "@/components/files-sidebar";
+import FileGallery from "@/components/file-gallery";
 import { useFiles } from "@/hooks/use-files";
 import {
   getRowHeightPX,
@@ -112,6 +114,11 @@ export function FileTable({
   link,
 }: FileTableProps) {
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+  const [viewMode, setViewMode] = useLocalStorage<"table" | "gallery">(
+    "tf:file_view_mode",
+    "gallery",
+  );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const tableParentRef = useRef<HTMLDivElement>(null);
   const shareEnabled = useShareEnabled();
   const defaultColumns = useMemo(() => {
@@ -144,6 +151,7 @@ export function FileTable({
     size,
     files,
     handleLoadMore,
+    hasMore,
     loadedCount,
     totalCount,
   } = useFilesProps;
@@ -297,23 +305,58 @@ export function FileTable({
             </>
           )}
         </div>
-        <div className="hidden items-center gap-4 md:flex">
+        <div className="hidden items-center gap-3 md:flex">
           <span className="text-sm text-muted-foreground">
             Loaded {loadedCount}
             {totalCount === undefined ? "" : ` / ${totalCount}`}
           </span>
-          <TableColumnFilter
-            columns={columns}
-            onColumnConfigChange={(nextColumns) => {
-              setColumnPreferences(
-                nextColumns.map(({ id, isVisible }) => ({ id, isVisible })),
-              );
-            }}
-          />
-          <TableRowHeightSwitch
-            rowHeight={rowHeight}
-            setRowHeightAction={setRowHeight}
-          />
+
+          {/* View Switcher */}
+          <div className="flex items-center rounded-lg border bg-muted/40 p-0.5 shadow-sm">
+            <Button
+              variant={viewMode === "table" ? "secondary" : "ghost"}
+              size="sm"
+              className={cn(
+                "h-7 gap-1.5 px-2 text-xs font-medium",
+                viewMode === "table" && "bg-background shadow-xs",
+              )}
+              onClick={() => setViewMode("table")}
+              title="Table view"
+            >
+              <LayoutList className="size-3.5" />
+              <span>Table</span>
+            </Button>
+            <Button
+              variant={viewMode === "gallery" ? "secondary" : "ghost"}
+              size="sm"
+              className={cn(
+                "h-7 gap-1.5 px-2 text-xs font-medium",
+                viewMode === "gallery" && "bg-background shadow-xs",
+              )}
+              onClick={() => setViewMode("gallery")}
+              title="Post & Album Gallery view"
+            >
+              <LayoutGrid className="size-3.5" />
+              <span>Gallery</span>
+            </Button>
+          </div>
+
+          {viewMode === "table" && (
+            <>
+              <TableColumnFilter
+                columns={columns}
+                onColumnConfigChange={(nextColumns) => {
+                  setColumnPreferences(
+                    nextColumns.map(({ id, isVisible }) => ({ id, isVisible })),
+                  );
+                }}
+              />
+              <TableRowHeightSwitch
+                rowHeight={rowHeight}
+                setRowHeightAction={setRowHeight}
+              />
+            </>
+          )}
         </div>
       </div>
       {currentViewFile && (
@@ -328,101 +371,140 @@ export function FileTable({
           {...useFilesProps}
         />
       )}
-      <div className="h-[calc(100vh-13rem)] space-y-4 overflow-hidden">
-        <FileBatchControl
-          files={files}
-          selectedFiles={selectedFiles}
-          setSelectedFiles={setSelectedFiles}
-          updateField={updateField}
-        />
+      <div className="flex gap-4">
+        {/* Left Navigation Sidebar */}
+        <div className="hidden md:block">
+          <FilesSidebar
+            filters={filters}
+            onFiltersChange={handleFilterChange}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
+          />
+        </div>
 
-        <div
-          className="no-scrollbar relative h-full overflow-auto rounded-md border"
-          ref={tableParentRef}
-          onScroll={maybeLoadMore}
-        >
-          <div className="sticky top-0 z-20 flex h-10 items-center border-b bg-background/90 text-sm text-muted-foreground backdrop-blur-sm">
-            <div className="w-[30px] text-center">
-              <Checkbox
-                checked={selectedFiles.size === files.length}
-                onCheckedChange={handleSelectAll}
+        {/* Content Panel */}
+        <div className="h-[calc(100vh-13rem)] min-w-0 flex-1 space-y-4 overflow-hidden">
+          <FileBatchControl
+            files={files}
+            selectedFiles={selectedFiles}
+            setSelectedFiles={setSelectedFiles}
+            updateField={updateField}
+          />
+
+          {viewMode === "gallery" ? (
+            <div
+              className="no-scrollbar h-full overflow-auto rounded-md p-1"
+              ref={tableParentRef}
+              onScroll={maybeLoadMore}
+            >
+              <FileGallery
+                files={files}
+                selectedFiles={selectedFiles}
+                onSelectFile={handleSelectFile}
+                onSelectGroup={(ids, select) => {
+                  const next = new Set(selectedFiles);
+                  ids.forEach((id) => (select ? next.add(id) : next.delete(id)));
+                  setSelectedFiles(next);
+                }}
+                onFileClick={(file) => {
+                  setCurrentViewFile(file);
+                  setViewerOpen(true);
+                }}
+                isLoading={isLoading}
+                hasMore={hasMore}
+                onLoadMore={handleLoadMore}
               />
             </div>
-            {columns.map((col) =>
-              col.isVisible ? (
-                <div
-                  key={col.id}
-                  suppressHydrationWarning
-                  className={cn(
-                    col.className ?? "",
-                    col.id === "content" ? dynamicClass.contentCell : "",
-                  )}
-                >
-                  {col.tooltip ? (
-                    <TooltipWrapper content={col.tooltip}>
-                      <span className="cursor-help border-b border-dotted border-muted-foreground/60">
-                        {col.label}
-                      </span>
-                    </TooltipWrapper>
-                  ) : (
-                    col.label
-                  )}
+          ) : (
+            <div
+              className="no-scrollbar relative h-full overflow-auto rounded-md border"
+              ref={tableParentRef}
+              onScroll={maybeLoadMore}
+            >
+              <div className="sticky top-0 z-20 flex h-10 items-center border-b bg-background/90 text-sm text-muted-foreground backdrop-blur-sm">
+                <div className="w-[30px] text-center">
+                  <Checkbox
+                    checked={selectedFiles.size === files.length}
+                    onCheckedChange={handleSelectAll}
+                  />
                 </div>
-              ) : null,
-            )}
-          </div>
-          {size === 1 && isLoading && (
-            <div className="sticky left-1/2 top-0 z-10 flex h-full w-full items-center justify-center bg-accent">
-              <DotmTriangle2
-                size={32}
-                dotSize={4}
-                speed={1.4}
-                opacityBase={0.1}
-                opacityMid={0.4}
-                opacityPeak={0.95}
-                ariaLabel="Loading files"
-              />
+                {columns.map((col) =>
+                  col.isVisible ? (
+                    <div
+                      key={col.id}
+                      suppressHydrationWarning
+                      className={cn(
+                        col.className ?? "",
+                        col.id === "content" ? dynamicClass.contentCell : "",
+                      )}
+                    >
+                      {col.tooltip ? (
+                        <TooltipWrapper content={col.tooltip}>
+                          <span className="cursor-help border-b border-dotted border-muted-foreground/60">
+                            {col.label}
+                          </span>
+                        </TooltipWrapper>
+                      ) : (
+                        col.label
+                      )}
+                    </div>
+                  ) : null,
+                )}
+              </div>
+              {size === 1 && isLoading && (
+                <div className="sticky left-1/2 top-0 z-10 flex h-full w-full items-center justify-center bg-accent">
+                  <DotmTriangle2
+                    size={32}
+                    dotSize={4}
+                    speed={1.4}
+                    opacityBase={0.1}
+                    opacityMid={0.4}
+                    opacityPeak={0.95}
+                    ariaLabel="Loading files"
+                  />
+                </div>
+              )}
+              <div className="h-full">
+                <div
+                  className={cn("relative w-full")}
+                  style={{ height: `${rowVirtual.getTotalSize()}px` }}
+                >
+                  {files.length !== 0 &&
+                    virtualItems.map((virtualRow) => {
+                      const file = files[virtualRow.index]!;
+                      return (
+                        <FileRow
+                          index={virtualRow.index}
+                          className={cn(
+                            "absolute left-0 top-0 flex w-full items-center",
+                          )}
+                          style={{
+                            height: `${virtualRow.size}px`,
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                          ref={rowVirtual.measureElement}
+                          file={file}
+                          updateField={updateField}
+                          checked={selectedFiles.has(file.id)}
+                          onCheckedChange={() => handleSelectFile(file.id)}
+                          onFileClick={() => {
+                            setCurrentViewFile(file);
+                            setViewerOpen(true);
+                          }}
+                          properties={{
+                            rowHeight: rowHeight,
+                            dynamicClass,
+                            columns,
+                          }}
+                          key={`${file.messageId}-${file.uniqueId}-${virtualRow.index}`}
+                        />
+                      );
+                    })}
+                </div>
+                {!isLoading && files.length === 0 && <FileNotFount />}
+              </div>
             </div>
           )}
-          <div className="h-full">
-            <div
-              className={cn("relative w-full")}
-              style={{ height: `${rowVirtual.getTotalSize()}px` }}
-            >
-              {files.length !== 0 &&
-                virtualItems.map((virtualRow) => {
-                  const file = files[virtualRow.index]!;
-                  return (
-                    <FileRow
-                      index={virtualRow.index}
-                      className={cn(
-                        "absolute left-0 top-0 flex w-full items-center",
-                      )}
-                      style={{
-                        height: `${virtualRow.size}px`,
-                        transform: `translateY(${virtualRow.start}px)`,
-                      }}
-                      ref={rowVirtual.measureElement}
-                      file={file}
-                      updateField={updateField}
-                      checked={selectedFiles.has(file.id)}
-                      onCheckedChange={() => handleSelectFile(file.id)}
-                      onFileClick={() => {
-                        setCurrentViewFile(file);
-                        setViewerOpen(true);
-                      }}
-                      properties={{
-                        rowHeight: rowHeight,
-                        dynamicClass,
-                        columns,
-                      }}
-                      key={`${file.messageId}-${file.uniqueId}-${virtualRow.index}`}
-                    />
-                  );
-                })}
-            </div>
-            {!isLoading && files.length === 0 && <FileNotFount />}
-          </div>
         </div>
       </div>
     </>

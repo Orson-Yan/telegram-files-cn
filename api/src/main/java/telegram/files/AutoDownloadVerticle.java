@@ -82,6 +82,9 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                                     log.debug("Auto download time limited! Skip scan history.");
                                     return;
                                 }
+                                if (!isDiskSpaceSufficient()) {
+                                    return;
+                                }
 
                                 autoRecords.getDownloadEnabledItems()
                                         .stream()
@@ -108,6 +111,9 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                             _ -> {
                                 if (!isDownloadTime()) {
                                     log.debug("Auto download time limited! Skip download.");
+                                    return;
+                                }
+                                if (!isDiskSpaceSufficient()) {
                                     return;
                                 }
                                 waitingDownloadMessages.keySet().forEach(this::download);
@@ -287,6 +293,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                                 .parallel()
                                 .filter(predicate)
                                 .filter(message -> matchMessageSize(message, params.rule))
+                                .filter(message -> matchExtension(message, params.rule))
                                 .filter(message -> {
                                     String uniqueId = TdApiHelp.getFileUniqueId(message);
                                     if (!existFiles.containsKey(uniqueId)) {
@@ -341,6 +348,29 @@ public class AutoDownloadVerticle extends AbstractVerticle {
             }
         }
         return new Tuple3<>(query, fileTypes, filterExpr);
+    }
+
+    private static final long DEFAULT_MIN_FREE_SPACE_BYTES = 5L * 1024 * 1024 * 1024; // 5GB safety watermark
+
+    private boolean isDiskSpaceSufficient() {
+        if (StrUtil.isBlank(Config.APP_ROOT)) {
+            return true;
+        }
+        try {
+            java.io.File rootFile = new java.io.File(Config.APP_ROOT);
+            if (!rootFile.exists()) {
+                return true;
+            }
+            long usableSpace = rootFile.getUsableSpace();
+            if (usableSpace > 0 && usableSpace < DEFAULT_MIN_FREE_SPACE_BYTES) {
+                log.warn("Disk space critical! Usable space: {} MB < 5120 MB. Auto download paused.",
+                        usableSpace / (1024 * 1024));
+                return false;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to check disk space: {}", e.getMessage());
+        }
+        return true;
     }
 
     private boolean isDownloadTime() {
@@ -692,7 +722,54 @@ public class AutoDownloadVerticle extends AbstractVerticle {
             if (!matchMessageSize(message, rule)) {
                 return false;
             }
+            if (!matchExtension(message, rule)) {
+                return false;
+            }
         }
+        return true;
+    }
+
+    static boolean matchExtension(TdApi.Message message, SettingAutoRecords.DownloadRule rule) {
+        if (rule == null) {
+            return true;
+        }
+        boolean hasAllowed = StrUtil.isNotBlank(rule.allowedExtensions);
+        boolean hasDenied = StrUtil.isNotBlank(rule.deniedExtensions);
+        if (!hasAllowed && !hasDenied) {
+            return true;
+        }
+
+        var fileOpt = TdApiHelp.getFileHandler(message);
+        if (fileOpt.isEmpty()) {
+            return !hasAllowed;
+        }
+
+        var fileRecord = fileOpt.get().convertFileRecord(0);
+        String name = fileRecord.fileName();
+        String ext = (StrUtil.isNotBlank(name) && name.contains("."))
+                ? name.substring(name.lastIndexOf(".") + 1).toLowerCase(java.util.Locale.ROOT).trim()
+                : "";
+
+        if (hasDenied) {
+            boolean inDenied = Arrays.stream(rule.deniedExtensions.split("[,;\\s]+"))
+                    .map(e -> e == null ? "" : e.trim().toLowerCase(java.util.Locale.ROOT).replaceFirst("^\\.", ""))
+                    .filter(StrUtil::isNotBlank)
+                    .anyMatch(e -> e.equalsIgnoreCase(ext));
+            if (inDenied) {
+                return false;
+            }
+        }
+
+        if (hasAllowed) {
+            boolean inAllowed = Arrays.stream(rule.allowedExtensions.split("[,;\\s]+"))
+                    .map(e -> e == null ? "" : e.trim().toLowerCase(java.util.Locale.ROOT).replaceFirst("^\\.", ""))
+                    .filter(StrUtil::isNotBlank)
+                    .anyMatch(e -> e.equalsIgnoreCase(ext));
+            if (!inAllowed) {
+                return false;
+            }
+        }
+
         return true;
     }
 }

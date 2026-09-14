@@ -198,8 +198,8 @@ export default function AutomationForm({
       </AutomationToggleSection>
       <AutomationToggleSection
         id="enable-transfer"
-        title="Enable Transfer"
-        description="Move downloaded files to a destination folder automatically."
+        title="Enable Auto Organize & Transfer"
+        description="Automatically organize and transfer downloaded files to destination folders."
         checked={auto.transfer.enabled}
         icon={<FolderSync />}
         onCheckedChange={(checked) => {
@@ -216,7 +216,7 @@ export default function AutomationForm({
           <>
             <HintPanel>
               <HintLine>
-                Downloaded files will be transferred to the specified location.
+                Newly downloaded files will be automatically sorted and transferred according to rules.
               </HintLine>
             </HintPanel>
             <TransferRule
@@ -358,6 +358,45 @@ function DownloadRule({ value, onChange }: DownloadRuleProps) {
                     No file types selected
                   </span>
                 )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 rounded-md border bg-background p-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="allowed-extensions">Extension Whitelist (Allowed)</Label>
+                <Input
+                  id="allowed-extensions"
+                  type="text"
+                  placeholder="e.g. mp4, mkv, pdf (comma separated)"
+                  value={value.allowedExtensions || ""}
+                  onChange={(e) =>
+                    onChange({
+                      ...value,
+                      allowedExtensions: e.target.value,
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Only download files with these extensions (leave empty to allow all).
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="denied-extensions">Extension Blacklist (Excluded)</Label>
+                <Input
+                  id="denied-extensions"
+                  type="text"
+                  placeholder="e.g. apk, exe, zip (comma separated)"
+                  value={value.deniedExtensions || ""}
+                  onChange={(e) =>
+                    onChange({
+                      ...value,
+                      deniedExtensions: e.target.value,
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Skip files with these extensions even if matched above.
+                </p>
               </div>
             </div>
 
@@ -569,7 +608,7 @@ function TransferRule({ value, onChange }: TransferRuleProps) {
 
             <div className="rounded-md border bg-background p-4">
               <div className="flex items-center justify-between">
-                <Label htmlFor="transfer-history">Transfer History</Label>
+                <Label htmlFor="transfer-history">Organize Historical Downloaded Files</Label>
                 <Switch
                   id="transfer-history"
                   checked={value.transferHistory}
@@ -579,8 +618,7 @@ function TransferRule({ value, onChange }: TransferRuleProps) {
                 />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Transfer files that are already downloaded to the specified
-                location.
+                Scan and organize existing downloaded files from this channel in batches.
               </p>
             </div>
 
