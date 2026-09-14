@@ -480,11 +480,25 @@ public class TelegramVerticle extends AbstractVerticle {
         return DataVerticle.fileRepository
                 .getByUniqueId(uniqueId)
                 .compose(fileRecord -> {
-                    if (fileRecord == null || !fileRecord.isDownloadStatus(FileRecord.DownloadStatus.completed)
-                        || !FileUtil.exist(fileRecord.localPath())) {
-                        return Future.failedFuture("File not found or not downloaded");
+                    if (fileRecord == null) {
+                        return Future.failedFuture("File not found");
                     }
-                    return Future.succeededFuture(Tuple.tuple(fileRecord.localPath(), fileRecord.mimeType()));
+                    if (StrUtil.isNotBlank(fileRecord.localPath()) && FileUtil.exist(fileRecord.localPath())) {
+                        return Future.succeededFuture(Tuple.tuple(fileRecord.localPath(), fileRecord.mimeType()));
+                    }
+                    // If it is a thumbnail or photo, fetch on-demand from TDLib
+                    if ("thumbnail".equals(fileRecord.type()) || "photo".equals(fileRecord.type())) {
+                        return client.execute(new TdApi.DownloadFile(fileRecord.id(), 32, 0, 0, false))
+                                .compose(file -> {
+                                    if (file.local != null && StrUtil.isNotBlank(file.local.path) && FileUtil.exist(file.local.path)) {
+                                        DataVerticle.fileRepository.updateDownloadStatus(file.id, file.local.path,
+                                                FileRecord.DownloadStatus.completed.name(), file.local.downloadedSize, System.currentTimeMillis());
+                                        return Future.succeededFuture(Tuple.tuple(file.local.path, fileRecord.mimeType()));
+                                    }
+                                    return Future.failedFuture("Thumbnail download pending");
+                                });
+                    }
+                    return Future.failedFuture("File not found or not downloaded");
                 });
     }
 

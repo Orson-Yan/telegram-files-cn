@@ -311,17 +311,18 @@ public class TelegramConverter {
         fileObject.put("loaded", loaded);
         fileObject.put("formatDate", DateUtil.date(fileObject.getLong("date") * 1000).toString());
         fileObject.put("extra", extra);
-        fileObject.put("originalDeleted", message == null);
+        fileObject.put("originalDeleted", false);
 
         if (message != null) {
             fileObject.put("hasReply", Convert.toInt(BeanUtil.getProperty(message, "interactionInfo.replyInfo.replyCount"), 0) > 0);
         }
 
-        // Put thumbnail information
-        if (thumbnailRecord != null && thumbnailRecord.isDownloadStatus(FileRecord.DownloadStatus.completed)) {
+        // Put thumbnail information (available for photos and video covers)
+        if (thumbnailRecord != null) {
             fileObject.put("thumbnailFile", JsonObject.of(
                     "uniqueId", thumbnailRecord.uniqueId(),
                     "mimeType", thumbnailRecord.mimeType(),
+                    "downloadStatus", thumbnailRecord.downloadStatus(),
                     "extra", StrUtil.isBlank(thumbnailRecord.extra()) ? null : Json.decodeValue(thumbnailRecord.extra())
             ));
         }

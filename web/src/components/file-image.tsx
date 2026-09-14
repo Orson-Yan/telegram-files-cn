@@ -157,15 +157,13 @@ export default function FilePreview({
     }
   }
 
-  // 含义已下载的缩略图
-  if (
-    file.thumbnailFile?.mimeType.startsWith("image/") &&
-    file.thumbnailFile?.extra?.width &&
-    file.thumbnailFile.extra?.height
-  ) {
+  // 含有缩略图
+  if (file.thumbnailFile?.uniqueId) {
+    const width = file.thumbnailFile?.extra?.width || 600;
+    const height = file.thumbnailFile?.extra?.height || 600;
     return renderImage(
-      file.thumbnailFile.extra.width,
-      file.thumbnailFile.extra.height,
+      width,
+      height,
       file.thumbnailFile.uniqueId,
     );
   }

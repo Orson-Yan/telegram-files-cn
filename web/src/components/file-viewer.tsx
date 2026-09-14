@@ -73,8 +73,7 @@ export default function FileViewer({
     }),
   };
 
-  const isPlayableVideo =
-    file?.type === "video" && file.downloadStatus === "completed";
+  const isPlayableVideo = file?.type === "video";
   const showPreviewChrome =
     !isPlayableVideo || showVideoChrome || isVideoChromeHovered;
 

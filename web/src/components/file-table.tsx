@@ -193,7 +193,7 @@ export function FileTable({
 
     const distanceFromBottom =
       element.scrollHeight - element.scrollTop - element.clientHeight;
-    const preloadDistance = Math.max(getRowHeightPX(rowHeight) * 6, 480);
+    const preloadDistance = Math.max(getRowHeightPX(rowHeight) * 8, 1200);
     if (distanceFromBottom <= preloadDistance) {
       void handleLoadMore();
     }
@@ -210,7 +210,7 @@ export function FileTable({
       return;
     }
 
-    if (lastItem.index >= files.length - 8) {
+    if (lastItem.index >= files.length - 16) {
       void handleLoadMore();
     }
   }, [files.length, handleLoadMore, virtualItems]);

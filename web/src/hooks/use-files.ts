@@ -94,6 +94,7 @@ export function useFiles(
       ...(filters.sizeUnit && { sizeUnit: filters.sizeUnit }),
       ...(filters.sort && { sort: filters.sort }),
       ...(filters.order && { order: filters.order }),
+      limit: "60",
     });
 
     if (page === 0) {
@@ -370,7 +371,7 @@ export function useFiles(
   }, [pages]);
 
   const handleLoadMore = async () => {
-    if (isLoading || isValidating || !hasMore || error) return;
+    if (isLoading || !hasMore || error) return;
     await setSize(size + 1);
   };
 
