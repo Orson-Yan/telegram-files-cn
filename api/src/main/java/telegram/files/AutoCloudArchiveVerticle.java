@@ -16,6 +16,7 @@ import telegram.files.repository.CloudArchiveSyncState;
 import telegram.files.repository.SettingAutoRecords;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,7 +74,39 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private final Set<Long> busyAccounts = new HashSet<>();
 
-    private final Map<Long, Long> accountCooldownUntil = new HashMap<>();
+    public static final Map<Long, Long> ACCOUNT_COOLDOWN_UNTIL = new ConcurrentHashMap<>();
+
+    private static final Map<String, String> QUOTA_EXHAUSTED_JOB_DATES = new ConcurrentHashMap<>();
+
+    private static final long DRAIN_BASE_DELAY_LIVE = 1200L;
+    private static final long DRAIN_JITTER_LIVE = 800L;
+    private static final long DRAIN_BASE_DELAY_HISTORY = 2200L;
+    private static final long DRAIN_JITTER_HISTORY = 1600L;
+
+    public static Map<Long, Long> getActiveCooldowns() {
+        long now = System.currentTimeMillis();
+        Map<Long, Long> active = new HashMap<>();
+        ACCOUNT_COOLDOWN_UNTIL.forEach((telegramId, until) -> {
+            if (until > now) {
+                active.put(telegramId, until);
+            }
+        });
+        return active;
+    }
+
+    public static void clearJobQuotaExhausted(String jobId) {
+        if (jobId != null) {
+            QUOTA_EXHAUSTED_JOB_DATES.remove(jobId);
+        }
+    }
+
+    private long nextDrainDelayMillis(long telegramId) {
+        AccountQueue queue = queues.get(telegramId);
+        boolean hasLive = queue != null && !queue.live.isEmpty();
+        long base = hasLive ? DRAIN_BASE_DELAY_LIVE : DRAIN_BASE_DELAY_HISTORY;
+        long jitter = hasLive ? DRAIN_JITTER_LIVE : DRAIN_JITTER_HISTORY;
+        return base + java.util.concurrent.ThreadLocalRandom.current().nextLong(jitter + 1);
+    }
 
     private boolean scanning;
 
@@ -422,11 +455,17 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return;
         }
         historyScanning = true;
+        String today = LocalDate.now().toString();
         DataVerticle.cloudArchiveHistoryRepository.listRunnable(20)
-                .compose(jobs -> jobs.isEmpty()
-                        ? Future.succeededFuture()
-                        : processHistoryPage(jobs.get(
-                                Math.floorMod(historyJobCursor++, jobs.size()))))
+                .compose(jobs -> {
+                    List<CloudArchiveHistoryJob> activeJobs = jobs.stream()
+                            .filter(job -> !today.equals(QUOTA_EXHAUSTED_JOB_DATES.get(job.id())))
+                            .toList();
+                    return activeJobs.isEmpty()
+                            ? Future.succeededFuture()
+                            : processHistoryPage(activeJobs.get(
+                                    Math.floorMod(historyJobCursor++, activeJobs.size())));
+                })
                 .onFailure(failure -> log.error(failure, "Failed to scan cloud archive history"))
                 .onComplete(_ -> historyScanning = false);
     }
@@ -687,6 +726,17 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                 : Future.succeededFuture();
                     });
         }
+        if (job.dailyLimit() > 0) {
+            String today = LocalDate.now().toString();
+            boolean isToday = today.equals(job.dailyDate());
+            int currentDaily = isToday ? job.dailyForwardedCount() : 0;
+            if (currentDaily >= job.dailyLimit()) {
+                QUOTA_EXHAUSTED_JOB_DATES.put(job.id(), today);
+                return Future.succeededFuture();
+            } else {
+                QUOTA_EXHAUSTED_JOB_DATES.remove(job.id());
+            }
+        }
         return DataVerticle.cloudArchiveHistoryRepository.start(job.id()).compose(started -> {
             if (!started) {
                 return Future.succeededFuture();
@@ -886,13 +936,13 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     .onComplete(_ -> {
                         busyAccounts.remove(telegramId);
                         work.records.forEach(record -> QUEUED_RECORD_AT.remove(record.id()));
-                        vertx.setTimer(3_000L, _ -> drain(telegramId));
+                        vertx.setTimer(nextDrainDelayMillis(telegramId), _ -> drain(telegramId));
                     });
         } catch (Throwable t) {
             log.error(t, "Unexpected error processing cloud archive work");
             busyAccounts.remove(telegramId);
             work.records.forEach(record -> QUEUED_RECORD_AT.remove(record.id()));
-            vertx.setTimer(3_000L, _ -> drain(telegramId));
+            vertx.setTimer(nextDrainDelayMillis(telegramId), _ -> drain(telegramId));
         }
     }
 
@@ -902,12 +952,12 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         return DataVerticle.cloudArchiveRepository.cooldownUntil(first.telegramId(), now)
                 .compose(persistedCooldown -> {
                     long cooldownUntil = Math.max(persistedCooldown,
-                            accountCooldownUntil.getOrDefault(first.telegramId(), 0L));
+                            ACCOUNT_COOLDOWN_UNTIL.getOrDefault(first.telegramId(), 0L));
                     if (cooldownUntil > now) {
                         return deferAll(work.records, cooldownUntil, "TELEGRAM_WAIT",
                                 "Telegram requested a temporary account cooldown");
                     }
-                    accountCooldownUntil.remove(first.telegramId());
+                    ACCOUNT_COOLDOWN_UNTIL.remove(first.telegramId());
                     return processAfterCooldown(work, first, now);
                 });
     }
@@ -1100,7 +1150,22 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             }
             return DataVerticle.cloudArchiveRepository.complete(record.id(), targetMessageId);
         }).toList();
-        return Future.all(updates).mapEmpty();
+
+        Map<String, Integer> historyCounts = new HashMap<>();
+        for (CloudArchiveRecord record : records) {
+            long targetMessageId = targets.getOrDefault(record.sourceMessageId(), 0L);
+            if (targetMessageId != 0 && record.historyJobId() != null) {
+                historyCounts.merge(record.historyJobId(), 1, Integer::sum);
+            }
+        }
+        List<Future<Void>> historyUpdates = historyCounts.entrySet().stream()
+                .map(entry -> DataVerticle.cloudArchiveHistoryRepository.incrementDailyCount(
+                        entry.getKey(), LocalDate.now().toString(), entry.getValue()))
+                .toList();
+
+        return Future.all(updates)
+                .compose(_ -> Future.all(historyUpdates))
+                .mapEmpty();
     }
 
     private Future<Void> handleFailure(List<CloudArchiveRecord> records, Throwable failure) {
@@ -1127,7 +1192,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         boolean retryable = staleTopic || CloudArchiveService.isRetryable(failure);
         long telegramWaitMillis = CloudArchiveService.retryAfterMillis(failure);
         if (telegramWaitMillis > 0 && !records.isEmpty()) {
-            accountCooldownUntil.merge(records.getFirst().telegramId(),
+            ACCOUNT_COOLDOWN_UNTIL.merge(records.getFirst().telegramId(),
                     System.currentTimeMillis() + telegramWaitMillis, Math::max);
         }
         return failAll(records, retryable,

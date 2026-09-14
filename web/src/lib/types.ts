@@ -337,6 +337,13 @@ export type CloudArchiveStatistics = {
 export type CloudArchiveOverview = {
   statistics: CloudArchiveStatistics;
   rules: CloudArchiveRuleOverview[];
+  accountCooldowns?: Record<
+    string,
+    {
+      cooldownUntil: number;
+      remainingSeconds: number;
+    }
+  >;
 };
 
 export type CloudArchiveRecord = {
@@ -381,6 +388,9 @@ export type CloudArchiveHistoryJob = {
   scanMode: "ALL" | "LIMIT";
   stage: "DISCOVERING" | "SCANNING" | "DRAINING" | "COMPLETED";
   maxMessages: number;
+  dailyLimit: number;
+  dailyDate?: string;
+  dailyForwardedCount: number;
   fromMessageId: number;
   scannedCount: number;
   matchedCount: number;

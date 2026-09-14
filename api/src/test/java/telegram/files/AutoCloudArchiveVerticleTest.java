@@ -43,7 +43,7 @@ class AutoCloudArchiveVerticleTest {
         rule.topicMode = SettingAutoRecords.ArchiveTopicMode.PRESERVE;
         CloudArchiveHistoryJob job = new CloudArchiveHistoryJob(
                 "job-1", 7, 100, 0, 200, 0, "{}", "RUNNING",
-                "ALL", "DISCOVERING", 0, null, 0, 0, 0,
+                "ALL", "DISCOVERING", 0, 500, "2026-09-14", 0, null, 0, 0, 0,
                 0, 0, 0, 0, null, null, 1_000, 1_000);
 
         new AutoCloudArchiveVerticle().initializeHistoryTopics(telegram, job, rule)

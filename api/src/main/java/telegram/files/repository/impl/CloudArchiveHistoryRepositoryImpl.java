@@ -9,6 +9,7 @@ import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.CloudArchiveHistoryRepository;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -36,7 +37,8 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                                                  long targetTopicId,
                                                  String ruleJson,
                                                  String scanMode,
-                                                 int maxMessages) {
+                                                 int maxMessages,
+                                                 int dailyLimit) {
         return preparedQuery("""
                         SELECT id FROM telegram_archive_history_job
                         WHERE telegram_id = ? AND source_chat_id = ?
@@ -51,21 +53,53 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                     }
                     long now = clock.millis();
                     String id = UUID.randomUUID().toString();
+                    int normalizedDailyLimit = Math.max(0, dailyLimit);
+                    String today = LocalDate.now(clock).toString();
                     return preparedQuery("""
                                     INSERT INTO telegram_archive_history_job
                                         (id, telegram_id, source_chat_id, source_topic_id,
                                          target_chat_id, target_topic_id, rule_json, status, scan_mode,
-                                         stage, max_messages, from_message_id, scanned_count, matched_count,
+                                         stage, max_messages, daily_limit, daily_date, daily_forwarded_count,
+                                         from_message_id, scanned_count, matched_count,
                                          queued_count, last_error, created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'DISCOVERING', ?, 0, 0, 0, 0, NULL, ?, ?)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'DISCOVERING', ?, ?, ?, 0, 0, 0, 0, 0, NULL, ?, ?)
                                     """)
                             .execute(Tuple.of(id, telegramId, sourceChatId, sourceTopicId,
-                                    targetChatId, targetTopicId, ruleJson, scanMode, maxMessages, now, now))
+                                    targetChatId, targetTopicId, ruleJson, scanMode, maxMessages,
+                                    normalizedDailyLimit, today, now, now))
                             .map(_ -> new CloudArchiveHistoryJob(id, telegramId, sourceChatId,
                                     sourceTopicId, targetChatId, targetTopicId, ruleJson, "PENDING",
-                                    scanMode, "DISCOVERING", maxMessages, null, 0, 0, 0,
+                                    scanMode, "DISCOVERING", maxMessages, normalizedDailyLimit, today, 0,
+                                    null, 0, 0, 0,
                                     0, 0, 0, 0, null, null, now, now));
                 });
+    }
+
+    @Override
+    public Future<Void> updateDailyLimit(String id, int dailyLimit) {
+        return preparedQuery("""
+                        UPDATE telegram_archive_history_job
+                        SET daily_limit = ?, updated_at = ?
+                        WHERE id = ?
+                        """)
+                .execute(Tuple.of(Math.max(0, dailyLimit), clock.millis(), id))
+                .mapEmpty();
+    }
+
+    @Override
+    public Future<Void> incrementDailyCount(String id, String dailyDate, int count) {
+        if (count <= 0) {
+            return Future.succeededFuture();
+        }
+        return preparedQuery("""
+                        UPDATE telegram_archive_history_job
+                        SET daily_date = ?,
+                            daily_forwarded_count = CASE WHEN daily_date = ? THEN daily_forwarded_count + ? ELSE ? END,
+                            updated_at = ?
+                        WHERE id = ?
+                        """)
+                .execute(Tuple.of(dailyDate, dailyDate, count, count, clock.millis(), id))
+                .mapEmpty();
     }
 
     @Override

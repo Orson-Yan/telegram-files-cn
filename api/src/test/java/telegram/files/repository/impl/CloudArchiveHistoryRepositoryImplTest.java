@@ -55,7 +55,7 @@ class CloudArchiveHistoryRepositoryImplTest {
                                 'Invalid value of parameter from_message_id', 1, 1)
                         """).execute())
                 .compose(_ -> new CloudArchiveHistoryJob.CloudArchiveHistoryJobDefinition().migrate(
-                        pool, new Version("0.6.0"), new Version("0.7.0")))
+                        pool, new Version("0.6.0"), new Version("0.9.1")))
                 .compose(_ -> pool.query("PRAGMA table_info(telegram_archive_history_job)").execute())
                 .compose(rows -> pool.query("""
                                 SELECT status, from_message_id, scanned_count,
@@ -75,6 +75,9 @@ class CloudArchiveHistoryRepositoryImplTest {
                     assertTrue(columns.contains("topic_ids_json"));
                     assertTrue(columns.contains("current_topic_id"));
                     assertTrue(columns.contains("completion_reason"));
+                    assertTrue(columns.contains("daily_limit"));
+                    assertTrue(columns.contains("daily_date"));
+                    assertTrue(columns.contains("daily_forwarded_count"));
                     assertEquals("PENDING", broken.getString("status"));
                     assertEquals(0, ((Number) broken.getValue("from_message_id")).longValue());
                     assertEquals(0, ((Number) broken.getValue("scanned_count")).intValue());
@@ -85,8 +88,7 @@ class CloudArchiveHistoryRepositoryImplTest {
     }
 
     @Test
-    void persistsProgressAndSupportsPauseResumeAndCompletion(Vertx vertx,
-                                                             VertxTestContext context) {
+    void workflow(Vertx vertx, VertxTestContext context) {
         Pool pool = JDBCPool.pool(
                 vertx,
                 new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
@@ -96,10 +98,11 @@ class CloudArchiveHistoryRepositoryImplTest {
                 new CloudArchiveHistoryRepositoryImpl(pool, clock);
 
         pool.query(CloudArchiveHistoryJob.SCHEME).execute()
-                .compose(_ -> repository.create(7, 100, 11, 200, 12, "{}", "ALL", 0))
+                .compose(_ -> repository.create(7, 100, 11, 200, 12, "{}", "ALL", 0, 500))
                 .compose(job -> repository.start(job.id()).map(job))
                 .compose(job -> repository.initializeTopics(job.id(), "[11,22]", 2, 11).map(job))
                 .compose(job -> repository.advance(job.id(), 900, 50, 20, 18).map(job))
+                .compose(job -> repository.incrementDailyCount(job.id(), "1970-01-01", 15).map(job))
                 .compose(job -> repository.transition(job.id(), "pause").map(job))
                 .compose(job -> repository.transition(job.id(), "resume").map(job))
                 .compose(job -> repository.start(job.id()).map(job))
@@ -116,6 +119,9 @@ class CloudArchiveHistoryRepositoryImplTest {
                     assertEquals("COMPLETED", job.status());
                     assertEquals("COMPLETED", job.stage());
                     assertEquals("ALL", job.scanMode());
+                    assertEquals(500, job.dailyLimit());
+                    assertEquals(15, job.dailyForwardedCount());
+                    assertEquals("1970-01-01", job.dailyDate());
                     assertEquals(2, job.topicCount());
                     assertEquals(2, job.topicIndex());
                     assertEquals("HISTORY_END", job.completionReason());

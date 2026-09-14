@@ -234,6 +234,7 @@ public class HttpVerticle extends AbstractVerticle {
         router.get("/cloud-archive/records").handler(this::handleCloudArchiveRecords);
         router.get("/cloud-archive/history").handler(this::handleCloudArchiveHistory);
         router.post("/cloud-archive/history").handler(this::handleCloudArchiveHistoryCreate);
+        router.post("/cloud-archive/history/:jobId/daily-limit").handler(this::handleCloudArchiveHistoryDailyLimit);
         router.post("/cloud-archive/history/:jobId/:action").handler(this::handleCloudArchiveHistoryAction);
         router.post("/cloud-archive/validate").handler(this::handleCloudArchiveValidate);
         router.post("/cloud-archive/test").handler(this::handleCloudArchiveTest);
@@ -1110,9 +1111,22 @@ public class HttpVerticle extends AbstractVerticle {
                 .toList();
         Future.all(rules.stream().map(this::withCloudArchiveSync).toList())
                 .compose(enriched -> DataVerticle.cloudArchiveRepository.statistics()
-                        .map(statistics -> new JsonObject()
-                                .put("statistics", statistics)
-                                .put("rules", new JsonArray(rules))))
+                        .map(statistics -> {
+                            long now = System.currentTimeMillis();
+                            JsonObject cooldowns = new JsonObject();
+                            AutoCloudArchiveVerticle.getActiveCooldowns().forEach((telegramId, until) -> {
+                                if (until > now) {
+                                    long remainingSec = Math.max(1, (until - now) / 1000L);
+                                    cooldowns.put(String.valueOf(telegramId), new JsonObject()
+                                            .put("cooldownUntil", until)
+                                            .put("remainingSeconds", remainingSec));
+                                }
+                            });
+                            return new JsonObject()
+                                    .put("statistics", statistics)
+                                    .put("rules", new JsonArray(rules))
+                                    .put("accountCooldowns", cooldowns);
+                        }))
                 .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
     }
@@ -1160,20 +1174,28 @@ public class HttpVerticle extends AbstractVerticle {
                     states.stream().map(CloudArchiveSyncState::lastError)
                             .filter(StrUtil::isNotBlank).findFirst()
                             .ifPresent(error -> item.put("syncError", error));
+                .find(telegramId, sourceChatId, 0, targetChatId)
+                .map(sync -> {
+                    if (sync != null) {
+                        item.put("syncStatus", sync.status())
+                                .put("lastObservedMessageId", sync.lastObservedMessageId())
+                                .put("lastReconciledMessageId", sync.lastReconciledMessageId())
+                                .put("lastReconciledAt", sync.lastReconciledAt())
+                                .put("lastError", sync.lastError());
+                    }
                     return item;
-                })
-                .recover(failure -> Future.succeededFuture(item
-                        .put("syncStatus", "ERROR")
-                        .put("syncError", StrUtil.blankToDefault(
-                                failure.getMessage(), failure.getClass().getSimpleName()))));
+                });
     }
 
     private void handleCloudArchiveRecords(RoutingContext ctx) {
-        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 500));
+        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 200));
         DataVerticle.cloudArchiveRepository.listRecent(limit)
-                .compose(records -> Future.all(records.stream()
-                        .map(this::cloudArchiveRecordJson)
-                        .toList()))
+                .compose(records -> {
+                    List<Future<JsonObject>> items = records.stream()
+                            .map(this::cloudArchiveRecordJson)
+                            .toList();
+                    return Future.all(items);
+                })
                 .map(records -> {
                     List<JsonObject> items = new ArrayList<>(records.size());
                     for (int index = 0; index < records.size(); index++) {
@@ -1237,6 +1259,9 @@ public class HttpVerticle extends AbstractVerticle {
                     .put("targetChatName", target == null ? Convert.toStr(job.targetChatId()) : target.title);
         });
         return item
+                .put("dailyLimit", job.dailyLimit())
+                .put("dailyDate", job.dailyDate())
+                .put("dailyForwardedCount", job.dailyForwardedCount())
                 .put("sourceChatName", item.getString("sourceChatName", Convert.toStr(job.sourceChatId())))
                 .put("targetChatName", item.getString("targetChatName", Convert.toStr(job.targetChatId())));
     }
@@ -1252,6 +1277,7 @@ public class HttpVerticle extends AbstractVerticle {
         String scanMode = "ALL".equalsIgnoreCase(body.getString("scanMode")) ? "ALL" : "LIMIT";
         int maxMessages = "ALL".equals(scanMode) ? 0
                 : Math.max(1, Math.min(Convert.toInt(body.getValue("maxMessages"), 1000), 100_000));
+        int dailyLimit = Math.max(0, Convert.toInt(body.getValue("dailyLimit"), 500));
         SettingAutoRecords.Automation automation = AutomationsHolder.INSTANCE.autoRecords()
                 .getItem(telegramId, sourceChatId);
         if (automation == null || automation.archive == null || !automation.archive.enabled
@@ -1270,7 +1296,8 @@ public class HttpVerticle extends AbstractVerticle {
                         rule.targetTopicId,
                         Json.encode(rule),
                         scanMode,
-                        maxMessages)
+                        maxMessages,
+                        dailyLimit)
                 .map(this::cloudArchiveHistoryJson)
                 .onSuccess(ctx::json)
                 .onFailure(failure -> {
@@ -1283,12 +1310,31 @@ public class HttpVerticle extends AbstractVerticle {
                 });
     }
 
+    private void handleCloudArchiveHistoryDailyLimit(RoutingContext ctx) {
+        String jobId = ctx.pathParam("jobId");
+        JsonObject body = ctx.body().asJsonObject();
+        if (StrUtil.isBlank(jobId) || body == null) {
+            ctx.fail(400);
+            return;
+        }
+        int dailyLimit = Math.max(0, Convert.toInt(body.getValue("dailyLimit"), 500));
+        DataVerticle.cloudArchiveHistoryRepository.updateDailyLimit(jobId, dailyLimit)
+                .onSuccess(_ -> {
+                    AutoCloudArchiveVerticle.clearJobQuotaExhausted(jobId);
+                    ctx.json(JsonObject.of("updated", true, "dailyLimit", dailyLimit));
+                })
+                .onFailure(ctx::fail);
+    }
+
     private void handleCloudArchiveHistoryAction(RoutingContext ctx) {
         String jobId = ctx.pathParam("jobId");
         String action = ctx.pathParam("action");
         if (StrUtil.isBlank(jobId) || !Set.of("pause", "resume", "cancel", "delete").contains(action)) {
             ctx.fail(400);
             return;
+        }
+        if ("resume".equals(action)) {
+            AutoCloudArchiveVerticle.clearJobQuotaExhausted(jobId);
         }
         Future<Boolean> transition = Set.of("cancel", "delete").contains(action)
                 ? DataVerticle.cloudArchiveRepository.cancelHistory(jobId)

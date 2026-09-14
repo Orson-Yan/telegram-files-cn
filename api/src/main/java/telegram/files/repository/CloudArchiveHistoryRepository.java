@@ -13,7 +13,12 @@ public interface CloudArchiveHistoryRepository {
                                           long targetTopicId,
                                           String ruleJson,
                                           String scanMode,
-                                          int maxMessages);
+                                          int maxMessages,
+                                          int dailyLimit);
+
+    Future<Void> updateDailyLimit(String id, int dailyLimit);
+
+    Future<Void> incrementDailyCount(String id, String dailyDate, int count);
 
     Future<List<CloudArchiveHistoryJob>> listRecent(int limit);
 

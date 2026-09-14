@@ -19,6 +19,9 @@ public record CloudArchiveHistoryJob(
         String scanMode,
         String stage,
         int maxMessages,
+        int dailyLimit,
+        String dailyDate,
+        int dailyForwardedCount,
         String topicIdsJson,
         int topicIndex,
         int topicCount,
@@ -47,6 +50,9 @@ public record CloudArchiveHistoryJob(
                 scan_mode          VARCHAR(16) NOT NULL DEFAULT 'LIMIT',
                 stage              VARCHAR(32) NOT NULL DEFAULT 'DISCOVERING',
                 max_messages       INT NOT NULL,
+                daily_limit        INT NOT NULL DEFAULT 500,
+                daily_date         VARCHAR(16),
+                daily_forwarded_count INT NOT NULL DEFAULT 0,
                 topic_ids_json     VARCHAR(32768),
                 topic_index        INT NOT NULL DEFAULT 0,
                 topic_count        INT NOT NULL DEFAULT 0,
@@ -72,6 +78,11 @@ public record CloudArchiveHistoryJob(
                     "ALTER TABLE telegram_archive_history_job ADD COLUMN current_topic_id BIGINT NOT NULL DEFAULT 0;",
                     "ALTER TABLE telegram_archive_history_job ADD COLUMN completion_reason VARCHAR(32);",
                     "UPDATE telegram_archive_history_job SET status = 'PENDING', from_message_id = 0, scanned_count = 0, matched_count = 0, last_error = NULL WHERE status = 'FAILED' AND last_error LIKE '%from_message_id%';"
+            }),
+            MapUtil.entry(new Version("0.9.1"), new String[]{
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_limit INT NOT NULL DEFAULT 500;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_date VARCHAR(16);",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_forwarded_count INT NOT NULL DEFAULT 0;"
             })
     ));
 
@@ -88,6 +99,9 @@ public record CloudArchiveHistoryJob(
                 row.getString("scan_mode"),
                 row.getString("stage"),
                 (int) number(row, "max_messages"),
+                (int) number(row, "daily_limit"),
+                row.getString("daily_date"),
+                (int) number(row, "daily_forwarded_count"),
                 row.getString("topic_ids_json"),
                 (int) number(row, "topic_index"),
                 (int) number(row, "topic_count"),

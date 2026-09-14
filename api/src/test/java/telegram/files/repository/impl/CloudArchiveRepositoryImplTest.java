@@ -39,7 +39,7 @@ class CloudArchiveRepositoryImplTest {
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
                 .compose(_ -> pool.query(CloudArchiveHistoryJob.SCHEME).execute())
-                .compose(_ -> histories.create(7, 100, 0, 200, 0, "{}", "ALL", 0))
+                .compose(_ -> histories.create(7, 100, 0, 200, 0, "{}", "ALL", 0, 500))
                 .compose(job -> repository.stage(
                                 7, 100, 0, 20, 0, 200, 0, null, "COPY",
                                 "live:" + job.id())
