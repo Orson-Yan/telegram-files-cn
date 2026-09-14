@@ -4,6 +4,9 @@ export const DEFAULT_LOCALE: Locale = "en";
 export const LANGUAGE_STORAGE_KEY = "telegram-files:locale";
 
 export const zhCNMessages: Readonly<Record<string, string>> = {
+  "Library & Navigation": "文件库与导航",
+  "Channels": "频道列表",
+  "Loading channels...": "正在加载频道...",
   "· via PT": "· 来自 PT",
   "• Access: Owner Only": "• 访问权限：仅所有者",
   "• Description: file caption": "• 说明：文件说明文字",

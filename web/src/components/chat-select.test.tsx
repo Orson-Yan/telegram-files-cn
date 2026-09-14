@@ -9,22 +9,25 @@ vi.mock("@/hooks/use-is-mobile", () => ({
   default: mockIsMobile,
 }));
 
+const mockChatContext = {
+  isLoading: false,
+  handleQueryChange: vi.fn(),
+  chats: [
+    {
+      id: "chat-1",
+      name: "Design",
+      type: "group",
+      unreadCount: 2,
+    },
+  ],
+  chat: undefined,
+  handleChatChange: vi.fn(),
+  handleArchivedChange: vi.fn(),
+};
+
 vi.mock("@/hooks/use-telegram-chat", () => ({
-  useTelegramChat: () => ({
-    isLoading: false,
-    handleQueryChange: vi.fn(),
-    chats: [
-      {
-        id: "chat-1",
-        name: "Design",
-        type: "group",
-        unreadCount: 2,
-      },
-    ],
-    chat: undefined,
-    handleChatChange: vi.fn(),
-    handleArchivedChange: vi.fn(),
-  }),
+  useTelegramChat: () => mockChatContext,
+  useMaybeTelegramChat: () => mockChatContext,
 }));
 
 class NoopResizeObserver {

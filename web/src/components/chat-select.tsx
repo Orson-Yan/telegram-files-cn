@@ -10,7 +10,7 @@ import {
   CommandList,
 } from "./ui/command";
 import { useEffect, useState } from "react";
-import { useTelegramChat } from "@/hooks/use-telegram-chat";
+import { useMaybeTelegramChat } from "@/hooks/use-telegram-chat";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { CommandLoading } from "cmdk";
@@ -23,24 +23,23 @@ export default function ChatSelect({ disabled }: { disabled: boolean }) {
   const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const isMobile = useIsMobile();
-  const {
-    isLoading,
-    handleQueryChange,
-    chats,
-    chat: selectedChat,
-    handleChatChange,
-    handleArchivedChange,
-  } = useTelegramChat();
+  const chatContext = useMaybeTelegramChat();
+  const isLoading = chatContext?.isLoading ?? false;
+  const handleQueryChange = chatContext?.handleQueryChange;
+  const chats = chatContext?.chats ?? [];
+  const selectedChat = chatContext?.chat;
+  const handleChatChange = chatContext?.handleChatChange;
+  const handleArchivedChange = chatContext?.handleArchivedChange;
 
   const selectedChatName =
     selectedChat && (selectedChat.name || selectedChat.id);
 
   useEffect(() => {
-    handleQueryChange(search);
+    handleQueryChange?.(search);
   }, [search, handleQueryChange]);
 
   useEffect(() => {
-    handleArchivedChange(archived);
+    handleArchivedChange?.(archived);
   }, [archived, handleArchivedChange]);
 
   const trigger = (
@@ -115,7 +114,7 @@ export default function ChatSelect({ disabled }: { disabled: boolean }) {
               key={chat.id}
               value={chat.id}
               onSelect={(currentValue) => {
-                handleChatChange(currentValue);
+                handleChatChange?.(currentValue);
                 setOpen(false);
               }}
               className="px-2 py-2"

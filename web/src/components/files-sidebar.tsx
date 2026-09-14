@@ -1,10 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
-import { useTelegramChat } from "@/hooks/use-telegram-chat";
+import React, { useMemo, useState } from "react";
+import { useMaybeTelegramChat } from "@/hooks/use-telegram-chat";
+import { useTelegramAccount } from "@/hooks/use-telegram-account";
+import { useLanguage } from "@/i18n/language-provider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useRouter } from "next/navigation";
+import useSWR from "swr";
 import {
   Archive,
   CheckCircle2,
@@ -18,7 +22,7 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { type FileFilter } from "@/lib/types";
+import { type FileFilter, type TelegramChat } from "@/lib/types";
 import { TooltipWrapper } from "@/components/ui/tooltip";
 
 interface FilesSidebarProps {
@@ -34,9 +38,32 @@ export default function FilesSidebar({
   collapsed = false,
   onToggleCollapsed,
 }: FilesSidebarProps) {
-  const { chats, chatId: selectedChatId, handleChatChange, isLoading } =
-    useTelegramChat();
+  const { t } = useLanguage();
+  const router = useRouter();
+  const chatContext = useMaybeTelegramChat();
+  const { accountId: currentAccountId } = useTelegramAccount();
+
+  // Safely fetch fallback channels if not inside TelegramChatProvider
+  const { data: fallbackChats, isLoading: isFallbackLoading } = useSWR<
+    TelegramChat[]
+  >(
+    !chatContext && currentAccountId
+      ? `/telegram/${currentAccountId}/chats`
+      : null,
+  );
+
+  const chats = chatContext?.chats ?? fallbackChats ?? [];
+  const selectedChatId = chatContext?.chatId;
+  const isLoading = chatContext ? chatContext.isLoading : isFallbackLoading;
   const [search, setSearch] = useState("");
+
+  const handleChatSelect = (targetChatId: string) => {
+    if (chatContext) {
+      chatContext.handleChatChange(targetChatId);
+    } else if (currentAccountId && targetChatId) {
+      router.push(`/accounts?id=${currentAccountId}&chatId=${targetChatId}`);
+    }
+  };
 
   const filteredChats = React.useMemo(() => {
     if (!chats) return [];
@@ -51,7 +78,7 @@ export default function FilesSidebar({
   const quickNavItems = [
     {
       id: "all",
-      label: "All Files",
+      label: t("All Files"),
       icon: Folder,
       active:
         filters.type === "all" &&
@@ -65,7 +92,7 @@ export default function FilesSidebar({
     },
     {
       id: "downloaded",
-      label: "Downloaded on NAS",
+      label: t("Downloaded on NAS"),
       icon: HardDrive,
       active: filters.downloadStatus === "completed",
       onClick: () =>
@@ -77,7 +104,7 @@ export default function FilesSidebar({
     },
     {
       id: "videos",
-      label: "Videos",
+      label: t("Videos"),
       icon: Film,
       active: filters.type === "video",
       onClick: () =>
@@ -88,7 +115,7 @@ export default function FilesSidebar({
     },
     {
       id: "photos",
-      label: "Photos",
+      label: t("Photos"),
       icon: ImageIcon,
       active: filters.type === "photo",
       onClick: () =>
@@ -99,7 +126,7 @@ export default function FilesSidebar({
     },
     {
       id: "files",
-      label: "Documents",
+      label: t("Documents"),
       icon: Layers,
       active: filters.type === "file",
       onClick: () =>
@@ -118,7 +145,7 @@ export default function FilesSidebar({
           size="icon"
           className="size-8 text-muted-foreground hover:text-foreground"
           onClick={onToggleCollapsed}
-          title="Expand sidebar"
+          title={t("Expand sidebar")}
         >
           <ChevronRight className="size-4" />
         </Button>
@@ -152,7 +179,7 @@ export default function FilesSidebar({
       {/* Header */}
       <div className="flex items-center justify-between px-1">
         <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-          Library & Navigation
+          {t("Library & Navigation")}
         </span>
         {onToggleCollapsed && (
           <Button
@@ -160,7 +187,7 @@ export default function FilesSidebar({
             size="icon"
             className="size-6 text-muted-foreground hover:text-foreground"
             onClick={onToggleCollapsed}
-            title="Collapse sidebar"
+            title={t("Collapse sidebar")}
           >
             <ChevronLeft className="size-3.5" />
           </Button>
@@ -199,14 +226,14 @@ export default function FilesSidebar({
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between px-1">
           <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-            Channels ({chats?.length ?? 0})
+            {t("Channels")} ({chats?.length ?? 0})
           </span>
           {selectedChatId && (
             <button
-              onClick={() => handleChatChange("")}
+              onClick={() => handleChatSelect("")}
               className="text-[11px] text-primary hover:underline"
             >
-              Clear
+              {t("Clear")}
             </button>
           )}
         </div>
@@ -215,7 +242,7 @@ export default function FilesSidebar({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search channels..."
+            placeholder={t("Search channels...")}
             className="h-8 pl-7 text-xs"
           />
         </div>
@@ -226,11 +253,11 @@ export default function FilesSidebar({
         <div className="flex flex-col gap-1 py-1">
           {isLoading ? (
             <div className="py-6 text-center text-xs text-muted-foreground">
-              Loading channels...
+              {t("Loading channels...")}
             </div>
           ) : filteredChats.length === 0 ? (
             <div className="py-6 text-center text-xs text-muted-foreground">
-              No channels found
+              {t("No channels found")}
             </div>
           ) : (
             filteredChats.map((c) => {
@@ -238,7 +265,7 @@ export default function FilesSidebar({
               return (
                 <button
                   key={c.id}
-                  onClick={() => handleChatChange(isSelected ? "" : c.id)}
+                  onClick={() => handleChatSelect(isSelected ? "" : c.id)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-lg p-1.5 text-left text-xs transition",
                     isSelected

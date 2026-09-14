@@ -14,7 +14,7 @@ import { POST } from "@/lib/api";
 import { useDebounce } from "use-debounce";
 import { useToast } from "@/hooks/use-toast";
 import { AutomationButton } from "@/components/automation-button";
-import { useTelegramChat } from "@/hooks/use-telegram-chat";
+import { useMaybeTelegramChat } from "@/hooks/use-telegram-chat";
 import { Label } from "@/components/ui/label";
 import { type Auto } from "@/lib/types";
 import { Badge } from "./ui/badge";
@@ -79,7 +79,10 @@ function DetailBlock({
 
 export default function AutomationDialog() {
   const accountId = useSearchParams().get("id") ?? undefined;
-  const { isLoading, chat, reload } = useTelegramChat();
+  const chatContext = useMaybeTelegramChat();
+  const isLoading = chatContext?.isLoading ?? false;
+  const chat = chatContext?.chat;
+  const reload = chatContext?.reload ?? (() => Promise.resolve());
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);

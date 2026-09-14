@@ -37,7 +37,7 @@ import { SettingsDialog } from "@/components/settings-dialog";
 import { Label } from "../ui/label";
 import { Toggle } from "@/components/ui/toggle";
 import { useLocalStorage } from "@/hooks/use-local-storage";
-import { useTelegramChat } from "@/hooks/use-telegram-chat";
+import { useMaybeTelegramChat } from "@/hooks/use-telegram-chat";
 import { useSettings } from "@/hooks/use-settings";
 import { LanguageToggleButton } from "@/i18n/language-toggle-button";
 
@@ -163,7 +163,8 @@ export function MobileHeader() {
 
 function MenuDrawer() {
   const useTelegramAccountProps = useTelegramAccount();
-  const { chat } = useTelegramChat();
+  const chatContext = useMaybeTelegramChat();
+  const chat = chatContext?.chat;
   const { connectionStatus, reconnect, telegramConnectionState } =
     useWebsocket();
   const [layout, setLayout] = useLocalStorage<"detailed" | "gallery">(
