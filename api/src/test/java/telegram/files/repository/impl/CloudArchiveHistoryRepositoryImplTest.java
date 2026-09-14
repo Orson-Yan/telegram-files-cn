@@ -133,4 +133,50 @@ class CloudArchiveHistoryRepositoryImplTest {
                     context.completeNow();
                 })));
     }
+
+    @Test
+    void legacyJobTableWithoutDailyLimitIsHealedAndRetrievable(Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        String legacyScheme = """
+                CREATE TABLE telegram_archive_history_job (
+                    id VARCHAR(64) PRIMARY KEY, telegram_id BIGINT NOT NULL,
+                    source_chat_id BIGINT NOT NULL, source_topic_id BIGINT NOT NULL DEFAULT 0,
+                    target_chat_id BIGINT NOT NULL, target_topic_id BIGINT NOT NULL DEFAULT 0,
+                    rule_json VARCHAR(8192) NOT NULL, status VARCHAR(32) NOT NULL,
+                    scan_mode VARCHAR(16) NOT NULL DEFAULT 'LIMIT',
+                    stage VARCHAR(32) NOT NULL DEFAULT 'DISCOVERING',
+                    max_messages INT NOT NULL, topic_ids_json VARCHAR(32768),
+                    topic_index INT NOT NULL DEFAULT 0, topic_count INT NOT NULL DEFAULT 0,
+                    current_topic_id BIGINT NOT NULL DEFAULT 0, from_message_id BIGINT NOT NULL DEFAULT 0,
+                    scanned_count INT NOT NULL DEFAULT 0, matched_count INT NOT NULL DEFAULT 0,
+                    queued_count INT NOT NULL DEFAULT 0, completion_reason VARCHAR(32),
+                    last_error VARCHAR(1024), created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+                )
+                """;
+
+        CloudArchiveHistoryRepositoryImpl repository = new CloudArchiveHistoryRepositoryImpl(pool);
+        pool.query(legacyScheme).execute()
+                .compose(_ -> pool.query("""
+                        INSERT INTO telegram_archive_history_job
+                            (id, telegram_id, source_chat_id, source_topic_id,
+                             target_chat_id, target_topic_id, rule_json, status,
+                             max_messages, created_at, updated_at)
+                        VALUES ('old-job-1', 7, 100, 0, 200, 0, '{}', 'PAUSED', 1000, 100, 100)
+                        """).execute())
+                .compose(_ -> new CloudArchiveHistoryJob.CloudArchiveHistoryJobDefinition().createTable(pool))
+                .compose(_ -> repository.listRecent(10))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(jobs -> context.verify(() -> {
+                    assertEquals(1, jobs.size());
+                    CloudArchiveHistoryJob job = jobs.getFirst();
+                    assertEquals("old-job-1", job.id());
+                    assertEquals("PAUSED", job.status());
+                    assertEquals(500, job.dailyLimit());
+                    assertEquals(0, job.dailyForwardedCount());
+                    context.completeNow();
+                })));
+    }
 }

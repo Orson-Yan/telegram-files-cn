@@ -83,6 +83,11 @@ public record CloudArchiveHistoryJob(
                     "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_limit INT NOT NULL DEFAULT 500;",
                     "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_date VARCHAR(16);",
                     "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_forwarded_count INT NOT NULL DEFAULT 0;"
+            }),
+            MapUtil.entry(new Version("0.9.2"), new String[]{
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_limit INT NOT NULL DEFAULT 500;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_date VARCHAR(16);",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_forwarded_count INT NOT NULL DEFAULT 0;"
             })
     ));
 
@@ -131,6 +136,39 @@ public record CloudArchiveHistoryJob(
         @Override
         public TreeMap<Version, String[]> getMigrations() {
             return MIGRATIONS;
+        }
+
+        @Override
+        public Future<Void> createTable(SqlClient sqlClient) {
+            return Definition.super.createTable(sqlClient)
+                    .compose(_ -> ensureColumns(sqlClient));
+        }
+
+        @Override
+        public Future<Void> migrate(SqlClient sqlClient, Version lastVersion, Version currentVersion) {
+            return Definition.super.migrate(sqlClient, lastVersion, currentVersion)
+                    .compose(_ -> ensureColumns(sqlClient));
+        }
+
+        private Future<Void> ensureColumns(SqlClient sqlClient) {
+            String[] columns = {
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN scan_mode VARCHAR(16) NOT NULL DEFAULT 'LIMIT';",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN stage VARCHAR(32) NOT NULL DEFAULT 'DISCOVERING';",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN topic_ids_json VARCHAR(32768);",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN topic_index INT NOT NULL DEFAULT 0;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN topic_count INT NOT NULL DEFAULT 0;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN current_topic_id BIGINT NOT NULL DEFAULT 0;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN completion_reason VARCHAR(32);",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_limit INT NOT NULL DEFAULT 500;",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_date VARCHAR(16);",
+                    "ALTER TABLE telegram_archive_history_job ADD COLUMN daily_forwarded_count INT NOT NULL DEFAULT 0;"
+            };
+            Future<Void> future = Future.succeededFuture();
+            for (String sql : columns) {
+                future = future.compose(_ -> sqlClient.query(sql).execute()
+                        .recover(_ -> Future.succeededFuture()).mapEmpty());
+            }
+            return future;
         }
     }
 }
