@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Select,
   SelectContent,
@@ -57,12 +58,20 @@ export default function FileTypeFilter({
   seedOnly = false,
   onChange,
 }: FileTypeFilterProps) {
+  const [isOpen, setIsOpen] = useState(false);
   const countParams = new URLSearchParams({
     offline: String(offline),
     ...(offline && seedOnly && { seedOnly: "true" }),
   });
   const { data: counts, isLoading } = useSWR<Record<FileType, number>>(
-    `/telegram/${telegramId}/chat/${chatId}/files/count?${countParams.toString()}`,
+    isOpen
+      ? `/telegram/${telegramId}/chat/${chatId}/files/count?${countParams.toString()}`
+      : null,
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 60000,
+    },
   );
 
   const handleTypeChange = (value: FileType | "all") => {
@@ -72,7 +81,7 @@ export default function FileTypeFilter({
   return (
     <div className="space-y-2">
       <Label>Type</Label>
-      <Select value={type} onValueChange={handleTypeChange}>
+      <Select value={type} onValueChange={handleTypeChange} onOpenChange={setIsOpen}>
         <SelectTrigger>
           <SelectValue placeholder="File type" />
         </SelectTrigger>

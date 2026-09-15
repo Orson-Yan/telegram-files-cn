@@ -470,7 +470,13 @@ public class TelegramVerticle extends AbstractVerticle {
                 });
     }
 
+    private final Map<Long, Tuple2<Long, JsonObject>> chatFilesCountCache = new ConcurrentHashMap<>();
+
     public Future<JsonObject> getChatFilesCount(long chatId) {
+        Tuple2<Long, JsonObject> cached = chatFilesCountCache.get(chatId);
+        if (cached != null && System.currentTimeMillis() - cached.v1 < 60_000L) {
+            return Future.succeededFuture(cached.v2);
+        }
         return Future.all(
                 Stream.of(new TdApi.SearchMessagesFilterPhotoAndVideo(),
                                 new TdApi.SearchMessagesFilterPhoto(),
@@ -492,6 +498,7 @@ public class TelegramVerticle extends AbstractVerticle {
         ).map(counts -> {
             JsonObject result = new JsonObject();
             counts.<JsonObject>list().forEach(count -> result.put(count.getString("type"), count.getInteger("count")));
+            chatFilesCountCache.put(chatId, Tuple.tuple(System.currentTimeMillis(), result));
             return result;
         });
     }

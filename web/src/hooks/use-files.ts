@@ -10,7 +10,7 @@ import useSWRInfinite from "swr/infinite";
 import { useWebsocket } from "@/hooks/use-websocket";
 import { WebSocketMessageType } from "@/lib/websocket-types";
 import { useLocalStorage } from "@/hooks/use-local-storage";
-import { useDebounce, useDebouncedCallback } from "use-debounce";
+import { useDebounce } from "use-debounce";
 
 const DEFAULT_FILTERS: FileFilter = {
   search: "",
@@ -160,6 +160,9 @@ export function useFiles(
     mutate,
   } = useSWRInfinite<FileResponse, Error>(getKey, {
     revalidateFirstPage: false,
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    revalidateIfStale: false,
     keepPreviousData: true,
   });
 
@@ -167,12 +170,6 @@ export function useFiles(
     leading: true,
     maxWait: 1000,
   });
-
-  // A thumbnail finished downloading in the background; refetch so the list picks up the
-  // crisp thumbnailFile. Debounced to coalesce the bursts that happen while browsing.
-  const debouncedThumbnailRefetch = useDebouncedCallback(() => {
-    void mutate();
-  }, 1500);
 
   useEffect(() => {
     if (lastJsonMessage?.type !== WebSocketMessageType.FILE_STATUS) {
@@ -204,7 +201,19 @@ export function useFiles(
     };
 
     if (data.type === "thumbnail") {
-      debouncedThumbnailRefetch();
+      // 缩略图下载完成仅局部更新状态，严禁触发全量页面 mutate 重复请求风暴
+      if (data.uniqueId && data.localPath) {
+        setLatestFileStatus((prev) => ({
+          ...prev,
+          [data.uniqueId]: {
+            ...prev[data.uniqueId],
+            fileId: data.fileId,
+            downloadStatus: "completed",
+            localPath: data.localPath,
+            downloadedSize: data.downloadedSize,
+          },
+        }));
+      }
       return;
     }
 
@@ -260,7 +269,7 @@ export function useFiles(
           data.shareErrorCode ?? prev[data.uniqueId]?.shareErrorCode,
       },
     }));
-  }, [debouncedThumbnailRefetch, lastJsonMessage]);
+  }, [lastJsonMessage]);
 
   useEffect(() => {
     if (noAccountSpecified && !filters.offline) {

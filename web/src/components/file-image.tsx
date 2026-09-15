@@ -147,11 +147,20 @@ export default function FilePreview({
 
   // 照片或图片类型文件（支持在线预览与已下载查看）
   if (file.type === "photo" || file.mimeType?.startsWith("image/")) {
-    if (file.extra?.width && file.extra?.height) {
-      return renderImage(file.extra.width, file.extra.height, file.uniqueId);
-    } else {
-      return renderImage(600, 600, file.uniqueId);
-    }
+    const targetUniqueId =
+      !isFullPreview && file.thumbnailFile?.uniqueId
+        ? file.thumbnailFile.uniqueId
+        : file.uniqueId;
+    const width =
+      !isFullPreview && file.thumbnailFile?.extra?.width
+        ? file.thumbnailFile.extra.width
+        : file.extra?.width || 600;
+    const height =
+      !isFullPreview && file.thumbnailFile?.extra?.height
+        ? file.thumbnailFile.extra.height
+        : file.extra?.height || 600;
+
+    return renderImage(width, height, targetUniqueId);
   }
 
   // 含有缩略图

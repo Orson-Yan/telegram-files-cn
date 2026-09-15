@@ -34,10 +34,10 @@ export function FileThumb({
   // Determine High-Res Preview URL
   let highResUrl = "";
   const isCompleted = file.downloadStatus === "completed" || !!file.localPath;
-  if (isCompleted && (isPhoto || isVideo)) {
-    highResUrl = `${getApiUrl()}/${file.telegramId}/file/${file.uniqueId}`;
-  } else if (file.thumbnailFile?.uniqueId) {
+  if (file.thumbnailFile?.uniqueId) {
     highResUrl = `${getApiUrl()}/${file.telegramId}/file/${file.thumbnailFile.uniqueId}`;
+  } else if (isPhoto && (isCompleted || file.uniqueId)) {
+    highResUrl = `${getApiUrl()}/${file.telegramId}/file/${file.uniqueId}`;
   }
 
   const hasBlurBase64 = !!file.thumbnail;
