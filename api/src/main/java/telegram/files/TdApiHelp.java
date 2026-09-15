@@ -96,7 +96,7 @@ public class TdApiHelp {
 
     public static TdApi.SearchMessagesFilter getSearchMessagesFilter(String fileType) {
         if (fileType == null || fileType.isBlank() || "all".equals(fileType)) {
-            return new TdApi.SearchMessagesFilterEmpty();
+            return null;
         }
         return switch (fileType) {
             case "media" -> new TdApi.SearchMessagesFilterPhotoAndVideo();
@@ -104,7 +104,7 @@ public class TdApiHelp {
             case "video" -> new TdApi.SearchMessagesFilterVideo();
             case "audio" -> new TdApi.SearchMessagesFilterAudio();
             case "file" -> new TdApi.SearchMessagesFilterDocument();
-            default -> new TdApi.SearchMessagesFilterEmpty();
+            default -> null;
         };
     }
 
