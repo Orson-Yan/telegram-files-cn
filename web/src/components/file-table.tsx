@@ -25,7 +25,6 @@ import FileNotFount from "@/components/file-not-found";
 import FileRow from "@/components/file-row";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type TelegramFile } from "@/lib/types";
-import { isEqual } from "lodash";
 import FileViewer from "@/components/file-viewer";
 import FileFilters from "./file-filters";
 import { Badge } from "@/components/ui/badge";
@@ -184,11 +183,12 @@ export function FileTable({
 
   useEffect(() => {
     rowVirtual.measure();
-  }, [rowHeight, rowVirtual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowHeight]);
 
   const maybeLoadMore = useCallback(() => {
     const element = tableParentRef.current;
-    if (!element) {
+    if (!element || isLoading || !hasMore) {
       return;
     }
 
@@ -198,7 +198,7 @@ export function FileTable({
     if (distanceFromBottom <= preloadDistance) {
       void handleLoadMore();
     }
-  }, [handleLoadMore, rowHeight]);
+  }, [handleLoadMore, hasMore, isLoading, rowHeight]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(maybeLoadMore);
@@ -206,32 +206,37 @@ export function FileTable({
   }, [files.length, isLoading, maybeLoadMore]);
 
   useEffect(() => {
-    const lastItem = virtualItems[virtualItems.length - 1];
-    if (!lastItem || files.length === 0) {
+    if (!currentViewFile || files.length === 0) {
       return;
     }
-
-    if (lastItem.index >= files.length - 16) {
-      void handleLoadMore();
-    }
-  }, [files.length, handleLoadMore, virtualItems]);
-
-  useEffect(() => {
-    if (files.length === 0 || !currentViewFile) {
-      return;
-    }
-    const index = files.findIndex(
-      (f) => f.id === currentViewFile.id || f.uniqueId === currentViewFile.uniqueId,
+    const matching = files.find(
+      (f) =>
+        f &&
+        (f.id === currentViewFile.id ||
+          f.uniqueId === currentViewFile.uniqueId),
     );
-    if (index === -1) {
+    if (!matching) {
       setCurrentViewFile(undefined);
+      setViewerOpen(false);
       return;
     }
-    const file = files[index]!;
-    if (!isEqual(file, currentViewFile)) {
-      setCurrentViewFile(file);
+    if (
+      matching.downloadStatus !== currentViewFile.downloadStatus ||
+      matching.downloadedSize !== currentViewFile.downloadedSize ||
+      matching.localPath !== currentViewFile.localPath ||
+      matching.tags !== currentViewFile.tags
+    ) {
+      setCurrentViewFile(matching);
     }
-  }, [currentViewFile, files]);
+  }, [
+    currentViewFile?.id,
+    currentViewFile?.uniqueId,
+    currentViewFile?.downloadStatus,
+    currentViewFile?.downloadedSize,
+    currentViewFile?.localPath,
+    currentViewFile?.tags,
+    files,
+  ]);
 
   const dynamicClass = useMemo(() => {
     switch (rowHeight) {

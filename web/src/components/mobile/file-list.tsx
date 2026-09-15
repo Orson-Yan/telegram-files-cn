@@ -5,7 +5,6 @@ import { FileCard } from "@/components/mobile/file-card";
 import { cn } from "@/lib/utils";
 import FileDrawer from "@/components/mobile/file-drawer";
 import type { TelegramFile } from "@/lib/types";
-import { isEqual } from "lodash";
 import FileFilters from "@/components/file-filters";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import FileNotFount from "@/components/file-not-found";
@@ -81,39 +80,60 @@ export default function FileList({ accountId, chatId, link }: FileListProps) {
 
   useEffect(() => {
     rowVirtual.measure();
-  }, [fileHeightSignature, rowVirtual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileHeightSignature]);
+
+  const virtualItems = rowVirtual.getVirtualItems();
+  const lastIndex =
+    virtualItems.length > 0
+      ? virtualItems[virtualItems.length - 1]?.index
+      : undefined;
 
   useEffect(() => {
-    const [lastItem] = [...rowVirtual.getVirtualItems()].reverse();
-    if (!lastItem) {
-      return;
-    }
-
-    if (lastItem.index >= files.length - 1 && hasMore && !isLoading) {
+    if (
+      lastIndex !== undefined &&
+      lastIndex >= files.length - 1 &&
+      hasMore &&
+      !isLoading
+    ) {
       void handleLoadMore();
     }
-  }, [files.length, handleLoadMore, hasMore, isLoading, rowVirtual]);
+  }, [files.length, handleLoadMore, hasMore, isLoading, lastIndex]);
 
   useEffect(() => {
     if (files.length === 0 || !currentViewFile) {
       return;
     }
-    const index = files.findIndex(
-      (f) => f.id === currentViewFile.id || f.uniqueId === currentViewFile.uniqueId,
+    const matching = files.find(
+      (f) =>
+        f &&
+        (f.id === currentViewFile.id ||
+          f.uniqueId === currentViewFile.uniqueId),
     );
-    if (index === -1) {
-      // 只有在drawer关闭时才清除currentViewFile，避免下载完成时意外关闭
+    if (!matching) {
       if (!isDrawerOpen) {
         setCurrentViewFile(undefined);
       }
       return;
     }
-    const file = files[index]!;
-    if (!isEqual(file, currentViewFile)) {
-      // 静默更新文件数据，不触发drawer关闭
-      setCurrentViewFile(file);
+    if (
+      matching.downloadStatus !== currentViewFile.downloadStatus ||
+      matching.downloadedSize !== currentViewFile.downloadedSize ||
+      matching.localPath !== currentViewFile.localPath ||
+      matching.tags !== currentViewFile.tags
+    ) {
+      setCurrentViewFile(matching);
     }
-  }, [files, currentViewFile, isDrawerOpen]);
+  }, [
+    currentViewFile?.id,
+    currentViewFile?.uniqueId,
+    currentViewFile?.downloadStatus,
+    currentViewFile?.downloadedSize,
+    currentViewFile?.localPath,
+    currentViewFile?.tags,
+    files,
+    isDrawerOpen,
+  ]);
 
   return (
     <div className="space-y-4">

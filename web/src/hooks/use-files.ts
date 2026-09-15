@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type DownloadStatus,
   type FileFilter,
@@ -397,10 +397,10 @@ export function useFiles(
     return undefined;
   }, [pages]);
 
-  const handleLoadMore = async () => {
+  const handleLoadMore = useCallback(async () => {
     if (isLoading || !hasMore || error) return;
-    await setSize(size + 1);
-  };
+    await setSize((prev) => prev + 1);
+  }, [isLoading, hasMore, error, setSize]);
 
   const handleFilterChange = async (newFilters: FileFilter) => {
     if (
