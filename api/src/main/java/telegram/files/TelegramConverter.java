@@ -94,9 +94,15 @@ public class TelegramConverter {
                                 String thumbnailUniqueId = fileRecord != null && StrUtil.isNotBlank(fileRecord.thumbnailUniqueId())
                                         ? fileRecord.thumbnailUniqueId()
                                         : TdApiHelp.getFileHandler(message).map(TdApiHelp.FileHandler::getThumbnailFileUniqueId).orElse(null);
+                                FileRecord thumbnailRecord = StrUtil.isBlank(thumbnailUniqueId) ? null : thumbnails.get(thumbnailUniqueId);
+                                if (thumbnailRecord == null) {
+                                    thumbnailRecord = TdApiHelp.getFileHandler(message)
+                                            .map(h -> h.convertThumbnailRecord(telegramId))
+                                            .orElse(null);
+                                }
                                 return withSource(telegramId,
                                         fileRecord,
-                                        StrUtil.isBlank(thumbnailUniqueId) ? null : thumbnails.get(thumbnailUniqueId),
+                                        thumbnailRecord,
                                         message);
                             })
                             .filter(Objects::nonNull)

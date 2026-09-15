@@ -69,10 +69,28 @@ export function useFiles(
       }
     >
   >({});
-  const [filters, setFilters, clearFilters] = useLocalStorage<FileFilter>(
-    "telegramFileListFilter",
-    { ...DEFAULT_FILTERS, offline: noAccountSpecified },
-  );
+  const storageKey = noAccountSpecified
+    ? "telegramGlobalFileListFilter"
+    : "telegramChatFileListFilter";
+  const [storedFilters, setStoredFilters, clearFilters] =
+    useLocalStorage<FileFilter>(storageKey, {
+      ...DEFAULT_FILTERS,
+      offline: noAccountSpecified,
+    });
+
+  // 在具体群聊中默认严格保证为在线浏览模式 (offline: false)，避免被旧缓存污染导致显示空白
+  const filters: FileFilter = useMemo(() => {
+    if (!noAccountSpecified && storedFilters.offline) {
+      return { ...storedFilters, offline: false };
+    }
+    return storedFilters;
+  }, [noAccountSpecified, storedFilters]);
+
+  const setFilters = (
+    newFilters: FileFilter | ((prev: FileFilter) => FileFilter),
+  ) => {
+    setStoredFilters(newFilters);
+  };
   const getKey = (page: number, previousPageData: FileResponse) => {
     const params = new URLSearchParams({
       ...(filters.search && {

@@ -69,6 +69,12 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private final Map<Integer, Long> fileLastEventTimes = new ConcurrentHashMap<>();
 
+    public record OnlineFileInfo(int fileId, String type, String mimeType) {}
+
+    private final Map<String, OnlineFileInfo> onlineFilesCache = new ConcurrentHashMap<>();
+
+    private final Map<Integer, List<Promise<String>>> pendingPreviewPromises = new ConcurrentHashMap<>();
+
     private long lastFileDownloadEventTime;
 
     private final Map<String, Future<Void>> fileStatusUpdateTails = new HashMap<>();
@@ -395,12 +401,43 @@ public class TelegramVerticle extends AbstractVerticle {
                     this.getIdleChatFiles(searchChatMessages, 0) :
                     client.execute(searchChatMessages))
                     .compose(t -> {
+                        cacheOnlineFiles(t);
                         preloadThumbnails(t)
                                 .onFailure(err -> log.debug("[%s] Preload thumbnails skipped: %s"
                                         .formatted(getRootId(), err.getMessage())));
                         return TelegramConverter.convertFiles(this.telegramRecord.id(), t)
                                 .compose(TelegramConverter::enrichSeedAssociations);
                     });
+        }
+    }
+
+    private void cacheOnlineFiles(TdApi.FoundChatMessages foundChatMessages) {
+        if (foundChatMessages == null || foundChatMessages.messages == null) {
+            return;
+        }
+        cacheOnlineMessages(foundChatMessages.messages);
+    }
+
+    private void cacheOnlineMessages(TdApi.Message[] messages) {
+        if (messages == null) {
+            return;
+        }
+        if (onlineFilesCache.size() > 20000) {
+            onlineFilesCache.clear();
+        }
+        for (TdApi.Message message : messages) {
+            TdApiHelp.getFileHandler(message).ifPresent(handler -> {
+                TdApi.File file = handler.getFile();
+                if (file != null && file.remote != null && StrUtil.isNotBlank(file.remote.uniqueId)) {
+                    String type = handler instanceof TdApiHelp.PhotoHandler ? "photo" : "file";
+                    String mimeType = "photo".equals(type) ? "image/jpeg" : null;
+                    onlineFilesCache.put(file.remote.uniqueId, new OnlineFileInfo(file.id, type, mimeType));
+                }
+                TdApi.Thumbnail thumb = handler.getThumbnail();
+                if (thumb != null && thumb.file != null && thumb.file.remote != null && StrUtil.isNotBlank(thumb.file.remote.uniqueId)) {
+                    onlineFilesCache.put(thumb.file.remote.uniqueId, new OnlineFileInfo(thumb.file.id, "thumbnail", TdApiHelp.getThumbnailMimeType(thumb.format)));
+                }
+            });
         }
     }
 
@@ -467,38 +504,69 @@ public class TelegramVerticle extends AbstractVerticle {
                     }
                     return FileRecordRetriever.getAlbumMessages(this.telegramRecord.id(), messageLinkInfo.message);
                 })
-                .compose(messages -> TelegramConverter.convertFiles(this.telegramRecord.id(), messages)
-                        .map(files -> new JsonObject()
-                                .put("files", files)
-                                .put("count", files.size())
-                                .put("size", files.size())
-                                .put("nextFromMessageId", 0L) // No next message ID for link parsing
-                        ));
+                .compose(messages -> {
+                    cacheOnlineMessages(messages);
+                    return TelegramConverter.convertFiles(this.telegramRecord.id(), messages)
+                            .map(files -> new JsonObject()
+                                    .put("files", files)
+                                    .put("count", files.size())
+                                    .put("size", files.size())
+                                    .put("nextFromMessageId", 0L) // No next message ID for link parsing
+                            );
+                });
     }
 
     public Future<Tuple2<String, String>> loadPreview(String uniqueId) {
         return DataVerticle.fileRepository
                 .getByUniqueId(uniqueId)
                 .compose(fileRecord -> {
-                    if (fileRecord == null) {
-                        return Future.failedFuture("File not found");
+                    if (fileRecord != null) {
+                        if (StrUtil.isNotBlank(fileRecord.localPath()) && FileUtil.exist(fileRecord.localPath())) {
+                            return Future.succeededFuture(Tuple.tuple(fileRecord.localPath(), fileRecord.mimeType()));
+                        }
+                        // If it is a thumbnail or photo, fetch on-demand from TDLib
+                        if ("thumbnail".equals(fileRecord.type()) || "photo".equals(fileRecord.type())) {
+                            return fetchMediaPreview(fileRecord.id(), fileRecord.mimeType(), fileRecord.uniqueId());
+                        }
+                        return Future.failedFuture("File not found or not downloaded");
                     }
-                    if (StrUtil.isNotBlank(fileRecord.localPath()) && FileUtil.exist(fileRecord.localPath())) {
-                        return Future.succeededFuture(Tuple.tuple(fileRecord.localPath(), fileRecord.mimeType()));
+
+                    // Fallback to online files cache for un-cached channel media
+                    OnlineFileInfo onlineInfo = onlineFilesCache.get(uniqueId);
+                    if (onlineInfo != null && ("thumbnail".equals(onlineInfo.type()) || "photo".equals(onlineInfo.type()))) {
+                        return fetchMediaPreview(onlineInfo.fileId(), onlineInfo.mimeType(), uniqueId);
                     }
-                    // If it is a thumbnail or photo, fetch on-demand from TDLib
-                    if ("thumbnail".equals(fileRecord.type()) || "photo".equals(fileRecord.type())) {
-                        return client.execute(new TdApi.DownloadFile(fileRecord.id(), 32, 0, 0, false))
-                                .compose(file -> {
-                                    if (file.local != null && StrUtil.isNotBlank(file.local.path) && FileUtil.exist(file.local.path)) {
-                                        DataVerticle.fileRepository.updateDownloadStatus(file.id, fileRecord.uniqueId(), file.local.path,
-                                                FileRecord.DownloadStatus.completed, System.currentTimeMillis());
-                                        return Future.succeededFuture(Tuple.tuple(file.local.path, fileRecord.mimeType()));
-                                    }
-                                    return Future.failedFuture("Thumbnail download pending");
-                                });
+
+                    return Future.failedFuture("File not found");
+                });
+    }
+
+    private Future<Tuple2<String, String>> fetchMediaPreview(int fileId, String mimeType, String uniqueId) {
+        return client.execute(new TdApi.DownloadFile(fileId, 32, 0, 0, false))
+                .compose(file -> {
+                    if (file.local != null && StrUtil.isNotBlank(file.local.path) && FileUtil.exist(file.local.path)) {
+                        if (uniqueId != null) {
+                            DataVerticle.fileRepository.updateDownloadStatus(file.id, uniqueId, file.local.path,
+                                    FileRecord.DownloadStatus.completed, System.currentTimeMillis());
+                        }
+                        return Future.succeededFuture(Tuple.tuple(file.local.path, mimeType));
                     }
-                    return Future.failedFuture("File not found or not downloaded");
+                    Promise<String> promise = Promise.promise();
+                    List<Promise<String>> list = pendingPreviewPromises.computeIfAbsent(file.id, _ -> new java.util.concurrent.CopyOnWriteArrayList<>());
+                    list.add(promise);
+                    long timerId = vertx.setTimer(15000, _ -> {
+                        list.remove(promise);
+                        promise.tryFail("Preview download timeout");
+                    });
+                    return promise.future()
+                            .onComplete(_ -> vertx.cancelTimer(timerId))
+                            .map(path -> {
+                                if (uniqueId != null) {
+                                    DataVerticle.fileRepository.updateDownloadStatus(fileId, uniqueId, path,
+                                            FileRecord.DownloadStatus.completed, System.currentTimeMillis());
+                                }
+                                return Tuple.tuple(path, mimeType);
+                            });
                 });
     }
 
@@ -1645,6 +1713,14 @@ public class TelegramVerticle extends AbstractVerticle {
         log.trace("📃[%s] Receive file update: %s".formatted(getRootId(), updateFile));
         TdApi.File file = updateFile.file;
         if (file != null) {
+            if (file.local != null && file.local.isDownloadingCompleted && StrUtil.isNotBlank(file.local.path)) {
+                List<Promise<String>> promises = pendingPreviewPromises.remove(file.id);
+                if (promises != null) {
+                    for (Promise<String> p : promises) {
+                        p.tryComplete(file.local.path);
+                    }
+                }
+            }
             enqueueFileStatusUpdate(file);
 
             boolean completed = file.local != null && file.local.isDownloadingCompleted;

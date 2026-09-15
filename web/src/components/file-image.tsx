@@ -145,11 +145,8 @@ export default function FilePreview({
     );
   };
 
-  // 已下载的文件
-  if (
-    file.localPath &&
-    (file.type === "photo" || file.mimeType?.startsWith("image/"))
-  ) {
+  // 照片或图片类型文件（支持在线预览与已下载查看）
+  if (file.type === "photo" || file.mimeType?.startsWith("image/")) {
     if (file.extra?.width && file.extra?.height) {
       return renderImage(file.extra.width, file.extra.height, file.uniqueId);
     } else {
