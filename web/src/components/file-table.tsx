@@ -164,8 +164,9 @@ export function FileTable({
     count: files.length,
     getScrollElement: () => tableParentRef.current,
     estimateSize: (index) => {
-      const file = files[index]!;
+      const file = files[index];
       const height = getRowHeightPX(rowHeight);
+      if (!file) return height;
 
       if (
         file.downloadStatus === "idle" ||
@@ -366,7 +367,6 @@ export function FileTable({
           file={currentViewFile}
           onFileChange={(newFile) => {
             setCurrentViewFile(newFile);
-            void updateField(newFile.uniqueId, { tags: newFile.tags });
           }}
           {...useFilesProps}
         />
@@ -471,7 +471,8 @@ export function FileTable({
                 >
                   {files.length !== 0 &&
                     virtualItems.map((virtualRow) => {
-                      const file = files[virtualRow.index]!;
+                      const file = files[virtualRow.index];
+                      if (!file) return null;
                       return (
                         <FileRow
                           index={virtualRow.index}

@@ -27,14 +27,19 @@ export function getFileStreamUrl(
   file: TelegramFile,
   sessionToken?: string,
 ): string {
-  if (typeof window === "undefined") return "";
-  const base = getApiUrl();
-  const path = `${base}/${file.telegramId}/file/${file.uniqueId}`;
-  const absoluteUrl = new URL(path, window.location.origin);
-  if (sessionToken) {
-    absoluteUrl.searchParams.set("token", sessionToken);
+  if (typeof window === "undefined" || !file || !file.uniqueId) return "";
+  try {
+    const base = getApiUrl() || "";
+    const path = `${base}/${file.telegramId || 0}/file/${file.uniqueId}`;
+    const absoluteUrl = new URL(path, window.location.origin);
+    if (sessionToken) {
+      absoluteUrl.searchParams.set("token", sessionToken);
+    }
+    return absoluteUrl.href;
+  } catch (err) {
+    console.warn("Failed to construct stream URL:", err);
+    return "";
   }
-  return absoluteUrl.href;
 }
 
 export interface PlayerOption {

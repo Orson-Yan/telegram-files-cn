@@ -45,12 +45,27 @@ interface PostGroup {
   files: TelegramFile[];
 }
 
-function formatPostDate(epochSeconds: number): string {
-  if (!epochSeconds || epochSeconds <= 0) return "Unknown Date";
+function formatPostDate(epochSeconds?: number): string {
+  if (!epochSeconds || typeof epochSeconds !== "number" || !Number.isFinite(epochSeconds) || epochSeconds <= 0) {
+    return "Unknown Date";
+  }
   try {
-    return format(new Date(epochSeconds * 1000), "yyyy-MM-dd HH:mm:ss");
+    const d = new Date(epochSeconds * 1000);
+    if (isNaN(d.getTime())) return "Unknown Date";
+    return format(d, "yyyy-MM-dd HH:mm:ss");
   } catch {
     return "Unknown Date";
+  }
+}
+
+function safePrettyBytes(bytes?: number): string {
+  if (bytes === undefined || bytes === null || typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return "0 B";
+  }
+  try {
+    return prettyBytes(bytes);
+  } catch {
+    return "0 B";
   }
 }
 
@@ -71,7 +86,8 @@ export default function FileGallery({
     const groups: PostGroup[] = [];
     const groupMap = new Map<string, PostGroup>();
 
-    for (const file of files) {
+    for (const file of files || []) {
+      if (!file) continue;
       let key = "";
       if (file.mediaAlbumId && file.mediaAlbumId !== "0") {
         key = `${file.chatId}_album_${file.mediaAlbumId}`;
@@ -285,19 +301,19 @@ function PostTimelineNode({
       {/* Node Footer Info / Summary */}
       <div className="mt-auto flex items-center justify-between border-t bg-muted/10 px-4 py-2.5 text-[11px] text-muted-foreground">
         <span className="truncate">
-          {group.files.filter((f) => f.type === "video").length > 0 && (
+          {(group.files || []).filter((f) => f && f.type === "video").length > 0 && (
             <span className="mr-2">
-              🎬 {group.files.filter((f) => f.type === "video").length} {t("videos")}
+              🎬 {(group.files || []).filter((f) => f && f.type === "video").length} {t("videos")}
             </span>
           )}
-          {group.files.filter((f) => f.type === "photo").length > 0 && (
+          {(group.files || []).filter((f) => f && f.type === "photo").length > 0 && (
             <span>
-              🖼️ {group.files.filter((f) => f.type === "photo").length} {t("photos")}
+              🖼️ {(group.files || []).filter((f) => f && f.type === "photo").length} {t("photos")}
             </span>
           )}
         </span>
         <span className="font-mono font-medium">
-          {prettyBytes(group.files.reduce((acc, f) => acc + (f.size || 0), 0))}
+          {safePrettyBytes((group.files || []).reduce((acc, f) => acc + (f?.size || 0), 0))}
         </span>
       </div>
     </div>
