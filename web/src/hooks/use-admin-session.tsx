@@ -13,6 +13,7 @@ import { request, SESSION_TERMINAL_EVENT } from "@/lib/api";
 
 export interface AdminSession {
   authenticated: true;
+  authEnabled?: boolean;
   token?: string;
   username: string;
   idleExpiresAt: number;
@@ -47,9 +48,17 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setStatus("loading");
     try {
-      const bootstrapState = await request<{ required: boolean }>(
-        "/auth/bootstrap/status",
-      );
+      const bootstrapState = await request<{
+        required: boolean;
+        authEnabled?: boolean;
+      }>("/auth/bootstrap/status");
+      if (bootstrapState.authEnabled === false) {
+        const activeSession = await request<AdminSession>("/auth/session");
+        setSession(activeSession);
+        setSessionExpired(false);
+        setStatus("authenticated");
+        return;
+      }
       if (bootstrapState.required) {
         setSession(null);
         setStatus("bootstrap");

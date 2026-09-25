@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   CloudUpload,
   Copy,
+  Filter,
   History,
   Loader2,
   Pause,
@@ -23,6 +24,61 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+function getStatusBadge(status: string) {
+  switch (status) {
+    case "COMPLETED":
+      return (
+        <Badge
+          variant="outline"
+          className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+        >
+          COMPLETED
+        </Badge>
+      );
+    case "FAILED":
+    case "UNKNOWN":
+      return (
+        <Badge
+          variant="outline"
+          className="border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium"
+        >
+          {status}
+        </Badge>
+      );
+    case "SKIPPED":
+      return (
+        <Badge
+          variant="outline"
+          className="border-muted bg-muted/60 text-muted-foreground font-medium"
+        >
+          SKIPPED
+        </Badge>
+      );
+    case "STAGED":
+      return (
+        <Badge
+          variant="outline"
+          className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
+        >
+          Waiting for ordered release
+        </Badge>
+      );
+    case "SENDING":
+    case "PENDING":
+    case "RETRY":
+      return (
+        <Badge
+          variant="outline"
+          className="border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-medium"
+        >
+          {status}
+        </Badge>
+      );
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
 import {
   Dialog,
   DialogContent,
@@ -233,8 +289,16 @@ export function CloudArchiveManager() {
   } = useSWR<CloudArchiveOverview>("/cloud-archive/overview", {
     refreshInterval: 5000,
   });
+  const [recordStatusFilter, setRecordStatusFilter] = useState<string>("ALL");
+  const recordsUrl = useMemo(() => {
+    const params = new URLSearchParams({ limit: "100" });
+    if (recordStatusFilter && recordStatusFilter !== "ALL") {
+      params.set("status", recordStatusFilter);
+    }
+    return `/cloud-archive/records?${params.toString()}`;
+  }, [recordStatusFilter]);
   const { data: records, mutate: reloadRecords } = useSWR<CloudArchiveRecord[]>(
-    "/cloud-archive/records?limit=100",
+    recordsUrl,
     { refreshInterval: 5000 },
   );
   const { data: historyJobs, mutate: reloadHistory } = useSWR<
@@ -387,7 +451,7 @@ export function CloudArchiveManager() {
   const retry = async (record: CloudArchiveRecord) => {
     try {
       await POST(`/cloud-archive/records/${record.id}/retry`);
-      await reloadRecords();
+      await Promise.all([reloadOverview(), reloadRecords()]);
       toast({ variant: "success", title: "Archive record queued for retry" });
     } catch (failure) {
       toast({
@@ -404,7 +468,7 @@ export function CloudArchiveManager() {
       const res = (await POST("/cloud-archive/records/retry-all", {
         telegramId: 0,
       })) as { count?: number };
-      await reloadRecords();
+      await Promise.all([reloadOverview(), reloadRecords()]);
       toast({
         variant: "success",
         title: "Retried failed records",
@@ -424,8 +488,9 @@ export function CloudArchiveManager() {
     try {
       const res = (await POST("/cloud-archive/records/clear", {
         telegramId: 0,
+        status: recordStatusFilter !== "ALL" ? recordStatusFilter : "ALL",
       })) as { count?: number };
-      await reloadRecords();
+      await Promise.all([reloadOverview(), reloadRecords()]);
       toast({
         variant: "success",
         title: "Records cleared",
@@ -923,15 +988,45 @@ export function CloudArchiveManager() {
 
         <TabsContent value="records" className="mt-4">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between border-b px-4 py-3 sm:px-6">
-              <div className="text-sm font-medium text-muted-foreground">
-                Archive delivery logs & queue history
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b px-4 py-3 sm:px-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-sm font-medium text-muted-foreground">
+                  Archive delivery logs & queue history
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={recordStatusFilter}
+                    onValueChange={setRecordStatusFilter}
+                  >
+                    <SelectTrigger className="h-8 min-w-[150px] text-xs">
+                      <Filter className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" />
+                      <SelectValue placeholder="Filter status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">
+                        All ({overview?.statistics?.total ?? 0})
+                      </SelectItem>
+                      <SelectItem value="FAILED">
+                        Failed ({overview?.statistics?.failed ?? 0})
+                      </SelectItem>
+                      <SelectItem value="SKIPPED">
+                        Skipped ({overview?.statistics?.skipped ?? 0})
+                      </SelectItem>
+                      <SelectItem value="COMPLETED">
+                        Completed ({overview?.statistics?.completed ?? 0})
+                      </SelectItem>
+                      <SelectItem value="PENDING">
+                        Pending ({overview?.statistics?.pending ?? 0})
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void reloadRecords()}
+                  onClick={() => void Promise.all([reloadOverview(), reloadRecords()])}
                 >
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                   Refresh
@@ -951,7 +1046,9 @@ export function CloudArchiveManager() {
                   onClick={() => void clearRecords()}
                 >
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                  Clear Logs
+                  {recordStatusFilter !== "ALL"
+                    ? `Clear ${recordStatusFilter}`
+                    : "Clear Logs"}
                 </Button>
               </div>
             </CardHeader>
@@ -969,88 +1066,95 @@ export function CloudArchiveManager() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(records ?? []).map((record) => (
-                    <TableRow key={record.id}>
-                      <TableCell>
-                        <span translate="no">{record.sourceChatName}</span>
-                        {record.sourceTopicId ? (
-                          <span className="ml-1 text-xs text-muted-foreground">
-                            {record.sourceTopicName || "Topic"} #{record.sourceTopicId}
-                          </span>
-                        ) : null}
-                        <span className="ml-1 text-xs text-muted-foreground">
-                          #{record.sourceMessageId}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span translate="no">{record.targetChatName}</span>
-                        {record.targetTopicId ? (
-                          <span className="ml-1 text-xs text-muted-foreground">
-                            {record.targetTopicName || "Topic"} #{record.targetTopicId}
-                          </span>
-                        ) : null}
-                        {record.targetMessageId ? (
-                          <span className="ml-1 text-xs text-muted-foreground">
-                            #{record.targetMessageId}
-                          </span>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>
-                        <div>{record.mode}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {record.topicMode === "PRESERVE"
-                            ? "Preserve topics"
-                            : "Merge topics"}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {!record.historyJobId
-                            ? "Live"
-                            : record.historyJobId.startsWith("sync:")
-                              ? "Gap recovery"
-                              : record.historyJobId.startsWith("live:")
-                                ? "Live held for order"
-                                : "Historical backfill"}
-                        </div>
-                        {record.topicMode === "PRESERVE" &&
-                          record.sourceTopicId !== 0 &&
-                          record.targetTopicId === 0 && (
-                            <div className="text-xs text-destructive">
-                              Target topic unresolved
-                            </div>
-                          )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {record.status === "STAGED"
-                            ? "Waiting for ordered release"
-                            : record.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {new Date(record.updatedAt).toLocaleString()}
-                      </TableCell>
+                  {(records ?? []).length === 0 ? (
+                    <TableRow>
                       <TableCell
-                        className="max-w-64 truncate"
-                        title={record.lastErrorMessage}
+                        colSpan={7}
+                        className="h-28 text-center text-muted-foreground"
                       >
-                        {record.lastErrorCode || "—"}
-                      </TableCell>
-                      <TableCell>
-                        {["FAILED", "UNKNOWN", "SKIPPED"].includes(
-                          record.status,
-                        ) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Retry"
-                            onClick={() => void retry(record)}
-                          >
-                            <RefreshCw />
-                          </Button>
-                        )}
+                        No archive records found for this status.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    (records ?? []).map((record) => (
+                      <TableRow key={record.id}>
+                        <TableCell>
+                          <span translate="no">{record.sourceChatName}</span>
+                          {record.sourceTopicId ? (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              {record.sourceTopicName || "Topic"} #{record.sourceTopicId}
+                            </span>
+                          ) : null}
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            #{record.sourceMessageId}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span translate="no">{record.targetChatName}</span>
+                          {record.targetTopicId ? (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              {record.targetTopicName || "Topic"} #{record.targetTopicId}
+                            </span>
+                          ) : null}
+                          {record.targetMessageId ? (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              #{record.targetMessageId}
+                            </span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <div>{record.mode}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {record.topicMode === "PRESERVE"
+                              ? "Preserve topics"
+                              : "Merge topics"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {!record.historyJobId
+                              ? "Live"
+                              : record.historyJobId.startsWith("sync:")
+                                ? "Gap recovery"
+                                : record.historyJobId.startsWith("live:")
+                                  ? "Live held for order"
+                                  : "Historical backfill"}
+                          </div>
+                          {record.topicMode === "PRESERVE" &&
+                            record.sourceTopicId !== 0 &&
+                            record.targetTopicId === 0 && (
+                              <div className="text-xs text-destructive">
+                                Target topic unresolved
+                              </div>
+                            )}
+                        </TableCell>
+                        <TableCell>
+                          {getStatusBadge(record.status)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {new Date(record.updatedAt).toLocaleString()}
+                        </TableCell>
+                        <TableCell
+                          className="max-w-64 truncate"
+                          title={record.lastErrorMessage}
+                        >
+                          {record.lastErrorCode || "—"}
+                        </TableCell>
+                        <TableCell>
+                          {["FAILED", "UNKNOWN", "SKIPPED"].includes(
+                            record.status,
+                          ) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Retry"
+                              onClick={() => void retry(record)}
+                            >
+                              <RefreshCw />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

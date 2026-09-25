@@ -91,7 +91,11 @@ public interface CloudArchiveRepository {
 
     Future<List<CloudArchiveRecord>> listDue(long now, int limit);
 
-    Future<List<CloudArchiveRecord>> listRecent(int limit);
+    default Future<List<CloudArchiveRecord>> listRecent(int limit) {
+        return listRecent(limit, null);
+    }
+
+    Future<List<CloudArchiveRecord>> listRecent(int limit, String status);
 
     Future<Long> maxSourceMessageId(long telegramId, long sourceChatId,
                                     long sourceTopicId, long targetChatId);

@@ -81,7 +81,7 @@ export function PageHeader({
             <PlatformBindingShortcut />
             <SettingsDialog />
 
-            {session && (
+            {session && session.authEnabled !== false && (
               <TooltipWrapper content="Log out">
                 <Button
                   type="button"

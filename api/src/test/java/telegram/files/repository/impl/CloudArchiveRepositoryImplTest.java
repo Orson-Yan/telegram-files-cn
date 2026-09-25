@@ -279,4 +279,51 @@ class CloudArchiveRepositoryImplTest {
                     context.completeNow();
                 })));
     }
+
+    @Test
+    void listRecentFiltersByStatus(Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(
+                vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        Clock clock = Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC);
+        CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
+
+        pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> repository.enqueue(7, 100, 1, 0, 200, null, "COPY"))
+                .compose(_ -> repository.enqueue(7, 100, 2, 0, 200, null, "COPY"))
+                .compose(_ -> repository.listDue(1_000, 10))
+                .compose(records -> {
+                    String firstId = records.get(0).id();
+                    String secondId = records.get(1).id();
+                    return repository.claim(firstId)
+                            .compose(_ -> repository.complete(firstId, 999))
+                            .compose(_ -> repository.skip(secondId, "SKIP_REASON", "Skipped test"));
+                })
+                .compose(_ -> repository.listRecent(10, "SKIPPED"))
+                .compose(skippedRecords -> {
+                    context.verify(() -> {
+                        assertEquals(1, skippedRecords.size());
+                        assertEquals("SKIPPED", skippedRecords.getFirst().status());
+                    });
+                    return repository.listRecent(10, "COMPLETED");
+                })
+                .compose(completedRecords -> {
+                    context.verify(() -> {
+                        assertEquals(1, completedRecords.size());
+                        assertEquals("COMPLETED", completedRecords.getFirst().status());
+                    });
+                    return repository.listRecent(10, "ALL");
+                })
+                .compose(allRecords -> {
+                    context.verify(() -> assertEquals(2, allRecords.size()));
+                    return repository.listRecent(10, "FAILED");
+                })
+                .compose(failedRecords -> {
+                    context.verify(() -> assertEquals(0, failedRecords.size()));
+                    return Future.succeededFuture();
+                })
+                .eventually(pool::close)
+                .onComplete(context.succeeding(_ -> context.completeNow()));
+    }
 }

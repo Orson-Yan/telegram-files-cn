@@ -81,6 +81,10 @@ public class Config {
             )
     );
 
+    public static final boolean AUTH_ENABLED = Convert.toBool(
+            System.getenv("AUTH_ENABLED"), true
+    );
+
     public static final int AUTH_LOGIN_ATTEMPTS_PER_MINUTE = Convert.toInt(
             System.getenv("AUTH_LOGIN_ATTEMPTS_PER_MINUTE"), 10
     );

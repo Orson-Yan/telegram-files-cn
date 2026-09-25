@@ -112,16 +112,25 @@ public class HttpVerticle extends AbstractVerticle {
     @Override
     public void start(Promise<Void> startPromise) {
         adminAuthService = new AdminAuthService(vertx, DataVerticle.pool);
-        adminAuthService.initialize()
-                .onSuccess(state -> {
-                    bootstrapState = state;
-                    if (state.required()) {
-                        System.out.println(
-                                "Telegram Files one-time bootstrap code (expires in 15 minutes): "
-                                + state.oneTimeToken()
-                        );
-                    }
-                })
+        Future<Void> initAuthFuture;
+        if (!Config.AUTH_ENABLED) {
+            log.info("Admin authentication is DISABLED (AUTH_ENABLED=false). Running in LAN/no-auth mode.");
+            bootstrapState = new BootstrapState(false, null, 0);
+            initAuthFuture = Future.succeededFuture();
+        } else {
+            initAuthFuture = adminAuthService.initialize()
+                    .onSuccess(state -> {
+                        bootstrapState = state;
+                        if (state.required()) {
+                            System.out.println(
+                                    "Telegram Files one-time bootstrap code (expires in 15 minutes): "
+                                    + state.oneTimeToken()
+                            );
+                        }
+                    })
+                    .mapEmpty();
+        }
+        initAuthFuture
                 .compose(_ -> initHttpServer())
                 .compose(_ -> initTelegramVerticles())
                 .compose(_ -> AutomationsHolder.INSTANCE.init())
@@ -409,12 +418,20 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleBootstrapStatus(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            ctx.json(JsonObject.of("required", false, "authEnabled", false));
+            return;
+        }
         adminAuthService.bootstrapRequired()
-                .onSuccess(required -> ctx.json(JsonObject.of("required", required)))
+                .onSuccess(required -> ctx.json(JsonObject.of("required", required, "authEnabled", true)))
                 .onFailure(failure -> respondFailure(ctx, failure));
     }
 
     private void handleBootstrap(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            respondJson(ctx, 400, "AUTH_DISABLED", "Authentication is disabled");
+            return;
+        }
         String source = remoteHost(ctx);
         if (!acquire(loginRateLimiter, "bootstrap:" + source, ctx)) {
             return;
@@ -440,6 +457,10 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleLogin(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            respondJson(ctx, 400, "AUTH_DISABLED", "Authentication is disabled");
+            return;
+        }
         JsonObject body = requestBody(ctx);
         if (body == null) {
             return;
@@ -467,6 +488,11 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleAuthentication(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            ctx.put(AUTH_PRINCIPAL_KEY, AdminPrincipal.ANONYMOUS);
+            ctx.next();
+            return;
+        }
         Cookie cookie = ctx.request().getCookie(ADMIN_SESSION_COOKIE_NAME);
         String token = cookie != null ? cookie.getValue() : ctx.request().getParam("token");
         if (StrUtil.isBlank(token)) {
@@ -491,6 +517,10 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleCsrf(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            ctx.next();
+            return;
+        }
         if (Set.of(HttpMethod.GET, HttpMethod.HEAD, HttpMethod.OPTIONS)
                 .contains(ctx.request().method())) {
             ctx.next();
@@ -509,11 +539,23 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleSession(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            ctx.json(JsonObject.of(
+                    "authenticated", true,
+                    "authEnabled", false,
+                    "token", "",
+                    "username", AdminPrincipal.ANONYMOUS.username(),
+                    "idleExpiresAt", AdminPrincipal.ANONYMOUS.idleExpiresAt(),
+                    "absoluteExpiresAt", AdminPrincipal.ANONYMOUS.absoluteExpiresAt()
+            ));
+            return;
+        }
         AdminPrincipal principal = principal(ctx);
         Cookie cookie = ctx.request().getCookie(ADMIN_SESSION_COOKIE_NAME);
         String token = cookie != null ? cookie.getValue() : ctx.request().getParam("token");
         ctx.json(JsonObject.of(
                 "authenticated", true,
+                "authEnabled", true,
                 "token", token == null ? "" : token,
                 "username", principal.username(),
                 "idleExpiresAt", principal.idleExpiresAt(),
@@ -522,6 +564,11 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleLogout(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            clearSessionCookies(ctx);
+            ctx.response().setStatusCode(204).end();
+            return;
+        }
         AdminPrincipal principal = principal(ctx);
         adminAuthService.logout(principal)
                 .onSuccess(_ -> {
@@ -532,6 +579,11 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleLogoutAll(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            clearSessionCookies(ctx);
+            ctx.response().setStatusCode(204).end();
+            return;
+        }
         AdminPrincipal principal = principal(ctx);
         adminAuthService.logoutAll(principal)
                 .onSuccess(_ -> {
@@ -542,6 +594,10 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handlePasswordChange(RoutingContext ctx) {
+        if (!Config.AUTH_ENABLED) {
+            respondJson(ctx, 400, "AUTH_DISABLED", "Password cannot be changed when authentication is disabled");
+            return;
+        }
         JsonObject body = requestBody(ctx);
         if (body == null) {
             return;
@@ -764,6 +820,16 @@ public class HttpVerticle extends AbstractVerticle {
             return;
         }
 
+        if (!Config.AUTH_ENABLED) {
+            String webSessionId = cookieValue(handshake.headers(), SESSION_COOKIE_NAME);
+            String telegramId = queryParameter(handshake.query(), "telegramId");
+            String sessionId = StrUtil.blankToDefault(webSessionId, AdminPrincipal.ANONYMOUS.sessionId());
+            handshake.accept()
+                    .onSuccess(ws -> initializeWebSocket(ws, AdminPrincipal.ANONYMOUS, sessionId, telegramId))
+                    .onFailure(failure -> log.error("Failed to accept unauthenticated WebSocket", failure));
+            return;
+        }
+
         String adminSessionToken = cookieValue(handshake.headers(), ADMIN_SESSION_COOKIE_NAME);
         if (StrUtil.isBlank(adminSessionToken)) {
             rejectWebSocket(handshake, 401, "administrator session cookie is missing");
@@ -897,6 +963,10 @@ public class HttpVerticle extends AbstractVerticle {
 
             long timerId = vertx.setPeriodic(30000, _ -> {
                 if (ws.isClosed()) {
+                    return;
+                }
+                if (!Config.AUTH_ENABLED) {
+                    ws.writePing(Buffer.buffer("👀"));
                     return;
                 }
                 adminAuthService.isSessionActive(adminPrincipal.sessionId())
@@ -1200,8 +1270,9 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleCloudArchiveRecords(RoutingContext ctx) {
-        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 200));
-        DataVerticle.cloudArchiveRepository.listRecent(limit)
+        int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 500));
+        String status = ctx.queryParams().get("status");
+        DataVerticle.cloudArchiveRepository.listRecent(limit, status)
                 .compose(records -> {
                     List<Future<JsonObject>> items = records.stream()
                             .map(this::cloudArchiveRecordJson)

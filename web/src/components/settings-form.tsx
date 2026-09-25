@@ -432,24 +432,36 @@ export default function SettingsForm() {
         <SettingsSection
           icon={Shield}
           title="Administrator Session"
-          description="End the current administrator session on this device"
+          description={
+            session?.authEnabled === false
+              ? "Authentication is currently disabled (LAN/no-auth mode)"
+              : "End the current administrator session on this device"
+          }
         >
           <div className="flex items-center justify-between gap-4 rounded-md border bg-card p-4 shadow-sm">
             <div className="flex min-w-0 flex-col gap-1">
-              <Label>Signed in account</Label>
+              <Label>
+                {session?.authEnabled === false
+                  ? "Authentication mode"
+                  : "Signed in account"}
+              </Label>
               <p className="truncate text-xs text-muted-foreground">
-                Signed in as {session?.username ?? "administrator"}
+                {session?.authEnabled === false
+                  ? "LAN / No-auth mode"
+                  : `Signed in as ${session?.username ?? "administrator"}`}
               </p>
             </div>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={loggingOut}
-              onClick={() => void handleLogout()}
-            >
-              <LogOut data-icon="inline-start" />
-              {loggingOut ? "Logging out…" : "Log out"}
-            </Button>
+            {session?.authEnabled !== false && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={loggingOut}
+                onClick={() => void handleLogout()}
+              >
+                <LogOut data-icon="inline-start" />
+                {loggingOut ? "Logging out…" : "Log out"}
+              </Button>
+            )}
           </div>
         </SettingsSection>
       </div>

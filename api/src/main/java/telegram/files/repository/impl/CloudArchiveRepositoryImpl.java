@@ -302,12 +302,28 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
 
     @Override
     public Future<List<CloudArchiveRecord>> listRecent(int limit) {
-        return preparedQuery("""
-                        SELECT * FROM telegram_archive_record
-                        ORDER BY created_at DESC
-                        LIMIT ?
-                        """)
-                .execute(Tuple.of(Math.max(1, Math.min(limit, 500))))
+        return listRecent(limit, null);
+    }
+
+    @Override
+    public Future<List<CloudArchiveRecord>> listRecent(int limit, String status) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM telegram_archive_record WHERE 1=1");
+        List<Object> params = new ArrayList<>();
+        if (StrUtil.isNotBlank(status) && !"ALL".equalsIgnoreCase(status)) {
+            String upper = status.trim().toUpperCase(Locale.ROOT);
+            switch (upper) {
+                case "FAILED" -> sql.append(" AND status IN ('FAILED', 'UNKNOWN')");
+                case "PENDING" -> sql.append(" AND status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING')");
+                default -> {
+                    sql.append(" AND status = ?");
+                    params.add(upper);
+                }
+            }
+        }
+        sql.append(" ORDER BY created_at DESC LIMIT ?");
+        params.add(Math.max(1, Math.min(limit, 500)));
+        return preparedQuery(sql.toString())
+                .execute(Tuple.from(params))
                 .map(this::records);
     }
 

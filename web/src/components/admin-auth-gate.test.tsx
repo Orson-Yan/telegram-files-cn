@@ -149,4 +149,39 @@ describe("AdminAuthGate", () => {
       "expired or was revoked",
     );
   });
+
+  it("bypasses login gate directly when auth is disabled (LAN mode)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse(200, { required: false, authEnabled: false }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse(200, {
+            authenticated: true,
+            authEnabled: false,
+            username: "admin",
+            idleExpiresAt: 999999999999,
+            absoluteExpiresAt: 999999999999,
+          }),
+        ),
+    );
+
+    render(
+      <AdminSessionProvider>
+        <AdminAuthGate>
+          <div>Direct access without password</div>
+        </AdminAuthGate>
+      </AdminSessionProvider>,
+    );
+
+    expect(
+      await screen.findByText("Direct access without password"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Administrator sign in"),
+    ).not.toBeInTheDocument();
+  });
 });

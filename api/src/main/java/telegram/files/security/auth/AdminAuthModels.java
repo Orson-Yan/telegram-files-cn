@@ -21,6 +21,14 @@ public final class AdminAuthModels {
             long idleExpiresAt,
             long absoluteExpiresAt
     ) {
+        public static final AdminPrincipal ANONYMOUS = new AdminPrincipal(
+                "lan-session",
+                "lan-admin",
+                "admin",
+                "",
+                Long.MAX_VALUE,
+                Long.MAX_VALUE
+        );
     }
 
     public record PasswordRecovery(String username, String oneTimeToken, long expiresAt) {

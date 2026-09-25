@@ -111,7 +111,7 @@ export function EmptyState({
           <PlatformBindingShortcut />
           <SettingsDialog />
 
-          {session && (
+          {session && session.authEnabled !== false && (
             <TooltipWrapper content="Log out">
               <Button
                 type="button"
