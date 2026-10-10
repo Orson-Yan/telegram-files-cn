@@ -23,9 +23,15 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
 
     private Consumer<TdApi.ConnectionState> onConnectionStateUpdated;
 
+    private Consumer<TdApi.Object> onMessageSendUpdated;
+
     @Override
     public void onResult(TdApi.Object object) {
         switch (object.getConstructor()) {
+            case TdApi.UpdateMessageSendSucceeded.CONSTRUCTOR:
+            case TdApi.UpdateMessageSendFailed.CONSTRUCTOR:
+                if (onMessageSendUpdated != null) onMessageSendUpdated.accept(object);
+                break;
             case TdApi.UpdateAuthorizationState.CONSTRUCTOR:
                 if (onAuthorizationStateUpdated != null)
                     onAuthorizationStateUpdated.accept(((TdApi.UpdateAuthorizationState) object).authorizationState);
@@ -85,5 +91,9 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
 
     public void setOnConnectionStateUpdated(Consumer<TdApi.ConnectionState> onConnectionStateUpdated) {
         this.onConnectionStateUpdated = onConnectionStateUpdated;
+    }
+
+    public void setOnMessageSendUpdated(Consumer<TdApi.Object> onMessageSendUpdated) {
+        this.onMessageSendUpdated = onMessageSendUpdated;
     }
 }

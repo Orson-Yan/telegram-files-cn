@@ -13,14 +13,14 @@ import org.drinkless.tdlib.TdApi;
 import telegram.files.repository.CloudArchiveRecord;
 import telegram.files.repository.CloudArchiveHistoryJob;
 import telegram.files.repository.CloudArchiveSyncState;
+import telegram.files.repository.CloudArchiveRepository.RouteOrder;
 import telegram.files.repository.SettingAutoRecords;
 
 import java.time.Duration;
 import java.time.LocalDate;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Deque;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -102,7 +103,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private long nextDrainDelayMillis(long telegramId) {
         AccountQueue queue = queues.get(telegramId);
-        boolean hasLive = queue != null && !queue.live.isEmpty();
+        boolean hasLive = queue != null && queue.hasLive();
         long base = hasLive ? DRAIN_BASE_DELAY_LIVE : DRAIN_BASE_DELAY_HISTORY;
         long jitter = hasLive ? DRAIN_JITTER_LIVE : DRAIN_JITTER_HISTORY;
         return base + java.util.concurrent.ThreadLocalRandom.current().nextLong(jitter + 1);
@@ -270,6 +271,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     Future<Void> prepareHold = Future.succeededFuture();
                     if (rule.strictOrder && shouldHoldForHistory(historyJob)) {
                         holdKey = liveHistoryKey(historyJob.id());
+                    } else if (rule.strictOrder && syncState == null) {
+                        // A newly enabled route has no durable cursor yet. Its first updates
+                        // must wait for initialization rather than bypassing recovery entirely.
+                        holdKey = syncKey(automation);
                     } else if (rule.strictOrder && syncState != null
                                && ("RECOVERING".equals(syncState.status())
                                    || message.id > syncState.lastObservedMessageId())) {
@@ -399,8 +404,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         .toList())
                 .mapEmpty()
                 .compose(_ -> DataVerticle.cloudArchiveRepository.releaseCompletedHistory())
-                .compose(_ -> DataVerticle.cloudArchiveRepository.listDue(
-                        System.currentTimeMillis(), SCAN_LIMIT))
+                .compose(_ -> dueOrderPolicies())
+                .compose(policies -> DataVerticle.cloudArchiveRepository.listDue(
+                                System.currentTimeMillis(), SCAN_LIMIT, policies)
+                        .compose(records -> expandAlbums(records, policies)))
                 .onSuccess(records -> {
                     long nowTs = System.currentTimeMillis();
                     QUEUED_RECORD_AT.entrySet().removeIf(entry -> {
@@ -413,7 +420,17 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     List<List<CloudArchiveRecord>> batches = new ArrayList<>();
                     String previousKey = null;
                     List<CloudArchiveRecord> current = null;
-                    for (CloudArchiveRecord record : records) {
+                    // SQL interleaves routes for fairness. Reassemble each route before batching,
+                    // otherwise an unrelated route can split one source album into several sends.
+                    Map<ArchiveRoute, List<CloudArchiveRecord>> routes = new LinkedHashMap<>();
+                    records.forEach(record -> routes.computeIfAbsent(
+                            ArchiveRoute.of(record), _ -> new ArrayList<>()).add(record));
+                    List<CloudArchiveRecord> ordered = new ArrayList<>();
+                    routes.values().forEach(route -> {
+                        route.sort(Comparator.comparingLong(CloudArchiveRecord::sourceMessageId));
+                        ordered.addAll(route);
+                    });
+                    for (CloudArchiveRecord record : ordered) {
                         if (QUEUED_RECORD_AT.containsKey(record.id())) {
                             continue;
                         }
@@ -423,10 +440,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                 || automation.archive == null ? null : automation.archive.rule;
                         boolean unresolvedPreservedTopic = record.sourceTopicId() == 0
                                 && preservesTopics(record, configuredRule);
-                        String route = "%d:%d:%d:%d:%d:%s:%s:%s".formatted(
+                        String route = "%d:%d:%d:%d:%d:%s:%s".formatted(
                                 record.telegramId(), record.sourceChatId(), record.sourceTopicId(),
                                 record.targetChatId(), record.targetTopicId(), record.mode(),
-                                record.topicMode(), record.historyJobId() == null ? "live" : record.historyJobId());
+                                record.topicMode());
                         String key;
                         if (record.sourceAlbumId() != 0) {
                             key = "album:" + route + ":" + record.sourceAlbumId();
@@ -437,8 +454,12 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         } else {
                             key = "messages:" + route;
                         }
-                        if (current == null || !key.equals(previousKey)
-                            || current.size() >= MESSAGE_BATCH_SIZE) {
+                        // A partial Telegram failure inside a multi-message request could deliver
+                        // newer posts before the failed post is retried. Send strict posts singly;
+                        // keep a Telegram album in one request to preserve its native grouping.
+                        int batchLimit = record.sourceAlbumId() != 0 ? 100
+                                : configuredRule != null && configuredRule.strictOrder ? 1 : MESSAGE_BATCH_SIZE;
+                        if (current == null || !key.equals(previousKey) || current.size() >= batchLimit) {
                             current = new ArrayList<>();
                             batches.add(current);
                             previousKey = key;
@@ -449,6 +470,45 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 })
                 .onFailure(failure -> log.error(failure, "Failed to scan pending cloud archive records"))
                 .onComplete(_ -> scanning = false);
+    }
+
+    private Future<List<RouteOrder>> dueOrderPolicies() {
+        return Future.all(autoRecords.getArchiveEnabledItems().stream()
+                        .filter(item -> item.archive.rule.strictOrder)
+                        .map(item -> DataVerticle.cloudArchiveHistoryRepository.findActive(item.telegramId, item.chatId)
+                                .map(job -> new RouteOrder(
+                                        item.telegramId, item.chatId, item.archive.rule.targetChatId,
+                                        job == null || !"PAUSED".equals(job.status()), shouldHoldForHistory(job))))
+                        .toList())
+                .map(result -> {
+                    List<RouteOrder> policies = new ArrayList<>();
+                    for (int index = 0; index < result.size(); index++) policies.add(result.resultAt(index));
+                    return policies;
+                });
+    }
+
+    private Future<List<CloudArchiveRecord>> expandAlbums(
+            List<CloudArchiveRecord> records,
+            List<RouteOrder> policies) {
+        Map<String, CloudArchiveRecord> albums = new LinkedHashMap<>();
+        records.stream().filter(record -> record.sourceAlbumId() != 0).forEach(record ->
+                albums.putIfAbsent(ArchiveRoute.of(record) + ":" + record.sourceAlbumId(), record));
+        return Future.all(albums.values().stream()
+                        .map(record -> DataVerticle.cloudArchiveRepository.listUnsentAlbum(record,
+                                policies.stream().anyMatch(policy -> policy.strictOrder()
+                                        && policy.telegramId() == record.telegramId()
+                                        && policy.sourceChatId() == record.sourceChatId()
+                                        && policy.targetChatId() == record.targetChatId())))
+                        .toList())
+                .map(result -> {
+                    Map<String, CloudArchiveRecord> expanded = new LinkedHashMap<>();
+                    records.forEach(record -> expanded.put(record.id(), record));
+                    for (int index = 0; index < result.size(); index++) {
+                        List<CloudArchiveRecord> members = result.resultAt(index);
+                        members.forEach(record -> expanded.put(record.id(), record));
+                    }
+                    return new ArrayList<>(expanded.values());
+                });
     }
 
     private void scanHistory() {
@@ -498,7 +558,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 .compose(activeHistory -> {
                     // An actively moving backfill already reads this source. A paused backfill must
                     // not disable live delivery or automatic outage reconciliation.
-                    if (activeHistory != null && !"PAUSED".equals(activeHistory.status())) {
+                    if (activeHistory != null
+                        && Set.of("PENDING", "RUNNING").contains(activeHistory.status())) {
                         return Future.<Void>succeededFuture();
                     }
                     return syncTopicIds(automation)
@@ -543,7 +604,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     if (!"RECOVERING".equals(state.status())
                         && System.currentTimeMillis() - state.lastReconciledAt()
                            < SYNC_RECONCILE_INTERVAL) {
-                        return Future.succeededFuture();
+                        return DataVerticle.cloudArchiveRepository.countOutstandingHistory(syncKey(automation))
+                                .compose(held -> held > 0
+                                        ? reconcileSyncState(telegram, automation, state)
+                                        : Future.succeededFuture());
                     }
                     return reconcileSyncState(telegram, automation, state);
                 });
@@ -553,25 +617,22 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                                              SettingAutoRecords.Automation automation,
                                              long sourceTopicId) {
         SettingAutoRecords.ArchiveRule rule = automation.archive.rule;
-        return Future.all(
-                        latestSourceMessageId(telegram, automation.chatId, sourceTopicId),
-                        DataVerticle.cloudArchiveRepository.maxSourceMessageId(
+        return latestSourceMessageId(telegram, automation.chatId, sourceTopicId)
+                .compose(head -> DataVerticle.cloudArchiveRepository.initialSyncBaseline(
                                 automation.telegramId, automation.chatId, sourceTopicId,
-                                rule.targetChatId))
-                .compose(values -> {
-                    long head = values.resultAt(0);
-                    long recorded = values.resultAt(1);
-                    // Full initial mirrors are represented by an explicit history job. The
-                    // recovery cursor starts at the newest known point so it only repairs gaps
-                    // instead of racing and duplicating that full scan.
-                    long baseline = recorded > 0 ? recorded : head;
-                    return DataVerticle.cloudArchiveSyncRepository.ensure(
-                                    automation.telegramId, automation.chatId, sourceTopicId,
-                                    rule.targetChatId, baseline)
-                            .compose(state -> baseline < head
-                                    ? DataVerticle.cloudArchiveSyncRepository.beginRecovery(state, head)
-                                    : DataVerticle.cloudArchiveSyncRepository.touch(state));
-                });
+                                rule.targetChatId, head)
+                        .compose(baseline -> {
+                            // Initial mirrors use an explicit history job. Held updates aren't
+                            // a scanned cursor; preserve the gap between history and live delivery.
+                            return DataVerticle.cloudArchiveSyncRepository.ensure(
+                                            automation.telegramId, automation.chatId, sourceTopicId,
+                                            rule.targetChatId, baseline)
+                                    .compose(state -> state.lastObservedMessageId() < head
+                                            ? DataVerticle.cloudArchiveSyncRepository.beginRecovery(state, head)
+                                            : DataVerticle.cloudArchiveSyncRepository.touch(state)
+                                                    .compose(_ -> DataVerticle.cloudArchiveRepository.releaseHistoryThrough(
+                                                            syncKey(automation), state.lastObservedMessageId())));
+                        }));
     }
 
     private Future<Void> reconcileSyncState(TelegramVerticle telegram,
@@ -583,7 +644,9 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         return latestSourceMessageId(telegram, state.sourceChatId(), state.sourceTopicId())
                 .compose(head -> head > state.lastObservedMessageId()
                         ? DataVerticle.cloudArchiveSyncRepository.beginRecovery(state, head)
-                        : DataVerticle.cloudArchiveSyncRepository.touch(state));
+                        : DataVerticle.cloudArchiveSyncRepository.touch(state)
+                                .compose(_ -> DataVerticle.cloudArchiveRepository.releaseHistoryThrough(
+                                        syncKey(automation), state.lastObservedMessageId())));
     }
 
     private Future<Void> recoverSyncPage(TelegramVerticle telegram,
@@ -665,8 +728,11 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                             .anyMatch(item -> "RECOVERING".equals(item.status()));
                     return recovering
                             ? Future.succeededFuture()
-                            : DataVerticle.cloudArchiveRepository.releaseHistory(
-                                    syncKey(automation));
+                            : DataVerticle.cloudArchiveRepository.releaseHistoryThrough(
+                                    syncKey(automation), states.stream()
+                                            .filter(item -> activeTopics.contains(item.sourceTopicId()))
+                                            .mapToLong(CloudArchiveSyncState::lastObservedMessageId)
+                                            .min().orElse(0));
                 })
                 .onSuccess(_ -> scanDue());
     }
@@ -712,16 +778,24 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private Future<Void> processHistoryPage(CloudArchiveHistoryJob job) {
         if ("DRAINING".equals(job.status())) {
+            SettingAutoRecords.Automation automation = autoRecords.getItem(job.telegramId(), job.sourceChatId());
+            boolean strict = automation != null && automation.archive != null
+                    && automation.archive.rule != null && automation.archive.rule.strictOrder;
+            String recoveryKey = "sync:%d:%d:%d".formatted(job.telegramId(), job.sourceChatId(), job.targetChatId());
             return DataVerticle.cloudArchiveRepository.releaseHistory(job.id())
-                    .compose(_ -> DataVerticle.cloudArchiveRepository.releaseHistory(
-                            liveHistoryKey(job.id())))
+                    .compose(_ -> strict
+                            ? DataVerticle.cloudArchiveRepository.holdHistoryForSync(liveHistoryKey(job.id()), recoveryKey)
+                            : DataVerticle.cloudArchiveRepository.releaseHistory(liveHistoryKey(job.id())))
                     .compose(_ -> Future.all(
                             DataVerticle.cloudArchiveRepository.countOutstandingHistory(job.id()),
                             DataVerticle.cloudArchiveRepository.countOutstandingHistory(
-                                    liveHistoryKey(job.id()))))
+                                    liveHistoryKey(job.id())),
+                            strict ? DataVerticle.cloudArchiveRepository.countOutstandingHistory(recoveryKey)
+                                    : Future.succeededFuture(0L)))
                     .compose(counts -> {
                         scanDue();
-                        long outstanding = counts.<Long>resultAt(0) + counts.<Long>resultAt(1);
+                        if (strict) scanSync();
+                        long outstanding = counts.<Long>resultAt(0) + counts.<Long>resultAt(1) + counts.<Long>resultAt(2);
                         return outstanding == 0
                                 ? DataVerticle.cloudArchiveHistoryRepository.completeDraining(job.id())
                                 : Future.succeededFuture();
@@ -901,7 +975,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     }
 
     private static boolean shouldHoldForHistory(CloudArchiveHistoryJob job) {
-        return job != null && Set.of("PENDING", "RUNNING", "DRAINING").contains(job.status());
+        return job != null && Set.of("PENDING", "RUNNING").contains(job.status());
     }
 
     private static long messageTopicId(TdApi.Message message) {
@@ -947,9 +1021,32 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         }
     }
 
-    private Future<Void> process(ArchiveWork work) {
+    Future<Void> process(ArchiveWork work) {
         CloudArchiveRecord first = work.records.getFirst();
         long now = System.currentTimeMillis();
+        SettingAutoRecords.Automation automation = autoRecords.getItem(
+                first.telegramId(), first.sourceChatId());
+        boolean strict = automation != null && automation.archive != null
+                && automation.archive.rule != null && automation.archive.rule.strictOrder;
+        // Queue entries are snapshots. A preceding batch may have failed, been deferred, or
+        // become held since this work was prefetched; check the database immediately before send.
+        Future<CloudArchiveHistoryJob> history = strict
+                ? DataVerticle.cloudArchiveHistoryRepository.findActive(first.telegramId(), first.sourceChatId())
+                : Future.succeededFuture(null);
+        return history.compose(job -> {
+                    if (strict && job != null && Set.of("PENDING", "RUNNING").contains(job.status())) {
+                        return Future.succeededFuture(false);
+                    }
+                    // Pausing history explicitly releases live delivery, including its order hold.
+                    boolean enforceOrder = strict && (job == null || !"PAUSED".equals(job.status()));
+                    return DataVerticle.cloudArchiveRepository.isBatchReady(work.records, now, enforceOrder);
+                })
+                .compose(ready -> ready
+                        ? processReady(work, first, now)
+                        : Future.succeededFuture());
+    }
+
+    private Future<Void> processReady(ArchiveWork work, CloudArchiveRecord first, long now) {
         return DataVerticle.cloudArchiveRepository.cooldownUntil(first.telegramId(), now)
                 .compose(persistedCooldown -> {
                     long cooldownUntil = Math.max(persistedCooldown,
@@ -1169,13 +1266,38 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                 .mapEmpty();
     }
 
-    private Future<Void> handleFailure(List<CloudArchiveRecord> records, Throwable failure) {
+    Future<Void> handleFailure(List<CloudArchiveRecord> records, Throwable failure) {
+        if (failure instanceof CloudArchiveService.PartialDelivery partial) {
+            List<CloudArchiveRecord> completed = records.stream()
+                    .filter(record -> partial.targets.containsKey(record.sourceMessageId())).toList();
+            CloudArchiveRecord first = records.getFirst();
+            SettingAutoRecords.Automation automation = autoRecords.getItem(first.telegramId(), first.sourceChatId());
+            boolean partialStrictAlbum = !completed.isEmpty() && first.sourceAlbumId() != 0
+                    && automation != null && automation.archive != null && automation.archive.rule != null
+                    && automation.archive.rule.strictOrder;
+            return completeAll(completed, partial.targets)
+                    .compose(_ -> Future.all(records.stream()
+                            .filter(record -> partial.failures.containsKey(record.sourceMessageId()))
+                            .map(record -> {
+                                Throwable messageFailure = partial.failures.get(record.sourceMessageId());
+                                // Retrying a fragment after the rest of an album was delivered can
+                                // split the album and invert its order. Require review of this case.
+                                return partialStrictAlbum && !(messageFailure instanceof CloudArchiveDeliveryTracker.Unconfirmed)
+                                        ? failPartialAlbumMember(record, messageFailure)
+                                        : handleFailure(List.of(record), messageFailure);
+                            })
+                            .toList()).mapEmpty());
+        }
+        if (failure instanceof CloudArchiveDeliveryTracker.Unconfirmed) {
+            return Future.all(records.stream().map(record -> DataVerticle.cloudArchiveRepository.unknown(
+                    record.id(), "DELIVERY_UNCONFIRMED", safeMessage(failure))).toList()).mapEmpty();
+        }
         if (failure instanceof TopicResolutionFailure topicFailure) {
             return failAll(records, topicFailure.retryable(),
                     topicFailure.code(), topicFailure.getMessage());
         }
         if (failure instanceof CloudArchiveService.Rejected rejected) {
-            if (rejected.code().startsWith("TOPIC_")) {
+            if (rejected.code().startsWith("TOPIC_") || "TELEGRAM_REJECTED_MESSAGE".equals(rejected.code())) {
                 return failAll(records, false, rejected.code(), rejected.getMessage());
             }
             List<Future<Void>> updates = records.stream()
@@ -1201,6 +1323,16 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         : staleTopic ? "TOPIC_MAPPING_STALE" : CloudArchiveService.errorCode(failure),
                 safeMessage(failure),
                 telegramWaitMillis);
+    }
+
+    private Future<Void> failPartialAlbumMember(CloudArchiveRecord record, Throwable failure) {
+        long waitMillis = CloudArchiveService.retryAfterMillis(failure);
+        long waitUntil = waitMillis > 0 ? System.currentTimeMillis() + waitMillis : 0;
+        if (waitUntil > 0) ACCOUNT_COOLDOWN_UNTIL.merge(record.telegramId(), waitUntil, Math::max);
+        // Persist the account wait without scheduling an automatic resend of this fragment.
+        return DataVerticle.cloudArchiveRepository.fail(record.id(), false, waitUntil,
+                "PARTIAL_ALBUM_DELIVERY",
+                "Only part of the album was delivered; review before retrying: " + safeMessage(failure));
     }
 
     private Future<Void> failAll(List<CloudArchiveRecord> records,
@@ -1334,34 +1466,47 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         private long timerId;
     }
 
-    private record ArchiveWork(List<CloudArchiveRecord> records) {
+    record ArchiveWork(List<CloudArchiveRecord> records) {
     }
 
-    private static final class AccountQueue {
-        private final Deque<ArchiveWork> recovery = new ArrayDeque<>();
-        private final Deque<ArchiveWork> live = new ArrayDeque<>();
-        private final Deque<ArchiveWork> history = new ArrayDeque<>();
+    private record ArchiveRoute(long telegramId, long sourceChatId, long targetChatId) {
+        static ArchiveRoute of(CloudArchiveRecord record) {
+            return new ArchiveRoute(record.telegramId(), record.sourceChatId(), record.targetChatId());
+        }
+    }
 
-        private void add(ArchiveWork work) {
-            String jobId = work.records().getFirst().historyJobId();
-            if (jobId != null && jobId.startsWith("sync:")) {
-                recovery.addLast(work);
-            } else if (jobId == null) {
-                live.addLast(work);
-            } else {
-                history.addLast(work);
-            }
+    static final class AccountQueue {
+        private final Map<ArchiveRoute, PriorityQueue<ArchiveWork>> routes = new LinkedHashMap<>();
+
+        void add(ArchiveWork work) {
+            routes.computeIfAbsent(ArchiveRoute.of(work.records().getFirst()), _ ->
+                    new PriorityQueue<>(Comparator.comparingLong(item ->
+                            item.records().getFirst().sourceMessageId()))).add(work);
         }
 
-        private ArchiveWork poll() {
-            // Keep unrelated live routes responsive while a large history or outage gap is
-            // being filled. Strict routes put their own arriving messages in the recovery
-            // deque, so this does not weaken their per-route chronological order.
-            ArchiveWork work = live.pollFirst();
-            if (work == null) {
-                work = recovery.pollFirst();
-            }
-            return work == null ? history.pollFirst() : work;
+        boolean hasLive() {
+            return routes.values().stream().anyMatch(route -> !route.isEmpty()
+                    && route.peek().records().getFirst().historyJobId() == null);
+        }
+
+        ArchiveWork poll() {
+            // Priority applies only between route heads. A live or recovery batch must never
+            // jump ahead of older history on the same source-to-destination route.
+            var selected = routes.entrySet().stream()
+                    .min(Comparator.<Map.Entry<ArchiveRoute, PriorityQueue<ArchiveWork>>>comparingInt(
+                            entry -> priority(entry.getValue().peek()))
+                            .thenComparingLong(entry ->
+                                    entry.getValue().peek().records().getFirst().createdAt()))
+                    .orElse(null);
+            if (selected == null) return null;
+            ArchiveWork work = selected.getValue().poll();
+            if (selected.getValue().isEmpty()) routes.remove(selected.getKey());
+            return work;
+        }
+
+        private static int priority(ArchiveWork work) {
+            String jobId = work.records().getFirst().historyJobId();
+            return jobId == null ? 0 : jobId.startsWith("sync:") ? 1 : 2;
         }
     }
 

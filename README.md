@@ -1,4 +1,4 @@
-# Telegram Files 中文增强版 (v1.0.0 正式版)
+# Telegram Files 中文增强版 (v1.2.1 正式版)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jarvis2f/telegram-files/main/web/public/logo.png" alt="Telegram Files" width="120" />
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Release-v1.0.0-emerald.svg" alt="v1.0.0" /></a>
+  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/1.2.1"><img src="https://img.shields.io/badge/Release-v1.2.1-emerald.svg" alt="v1.2.1" /></a>
   <a href="https://github.com/Orson-Yan/telegram-files-cn/pkgs/container/telegram-files-cn"><img src="https://img.shields.io/badge/Docker-ghcr.io-blue.svg?logo=docker" alt="Docker" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" /></a>
 </p>
@@ -37,7 +37,7 @@
   - **单日转发配额**：提供推荐档位（防封推荐: 200 条/天、稳健: 500 条/天、极速: 1000 条/天、不限），支持任务自动智能挂起与次日凌晨零开销自愈唤醒。
   - **随机微抖动 (Jitter Delay)**：单条消息自动增加拟人化毫秒随机延迟，彻底打破机械化固定时间间隔，大幅降低反滥用识别概率。
   - **FloodWait 透明保护横幅**：遭遇官方速率限制时，界面顶部自动弹出解冻倒计时横幅，状态一目了然。
-- **严格时序保障 (Strict Order)**：支持历史追平机制与路由隔离锁，确保目标频道时间线 100% 对齐。
+- **严格时序保障 (Strict Order)**：按来源消息 ID 依次发送，前序消息重试或发送结果未确认时，后续消息继续等待；普通消息等待 Telegram 最终发送确认，相册保持整组发送。历史与实时交接只释放已核实的消息范围。手动暂停历史任务会解除顺序等待，已经发出的消息无法自动重新排序。详见 [云端转发顺序检查报告](CLOUD_ARCHIVE_ORDER_AUDIT.md)。
 - **广告与杂质清洗**：自动剔除超链接、去掉 `@username` 提及，支持自定义正则表达式违禁词替换与文末自定义小尾巴签名。
 - **论坛主题映射 (Forum Topics)**：自动对齐并保留来源频道/群组的主题论坛结构。
 
@@ -61,7 +61,7 @@
 ```yaml
 services:
   telegram-files:
-    image: ghcr.io/orson-yan/telegram-files-cn:1.0.0
+    image: ghcr.io/orson-yan/telegram-files-cn:1.2.1
     container_name: telegram-files
     restart: unless-stopped
     ports:
@@ -91,7 +91,7 @@ docker compose up -d
 
 本项目提供预构建的多架构 Docker 镜像（支持 `linux/amd64` 与 `linux/arm64`）：
 
-- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.0.0`
+- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.2.1`
 - **最新版**：`ghcr.io/orson-yan/telegram-files-cn:latest`
 
 ---

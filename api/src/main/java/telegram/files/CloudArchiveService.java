@@ -89,7 +89,7 @@ public final class CloudArchiveService {
                             rule.mode != SettingAutoRecords.ArchiveMode.FORWARD,
                             !rule.preserveCaption
                     );
-                    return telegram.client.execute(request)
+                    return telegram.forwardArchiveMessages(request)
                             .map(result -> Pair.of(messages, result));
                 })
                 .compose(pair -> {
@@ -145,12 +145,36 @@ public final class CloudArchiveService {
 
     private static Map<Long, Long> mapTargets(long[] sourceIds, TdApi.Messages result) {
         Map<Long, Long> targets = new LinkedHashMap<>();
+        Map<Long, Throwable> failures = new LinkedHashMap<>();
         TdApi.Message[] messages = result == null ? null : result.messages;
         for (int index = 0; index < sourceIds.length; index++) {
             TdApi.Message message = messages != null && index < messages.length ? messages[index] : null;
-            targets.put(sourceIds[index], message == null ? 0L : message.id);
+            if (message == null || message.id == 0) {
+                failures.put(sourceIds[index], new Rejected("TELEGRAM_REJECTED_MESSAGE",
+                        "Telegram didn't return a destination message"));
+            } else if (message.sendingState instanceof TdApi.MessageSendingStatePending) {
+                failures.put(sourceIds[index], new CloudArchiveDeliveryTracker.Unconfirmed(
+                        "Telegram delivery confirmation timed out; review before retrying"));
+            } else if (message.sendingState instanceof TdApi.MessageSendingStateFailed failed) {
+                failures.put(sourceIds[index], new TelegramRunException(failed.error == null
+                        ? new TdApi.Error(500, "Telegram delivery failed") : failed.error));
+            } else {
+                targets.put(sourceIds[index], message.id);
+            }
         }
+        if (!failures.isEmpty()) throw new PartialDelivery(targets, failures);
         return targets;
+    }
+
+    static final class PartialDelivery extends RuntimeException {
+        final Map<Long, Long> targets;
+        final Map<Long, Throwable> failures;
+
+        PartialDelivery(Map<Long, Long> targets, Map<Long, Throwable> failures) {
+            super("Telegram confirmed only part of the archive batch");
+            this.targets = Map.copyOf(targets);
+            this.failures = Map.copyOf(failures);
+        }
     }
 
     public static Future<JsonObject> validate(TelegramVerticle telegram,

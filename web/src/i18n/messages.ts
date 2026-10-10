@@ -411,6 +411,7 @@ export const zhCNMessages: Readonly<Record<string, string>> = {
   "History range": "历史拉取范围",
   "History tasks": "历史任务",
   "Hold newer messages until history or an outage gap is caught up, then release the route oldest first.": "暂存较新的实时消息，直到历史任务或断档补齐后，再按时间正序依次释放发送。",
+  "Retries and unconfirmed deliveries hold later messages on this route. Pausing history releases this hold.": "前序消息重试或发送结果未确认时，后续消息会继续等待。手动暂停历史任务会解除顺序等待。",
   "Home": "首页",
   "Idle": "空闲",
   "If destination exists same name file, move and overwrite the file.": "若目标位置存在同名文件，则移动并覆盖。",

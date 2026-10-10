@@ -39,6 +39,8 @@ public class TelegramVerticle extends AbstractVerticle {
 
     public TelegramGateway client;
 
+    private final CloudArchiveDeliveryTracker archiveDeliveries = new CloudArchiveDeliveryTracker();
+
     private volatile TelegramGateway tdlibClient;
 
     private final TelegramGatewayFactory gatewayFactory;
@@ -174,8 +176,19 @@ public class TelegramVerticle extends AbstractVerticle {
         telegramUpdateHandler.setOnChatUpdated(telegramChats::onChatUpdated);
         telegramUpdateHandler.setOnMessageReceived(this::onMessageReceived);
         telegramUpdateHandler.setOnConnectionStateUpdated(this::onConnectionStateUpdated);
+        telegramUpdateHandler.setOnMessageSendUpdated(archiveDeliveries::onUpdate);
 
         tdlibClient.initialize(telegramUpdateHandler, this::handleException, this::handleException);
+    }
+
+    Future<TdApi.Messages> forwardArchiveMessages(TdApi.ForwardMessages request) {
+        // Keep the account awake until server confirmation, rather than just until acceptance.
+        onRequestStarted();
+        return archiveDeliveries.forward(client, request, vertx)
+                .eventually(() -> {
+                    onRequestFinished();
+                    return Future.succeededFuture();
+                });
     }
 
     TelegramGateway tdlibClient() {

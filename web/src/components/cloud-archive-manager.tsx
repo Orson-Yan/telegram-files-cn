@@ -1383,6 +1383,9 @@ export function CloudArchiveManager() {
                     Hold newer messages until history or an outage gap is caught up,
                     then release the route oldest first.
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    Retries and unconfirmed deliveries hold later messages on this route. Pausing history releases this hold.
+                  </p>
                 </div>
                 <Switch
                   checked={draft.rule.strictOrder}

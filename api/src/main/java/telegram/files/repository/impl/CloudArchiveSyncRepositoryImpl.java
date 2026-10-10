@@ -87,9 +87,10 @@ public final class CloudArchiveSyncRepositoryImpl extends AbstractSqlRepository
                             queued_count = 0, last_error = NULL, updated_at = ?
                         WHERE telegram_id = ? AND source_chat_id = ?
                           AND source_topic_id = ? AND target_chat_id = ?
+                          AND status <> 'RECOVERING' AND last_observed_message_id < ?
                         """)
                 .execute(Tuple.of(targetMessageId, clock.millis(), state.telegramId(),
-                        state.sourceChatId(), state.sourceTopicId(), state.targetChatId()))
+                        state.sourceChatId(), state.sourceTopicId(), state.targetChatId(), targetMessageId))
                 .mapEmpty();
     }
 

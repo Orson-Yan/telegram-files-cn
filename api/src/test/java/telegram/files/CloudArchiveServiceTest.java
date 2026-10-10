@@ -18,6 +18,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ExtendWith(VertxExtension.class)
 class CloudArchiveServiceTest {
+    @Test
+    void partialFailurePreservesConfirmedTargetsInsteadOfRetryingTheWholeBatch(VertxTestContext context) {
+        ScriptedTelegramGateway gateway = new ScriptedTelegramGateway(request -> switch (request) {
+            case TdApi.GetMessages value -> messages(value.messageIds);
+            case TdApi.GetMessageProperties _ -> copyableProperties();
+            case TdApi.ForwardMessages _ -> {
+                TdApi.Messages result = messages(new long[]{9001, -2});
+                var state = new TdApi.MessageSendingStateFailed();
+                state.error = new TdApi.Error(429, "FLOOD_WAIT_5");
+                result.messages[1].sendingState = state;
+                yield result;
+            }
+            default -> new TdApi.Ok();
+        });
+        CloudArchiveService.archive(telegram(gateway), 100, List.of(10L, 11L),
+                        rule(200, SettingAutoRecords.ArchiveMode.COPY))
+                .onComplete(context.failing(failure -> context.verify(() -> {
+                    var partial = assertInstanceOf(CloudArchiveService.PartialDelivery.class, failure);
+                    assertEquals(9001L, partial.targets.get(10L));
+                    assertFalse(partial.targets.containsKey(11L));
+                    assertTrue(CloudArchiveService.isRetryable(partial.failures.get(11L)));
+                    context.completeNow();
+                })));
+    }
+
 
     @Test
     void copyArchivesMessagesInOrderWithoutDownloadingMedia(VertxTestContext context) {

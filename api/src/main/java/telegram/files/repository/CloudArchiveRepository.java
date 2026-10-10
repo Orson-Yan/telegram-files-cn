@@ -73,6 +73,13 @@ public interface CloudArchiveRepository {
 
     Future<Void> releaseHistory(String historyJobId);
 
+    Future<Void> releaseHistoryThrough(String historyJobId, long sourceMessageId);
+
+    Future<Void> holdHistoryForSync(String historyJobId, String syncKey);
+
+    Future<Long> initialSyncBaseline(long telegramId, long sourceChatId, long sourceTopicId,
+                                    long targetChatId, long headMessageId);
+
     Future<Void> releaseCompletedHistory();
 
     Future<Long> countOutstandingHistory(String historyJobId);
@@ -90,6 +97,24 @@ public interface CloudArchiveRepository {
     Future<Void> recoverSendingAsUnknown();
 
     Future<List<CloudArchiveRecord>> listDue(long now, int limit);
+
+    record RouteOrder(long telegramId, long sourceChatId, long targetChatId,
+                      boolean strictOrder, boolean holdAll) {}
+
+    default Future<List<CloudArchiveRecord>> listDue(long now, int limit, List<RouteOrder> routeOrders) {
+        return listDue(now, limit);
+    }
+
+    Future<List<CloudArchiveRecord>> listUnsentAlbum(CloudArchiveRecord record);
+
+    default Future<List<CloudArchiveRecord>> listUnsentAlbum(CloudArchiveRecord record, boolean strictOrder) {
+        return listUnsentAlbum(record);
+    }
+
+    /** Revalidates prefetched work against durable predecessors and retry deadlines. */
+    Future<Boolean> isBatchReady(List<CloudArchiveRecord> records, long now, boolean strictOrder);
+
+    Future<Void> unknown(String id, String errorCode, String message);
 
     default Future<List<CloudArchiveRecord>> listRecent(int limit) {
         return listRecent(limit, null);

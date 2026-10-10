@@ -19,6 +19,37 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @ExtendWith(VertxExtension.class)
 class CloudArchiveSyncRepositoryImplTest {
+    @Test
+    void racingRecoveryStartsCannotResetCursorOrChangeTheActiveScanTarget(
+            Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(vertx, new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        CloudArchiveSyncRepositoryImpl repository = new CloudArchiveSyncRepositoryImpl(
+                pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
+        pool.query(CloudArchiveSyncState.SCHEME).execute()
+                .compose(_ -> repository.ensure(7, 100, 0, 200, 100))
+                .compose(stale -> repository.beginRecovery(stale, 150)
+                        .compose(_ -> repository.advanceRecovery(stale, 125, 25, 20, 18))
+                        .compose(_ -> repository.beginRecovery(stale, 200))
+                        .compose(_ -> repository.find(7, 100, 0, 200)))
+                .compose(state -> {
+                    context.verify(() -> {
+                        assertEquals(150, state.recoveryTargetMessageId());
+                        assertEquals(125, state.recoveryCursorMessageId());
+                        assertEquals(25, state.scannedCount());
+                    });
+                    return repository.completeRecovery(state)
+                            .compose(_ -> repository.beginRecovery(state, 140))
+                            .compose(_ -> repository.find(7, 100, 0, 200));
+                })
+                .eventually(pool::close)
+                .onComplete(context.succeeding(state -> context.verify(() -> {
+                    assertEquals("LIVE", state.status());
+                    assertEquals(150, state.lastObservedMessageId());
+                    context.completeNow();
+                })));
+    }
+
 
     @Test
     void persistsAndAdvancesAnOutageRecoveryCursor(Vertx vertx,
