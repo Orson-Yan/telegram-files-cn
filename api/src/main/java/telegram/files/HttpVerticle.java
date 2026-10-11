@@ -371,7 +371,13 @@ public class HttpVerticle extends AbstractVerticle {
 
         vertx.eventBus().consumer(EventEnum.AUTO_DOWNLOAD_UPDATE.address(), message -> {
             log.debug("Auto settings update: %s".formatted(message.body()));
-            AutomationsHolder.INSTANCE.onAutoRecordsUpdate(Json.decodeValue(message.body().toString(), SettingAutoRecords.class));
+            try {
+                AutomationsHolder.INSTANCE.onAutoRecordsUpdate(Json.decodeValue(message.body().toString(), SettingAutoRecords.class));
+                message.reply(null);
+            } catch (Exception failure) {
+                log.error("Failed to apply auto settings", failure);
+                message.fail(500, "Failed to apply auto settings");
+            }
         });
         return Future.succeededFuture();
     }

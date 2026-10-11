@@ -31,7 +31,8 @@ class CloudArchiveMultiRouteTest {
     private String saved;
 
     @BeforeEach
-    void setup() {
+    void setup(Vertx vertx) {
+        vertx.eventBus().consumer(EventEnum.AUTO_DOWNLOAD_UPDATE.address(), message -> message.reply(null));
         previousSettings = DataVerticle.settingRepository;
         settings = mock(SettingRepository.class);
         DataVerticle.settingRepository = settings;

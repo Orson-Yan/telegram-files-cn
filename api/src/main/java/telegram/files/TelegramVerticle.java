@@ -1021,16 +1021,16 @@ public class TelegramVerticle extends AbstractVerticle {
                         updateArchiveDestination(automation, params);
                     } else {
                         automation = params.mapTo(SettingAutoRecords.Automation.class);
+                        normalizeAutomation(automation);
+                        validateArchiveDestinations(automation);
+                        mergeLegacyArchiveDestinations(automation, previous);
                     }
                     if (automation.archiveRules == null && previous != null) {
                         automation.archiveRules = previous.archiveRules;
                     }
                     normalizeAutomation(automation);
-                    Set<Long> targets = new HashSet<>();
+                    validateArchiveDestinations(automation);
                     for (SettingAutoRecords.ArchiveConfig archive : automation.getArchiveConfigs()) {
-                        if (!targets.add(archive.rule.targetChatId)) {
-                            throw new IllegalArgumentException("A cloud archive rule already exists for this source and destination");
-                        }
                         validateArchiveRule(settingAutoRecords, chatId, archive);
                     }
                     boolean hasEnabled = automation.preload.enabled
@@ -1052,10 +1052,38 @@ public class TelegramVerticle extends AbstractVerticle {
                         settingAutoRecords.add(automation);
                     }
 
+                    // A successful response must also make the saved routes available to the
+                    // next overview/history request, not just finish the database write.
                     return DataVerticle.settingRepository.createOrUpdate(SettingKey.automation.name(), Json.encode(settingAutoRecords))
-                            .onSuccess(r -> vertx.eventBus().publish(EventEnum.AUTO_DOWNLOAD_UPDATE.name(), r.value()));
+                            .compose(r -> vertx.eventBus().request(EventEnum.AUTO_DOWNLOAD_UPDATE.address(), r.value()).mapEmpty());
                 })
                 .mapEmpty();
+    }
+
+    private static void validateArchiveDestinations(SettingAutoRecords.Automation automation) {
+        Set<Long> targets = new HashSet<>();
+        for (var archive : automation.getArchiveConfigs()) {
+            if (!targets.add(archive.rule.targetChatId)) {
+                throw new IllegalArgumentException("A cloud archive rule already exists for this source and destination");
+            }
+        }
+    }
+
+    private static void mergeLegacyArchiveDestinations(SettingAutoRecords.Automation incoming,
+                                                      SettingAutoRecords.Automation previous) {
+        if (previous == null) return;
+        List<SettingAutoRecords.ArchiveConfig> updates = incoming.getArchiveConfigs();
+        incoming.archive = previous.archive;
+        incoming.archiveRules = previous.archiveRules == null ? null : new ArrayList<>(previous.archiveRules);
+        // Full source settings have no route-edit identity. Treat a different destination as
+        // an additional route; only archiveUpdate + previousTargetChatId may move a route.
+        for (var config : updates) {
+            boolean exists = incoming.getArchiveConfigs().stream()
+                    .anyMatch(item -> item.rule.targetChatId == config.rule.targetChatId);
+            JsonObject update = JsonObject.of("archiveUpdate", JsonObject.mapFrom(config));
+            if (exists) update.put("previousTargetChatId", config.rule.targetChatId);
+            updateArchiveDestination(incoming, update);
+        }
     }
 
     private static void updateArchiveDestination(SettingAutoRecords.Automation automation, JsonObject params) {
