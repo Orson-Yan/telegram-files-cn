@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { type TelegramChat } from "@/lib/types";
 import UseIsMobile from "@/hooks/use-is-mobile";
+import { hasArchiveEnabled } from "@/lib/automation";
 
 interface AutoDownloadButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   auto?: TelegramChat["auto"];
@@ -24,7 +25,7 @@ const AutomationButton = React.forwardRef<
     (auto.preload.enabled ||
       auto.download.enabled ||
       auto.transfer.enabled ||
-      auto.archive?.enabled);
+      hasArchiveEnabled(auto));
   const isMobile = UseIsMobile();
 
   return (
@@ -54,7 +55,7 @@ const AutomationButton = React.forwardRef<
                   ? auto?.preload.enabled &&
                     auto.download.enabled &&
                     auto.transfer.enabled &&
-                    auto.archive?.enabled
+                    hasArchiveEnabled(auto)
                     ? "animate-breathing bg-green-500"
                     : "animate-breathing bg-blue-500"
                   : "bg-red-500",

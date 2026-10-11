@@ -1,6 +1,7 @@
 package telegram.files.repository.impl;
 
 import io.vertx.core.Vertx;
+import io.vertx.core.Future;
 import io.vertx.jdbcclient.JDBCConnectOptions;
 import io.vertx.jdbcclient.JDBCPool;
 import io.vertx.junit5.VertxExtension;
@@ -19,9 +20,49 @@ import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 @ExtendWith(VertxExtension.class)
 class CloudArchiveHistoryRepositoryImplTest {
+
+    @Test
+    void sameSourceCanBackfillTwoDestinationsIndependently(Vertx vertx, VertxTestContext context) {
+        Pool pool = JDBCPool.pool(vertx,
+                new JDBCConnectOptions().setJdbcUrl("jdbc:sqlite::memory:"),
+                new PoolOptions().setMaxSize(1));
+        var repository = new CloudArchiveHistoryRepositoryImpl(pool,
+                Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
+        pool.query(CloudArchiveHistoryJob.SCHEME).execute()
+                .compose(_ -> repository.create(7, 100, 0, 200, 0, "{}", "ALL", 0, 500))
+                .compose(first -> repository.create(7, 100, 0, 300, 0, "{}", "ALL", 0, 1000)
+                        .map(second -> new CloudArchiveHistoryJob[]{first, second}))
+                .compose(jobs -> repository.create(7, 100, 0, 200, 0, "{}", "ALL", 0, 500)
+                        .compose(_ -> Future.<Void>failedFuture(new AssertionError("Duplicate route was accepted")))
+                        .recover(failure -> failure instanceof IllegalStateException
+                                ? Future.succeededFuture() : Future.failedFuture(failure))
+                        .compose(_ -> repository.transition(jobs[0].id(), "pause"))
+                        .compose(_ -> Future.all(repository.findActive(7, 100, 200),
+                                repository.findActive(7, 100, 300), repository.findActive(7, 100, 400))))
+                .compose(active -> {
+                    context.verify(() -> {
+                        CloudArchiveHistoryJob first = active.resultAt(0);
+                        CloudArchiveHistoryJob second = active.resultAt(1);
+                        assertEquals("PAUSED", first.status());
+                        assertEquals(500, first.dailyLimit());
+                        assertEquals("PENDING", second.status());
+                        assertEquals(1000, second.dailyLimit());
+                        assertNull(active.resultAt(2));
+                    });
+                    return repository.transition(((CloudArchiveHistoryJob) active.resultAt(0)).id(), "cancel");
+                })
+                .compose(_ -> Future.all(repository.findActive(7, 100, 200), repository.findActive(7, 100, 300)))
+                .eventually(pool::close)
+                .onComplete(context.succeeding(active -> context.verify(() -> {
+                    assertNull(active.resultAt(0));
+                    assertEquals("PENDING", ((CloudArchiveHistoryJob) active.resultAt(1)).status());
+                    context.completeNow();
+                })));
+    }
 
     @Test
     void migrationAddsPaginationTopicAndCompletionColumns(Vertx vertx,

@@ -39,6 +39,30 @@ public class SettingAutoRecords {
          */
         public ArchiveConfig archive = new ArchiveConfig();
 
+        /** Additional destinations for this source. Null preserves legacy update semantics. */
+        public List<ArchiveConfig> archiveRules;
+
+        @JsonIgnore
+        public List<ArchiveConfig> getArchiveConfigs() {
+            List<ArchiveConfig> configs = new ArrayList<>();
+            if (archive != null) configs.add(archive);
+            if (archiveRules != null) configs.addAll(archiveRules);
+            return configs.stream().filter(config -> config != null && config.rule != null
+                    && config.rule.targetChatId != 0).toList();
+        }
+
+        private Automation forArchive(ArchiveConfig config) {
+            Automation route = new Automation();
+            route.telegramId = telegramId;
+            route.chatId = chatId;
+            route.preload = preload;
+            route.download = download;
+            route.transfer = transfer;
+            route.archive = config;
+            route.state = state;
+            return route;
+        }
+
         public int state;
 
         public String uniqueKey() {
@@ -317,18 +341,31 @@ public class SettingAutoRecords {
 
     @JsonIgnore
     public List<Automation> getArchiveEnabledItems() {
-        return automations.stream()
-                .filter(i -> i.archive != null && i.archive.enabled
-                             && i.archive.rule != null && i.archive.rule.targetChatId != 0)
+        return getArchiveConfiguredItems().stream()
+                .filter(i -> i.archive.enabled)
                 .toList();
     }
 
     @JsonIgnore
     public List<Automation> getArchiveConfiguredItems() {
         return automations.stream()
-                .filter(i -> i.archive != null && i.archive.rule != null
-                             && i.archive.rule.targetChatId != 0)
+                .flatMap(item -> item.getArchiveConfigs().stream().map(item::forArchive))
                 .toList();
+    }
+
+    public List<Automation> getArchiveEnabledItems(long telegramId, long chatId) {
+        Automation source = getItem(telegramId, chatId);
+        if (source == null) return List.of();
+        return source.getArchiveConfigs().stream().filter(config -> config.enabled)
+                .map(source::forArchive).toList();
+    }
+
+    public Automation getArchiveItem(long telegramId, long chatId, long targetChatId) {
+        Automation source = getItem(telegramId, chatId);
+        if (source == null) return null;
+        return source.getArchiveConfigs().stream()
+                .filter(config -> config.rule.targetChatId == targetChatId)
+                .findFirst().map(source::forArchive).orElse(null);
     }
 
     public Map<Long, Automation> getItems(long telegramId) {

@@ -219,6 +219,7 @@ export type Auto = {
     enabled: boolean;
     rule: AutoArchiveRule;
   };
+  archiveRules?: Auto["archive"][] | null;
 };
 
 export const TransferPolices = [

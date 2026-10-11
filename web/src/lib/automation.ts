@@ -73,5 +73,41 @@ export function normalizeAuto(value?: Partial<Auto>): Auto {
       ...value?.archive,
       rule: { ...defaults.archive.rule, ...value?.archive?.rule },
     },
+    archiveRules: (value?.archiveRules ?? []).map((config) => ({
+      ...defaults.archive,
+      ...config,
+      rule: { ...defaults.archive.rule, ...config.rule },
+    })),
   };
+}
+
+export function archiveConfigs(value?: Partial<Auto>): Auto["archive"][] {
+  return [value?.archive, ...(value?.archiveRules ?? [])].filter(
+    (config): config is Auto["archive"] => Boolean(config?.rule?.targetChatId),
+  );
+}
+
+export function hasArchiveEnabled(value?: Partial<Auto>): boolean {
+  return archiveConfigs(value).some((config) => config.enabled);
+}
+
+/** Validate the selected route; the server merges the update into its latest settings. */
+export function validateArchiveDestination(
+  value: Auto,
+  config: Auto["archive"],
+  previousTargetChatId?: string | number,
+): void {
+  const configs = archiveConfigs(value);
+  const previous = previousTargetChatId === undefined
+    ? undefined : String(previousTargetChatId);
+  const target = String(config.rule.targetChatId);
+  if (configs.some((item) => String(item.rule.targetChatId) === target
+      && String(item.rule.targetChatId) !== previous)) {
+    throw new Error("A rule already exists for this source and destination");
+  }
+  if (previous !== undefined) {
+    if (!configs.some((item) => String(item.rule.targetChatId) === previous)) {
+      throw new Error("The rule has changed. Refresh the rules and try again");
+    }
+  }
 }

@@ -41,15 +41,15 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                                                  int dailyLimit) {
         return preparedQuery("""
                         SELECT id FROM telegram_archive_history_job
-                        WHERE telegram_id = ? AND source_chat_id = ?
+                        WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
                           AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED')
                         LIMIT 1
                         """)
-                .execute(Tuple.of(telegramId, sourceChatId))
+                .execute(Tuple.of(telegramId, sourceChatId, targetChatId))
                 .compose(rows -> {
                     if (rows.iterator().hasNext()) {
                         return Future.failedFuture(new IllegalStateException(
-                                "This source already has an active history task"));
+                                "This source and destination already have an active history task"));
                     }
                     long now = clock.millis();
                     String id = UUID.randomUUID().toString();
@@ -144,6 +144,19 @@ public final class CloudArchiveHistoryRepositoryImpl extends AbstractSqlReposito
                         ORDER BY created_at DESC LIMIT 1
                         """)
                 .execute(Tuple.of(telegramId, sourceChatId))
+                .map(rows -> rows.iterator().hasNext()
+                        ? CloudArchiveHistoryJob.from(rows.iterator().next()) : null);
+    }
+
+    @Override
+    public Future<CloudArchiveHistoryJob> findActive(long telegramId, long sourceChatId, long targetChatId) {
+        return preparedQuery("""
+                        SELECT * FROM telegram_archive_history_job
+                        WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                          AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED')
+                        ORDER BY created_at DESC LIMIT 1
+                        """)
+                .execute(Tuple.of(telegramId, sourceChatId, targetChatId))
                 .map(rows -> rows.iterator().hasNext()
                         ? CloudArchiveHistoryJob.from(rows.iterator().next()) : null);
     }

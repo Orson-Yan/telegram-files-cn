@@ -22,7 +22,7 @@ import AutomationForm from "@/components/automation-form";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CloudUpload, Download, FolderSync, PackageSearch } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { createDefaultAuto, normalizeAuto } from "@/lib/automation";
+import { archiveConfigs, createDefaultAuto, hasArchiveEnabled, normalizeAuto } from "@/lib/automation";
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
@@ -245,15 +245,16 @@ export default function AutomationDialog() {
 
               <AutomationSummarySection
                 title="Cloud Archive"
-                enabled={chat.auto.archive?.enabled ?? false}
+                enabled={hasArchiveEnabled(chat.auto)}
                 icon={<CloudUpload />}
               >
-                {chat.auto.archive?.rule?.targetChatId ? (
+                {archiveConfigs(chat.auto).map((config) => (
                   <DetailBlock
+                    key={String(config.rule.targetChatId)}
                     label="Destination Chat"
-                    value={String(chat.auto.archive.rule.targetChatId)}
+                    value={String(config.rule.targetChatId)}
                   />
-                ) : undefined}
+                ))}
               </AutomationSummarySection>
 
               <AutomationSummarySection

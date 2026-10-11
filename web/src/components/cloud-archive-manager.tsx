@@ -111,7 +111,7 @@ import { RuleChatPicker } from "@/components/rule-chat-picker";
 import { RuleTopicPicker } from "@/components/rule-topic-picker";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeAuto } from "@/lib/automation";
+import { normalizeAuto, validateArchiveDestination } from "@/lib/automation";
 import { POST, request } from "@/lib/api";
 import type {
   ArchiveMode,
@@ -201,12 +201,14 @@ async function currentAuto(telegramId: string, chatId: string) {
   const chats = await request<TelegramChat[]>(
     `/telegram/${telegramId}/chats?query=&archived=false&chatId=${chatId}`,
   );
-  return normalizeAuto(chats.find((chat) => chat.id === chatId)?.auto);
+  const chat = chats.find((chat) => chat.id === chatId);
+  if (!chat) throw new Error("Unable to load the source chat settings. Refresh and try again");
+  return normalizeAuto(chat.auto);
 }
 
-async function saveDraft(draft: RuleDraft) {
+async function saveDraft(draft: RuleDraft, previousTargetChatId?: string) {
   const auto = await currentAuto(draft.telegramId, draft.sourceChatId);
-  auto.archive = {
+  const config = {
     enabled: draft.enabled,
     rule: {
       ...draft.rule,
@@ -225,9 +227,10 @@ async function saveDraft(draft: RuleDraft) {
       captionSuffix: draft.rule.captionSuffix || "",
     },
   };
+  validateArchiveDestination(auto, config, previousTargetChatId);
   await POST(
     `/${draft.telegramId}/file/update-auto-settings?telegramId=${draft.telegramId}&chatId=${draft.sourceChatId}`,
-    auto,
+    { archiveUpdate: config, previousTargetChatId },
   );
 }
 
@@ -260,7 +263,7 @@ export function CloudArchiveManager() {
   const accounts = getAccounts("active");
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<CloudArchiveRuleOverview | null>(null);
   const [draft, setDraft] = useState<RuleDraft>(() => emptyDraft());
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState<"validate" | "test" | null>(null);
@@ -329,13 +332,13 @@ export function CloudArchiveManager() {
   }, [draft]);
 
   const openNew = () => {
-    setEditing(false);
+    setEditing(null);
     setDraft(emptyDraft(accounts[0]?.id ?? ""));
     setDialogOpen(true);
   };
 
   const openEdit = (rule: CloudArchiveRuleOverview) => {
-    setEditing(true);
+    setEditing(rule);
     setDraft(toDraft(rule));
     setDialogOpen(true);
   };
@@ -390,7 +393,7 @@ export function CloudArchiveManager() {
     if (!validDraft) return;
     setSaving(true);
     try {
-      await saveDraft(draft);
+      await saveDraft(draft, editing?.targetChatId);
       let historyQueued = false;
       let historyError: string | undefined;
       if (
@@ -402,6 +405,7 @@ export function CloudArchiveManager() {
           await POST("/cloud-archive/history", {
             telegramId: draft.telegramId,
             sourceChatId: draft.sourceChatId,
+            targetChatId: draft.rule.targetChatId,
             scanMode: "ALL",
             maxMessages: 0,
           });
@@ -436,7 +440,7 @@ export function CloudArchiveManager() {
 
   const toggleRule = async (rule: CloudArchiveRuleOverview) => {
     try {
-      await saveDraft({ ...toDraft(rule), enabled: !rule.enabled });
+      await saveDraft({ ...toDraft(rule), enabled: !rule.enabled }, rule.targetChatId);
       await reloadOverview();
     } catch (failure) {
       toast({
@@ -517,6 +521,7 @@ export function CloudArchiveManager() {
       await POST("/cloud-archive/history", {
         telegramId: historyRule.telegramId,
         sourceChatId: historyRule.sourceChatId,
+        targetChatId: historyRule.targetChatId,
         scanMode: historyLimit === "ALL" ? "ALL" : "LIMIT",
         maxMessages: historyLimit === "ALL" ? 0 : Number(historyLimit),
         dailyLimit,
@@ -680,7 +685,7 @@ export function CloudArchiveManager() {
             </Card>
           ) : (
             overview.rules.map((item) => (
-              <Card key={`${item.telegramId}:${item.sourceChatId}`}>
+              <Card key={`${item.telegramId}:${item.sourceChatId}:${item.targetChatId}`}>
                 <CardHeader className="pb-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
@@ -1179,7 +1184,7 @@ export function CloudArchiveManager() {
               <Label>Telegram account</Label>
               <Select
                 value={draft.telegramId || undefined}
-                disabled={editing}
+                disabled={Boolean(editing)}
                 onValueChange={(telegramId) => setDraft(emptyDraft(telegramId))}
               >
                 <SelectTrigger>
@@ -1201,6 +1206,7 @@ export function CloudArchiveManager() {
                 <RuleChatPicker
                   accountId={draft.telegramId}
                   value={draft.sourceChatId}
+                  disabled={Boolean(editing)}
                   onChange={(sourceChatId, chat) =>
                     setDraft({
                       ...draft,
@@ -1350,7 +1356,7 @@ export function CloudArchiveManager() {
                 <Label>Initial synchronization</Label>
                 <Select
                   value={draft.rule.initialSyncMode}
-                  disabled={editing}
+                  disabled={Boolean(editing)}
                   onValueChange={(initialSyncMode: "NOW" | "FULL") =>
                     setDraft({
                       ...draft,

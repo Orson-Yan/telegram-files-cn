@@ -996,20 +996,48 @@ public class TelegramVerticle extends AbstractVerticle {
                 .mapEmpty();
     }
 
+    private static Future<Void> autoSettingsWrites = Future.succeededFuture();
+
     public Future<Void> updateAutoSettings(Long chatId, JsonObject params) {
+        // All accounts share the automation setting. Read the latest value only after the
+        // preceding write finishes, so concurrent route edits cannot replace each other.
+        synchronized (TelegramVerticle.class) {
+            autoSettingsWrites = autoSettingsWrites.recover(_ -> Future.succeededFuture())
+                    .compose(_ -> persistAutoSettings(chatId, params));
+            return autoSettingsWrites;
+        }
+    }
+
+    private Future<Void> persistAutoSettings(Long chatId, JsonObject params) {
         return DataVerticle.settingRepository.<SettingAutoRecords>getByKey(SettingKey.automation)
                 .compose(settingAutoRecords -> {
                     if (settingAutoRecords == null) {
                         settingAutoRecords = new SettingAutoRecords();
                     }
-                    SettingAutoRecords.Automation automation = params.mapTo(SettingAutoRecords.Automation.class);
+                    SettingAutoRecords.Automation previous = settingAutoRecords.getItem(this.telegramRecord.id(), chatId);
+                    SettingAutoRecords.Automation automation;
+                    if (params.containsKey("archiveUpdate")) {
+                        automation = previous == null ? new SettingAutoRecords.Automation() : previous;
+                        updateArchiveDestination(automation, params);
+                    } else {
+                        automation = params.mapTo(SettingAutoRecords.Automation.class);
+                    }
+                    if (automation.archiveRules == null && previous != null) {
+                        automation.archiveRules = previous.archiveRules;
+                    }
                     normalizeAutomation(automation);
-                    validateArchiveRule(settingAutoRecords, chatId, automation.archive);
+                    Set<Long> targets = new HashSet<>();
+                    for (SettingAutoRecords.ArchiveConfig archive : automation.getArchiveConfigs()) {
+                        if (!targets.add(archive.rule.targetChatId)) {
+                            throw new IllegalArgumentException("A cloud archive rule already exists for this source and destination");
+                        }
+                        validateArchiveRule(settingAutoRecords, chatId, archive);
+                    }
                     boolean hasEnabled = automation.preload.enabled
                                          || automation.download.enabled
                                          || automation.transfer.enabled
-                                         || automation.archive.enabled;
-                    boolean hasConfiguredArchive = automation.archive.rule.targetChatId != 0;
+                                         || automation.getArchiveConfigs().stream().anyMatch(config -> config.enabled);
+                    boolean hasConfiguredArchive = !automation.getArchiveConfigs().isEmpty();
                     boolean hasConfiguredTransfer = StrUtil.isNotBlank(automation.transfer.rule.destination);
 
                     if (settingAutoRecords.exists(this.telegramRecord.id(), chatId)
@@ -1030,6 +1058,44 @@ public class TelegramVerticle extends AbstractVerticle {
                 .mapEmpty();
     }
 
+    private static void updateArchiveDestination(SettingAutoRecords.Automation automation, JsonObject params) {
+        JsonObject update = params.getJsonObject("archiveUpdate");
+        if (update == null) throw new IllegalArgumentException("A cloud archive rule is required");
+        SettingAutoRecords.ArchiveConfig config = update.mapTo(SettingAutoRecords.ArchiveConfig.class);
+        normalizeArchiveConfig(config);
+        if (config.rule.targetChatId == 0) throw new IllegalArgumentException("A destination is required");
+        long previousTarget = Convert.toLong(params.getValue("previousTargetChatId"), 0L);
+        if (automation.getArchiveConfigs().stream().anyMatch(item ->
+                item.rule.targetChatId == config.rule.targetChatId && item.rule.targetChatId != previousTarget)) {
+            throw new IllegalArgumentException("A cloud archive rule already exists for this source and destination");
+        }
+        if (previousTarget != 0) {
+            if (automation.archive != null && automation.archive.rule != null
+                && automation.archive.rule.targetChatId == previousTarget) {
+                automation.archive = config;
+                return;
+            }
+            if (automation.archiveRules != null) {
+                for (int i = 0; i < automation.archiveRules.size(); i++) {
+                    var item = automation.archiveRules.get(i);
+                    if (item != null && item.rule != null && item.rule.targetChatId == previousTarget) {
+                        automation.archiveRules = new ArrayList<>(automation.archiveRules);
+                        automation.archiveRules.set(i, config);
+                        return;
+                    }
+                }
+            }
+            throw new IllegalArgumentException("The rule has changed. Refresh the rules and try again");
+        }
+        if (automation.archive == null || automation.archive.rule == null || automation.archive.rule.targetChatId == 0) {
+            automation.archive = config;
+        } else {
+            automation.archiveRules = automation.archiveRules == null
+                    ? new ArrayList<>() : new ArrayList<>(automation.archiveRules);
+            automation.archiveRules.add(config);
+        }
+    }
+
     private static void normalizeAutomation(SettingAutoRecords.Automation automation) {
         if (automation.preload == null) automation.preload = new SettingAutoRecords.PreloadConfig();
         if (automation.download == null) automation.download = new SettingAutoRecords.DownloadConfig();
@@ -1037,24 +1103,33 @@ public class TelegramVerticle extends AbstractVerticle {
         if (automation.transfer == null) automation.transfer = new SettingAutoRecords.TransferConfig();
         if (automation.transfer.rule == null) automation.transfer.rule = new SettingAutoRecords.TransferRule();
         if (automation.archive == null) automation.archive = new SettingAutoRecords.ArchiveConfig();
-        if (automation.archive.rule == null) automation.archive.rule = new SettingAutoRecords.ArchiveRule();
-        if (automation.archive.rule.mode == null) {
-            automation.archive.rule.mode = SettingAutoRecords.ArchiveMode.COPY;
+        normalizeArchiveConfig(automation.archive);
+        if (automation.archiveRules != null) {
+            automation.archiveRules = new ArrayList<>(automation.archiveRules);
+            automation.archiveRules.removeIf(Objects::isNull);
+            automation.archiveRules.forEach(TelegramVerticle::normalizeArchiveConfig);
         }
-        if (automation.archive.rule.initialSyncMode == null) {
-            automation.archive.rule.initialSyncMode = SettingAutoRecords.ArchiveInitialSyncMode.NOW;
+    }
+
+    private static void normalizeArchiveConfig(SettingAutoRecords.ArchiveConfig archive) {
+        if (archive.rule == null) archive.rule = new SettingAutoRecords.ArchiveRule();
+        if (archive.rule.mode == null) {
+            archive.rule.mode = SettingAutoRecords.ArchiveMode.COPY;
         }
-        if (automation.archive.rule.strictOrder) {
-            automation.archive.rule.recoveryEnabled = true;
+        if (archive.rule.initialSyncMode == null) {
+            archive.rule.initialSyncMode = SettingAutoRecords.ArchiveInitialSyncMode.NOW;
         }
-        if (automation.archive.rule.topicMode == null) {
-            automation.archive.rule.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
+        if (archive.rule.strictOrder) {
+            archive.rule.recoveryEnabled = true;
         }
-        if (automation.archive.rule.scope == null) {
-            automation.archive.rule.scope = SettingAutoRecords.ArchiveScope.ALL_MESSAGES;
+        if (archive.rule.topicMode == null) {
+            archive.rule.topicMode = SettingAutoRecords.ArchiveTopicMode.MERGE;
         }
-        if (automation.archive.rule.fileTypes == null) {
-            automation.archive.rule.fileTypes = new ArrayList<>();
+        if (archive.rule.scope == null) {
+            archive.rule.scope = SettingAutoRecords.ArchiveScope.ALL_MESSAGES;
+        }
+        if (archive.rule.fileTypes == null) {
+            archive.rule.fileTypes = new ArrayList<>();
         }
     }
 
@@ -1081,18 +1156,17 @@ public class TelegramVerticle extends AbstractVerticle {
             return;
         }
         Set<Long> visited = new HashSet<>();
-        long cursor = targetChatId;
-        while (visited.add(cursor)) {
+        List<Long> pending = new ArrayList<>(List.of(targetChatId));
+        while (!pending.isEmpty()) {
+            long cursor = pending.removeLast();
             if (cursor == sourceChatId) {
                 throw new IllegalArgumentException("Cloud archive rules can't form a forwarding loop");
             }
+            if (!visited.add(cursor)) continue;
             SettingAutoRecords.Automation next = existing.getItem(this.telegramRecord.id(), cursor);
-            if (next == null || next.chatId == sourceChatId || next.archive == null
-                || !next.archive.enabled || next.archive.rule == null
-                || next.archive.rule.targetChatId == 0) {
-                break;
-            }
-            cursor = next.archive.rule.targetChatId;
+            if (next == null) continue;
+            next.getArchiveConfigs().stream().filter(config -> config.enabled)
+                    .map(config -> config.rule.targetChatId).forEach(pending::add);
         }
     }
 
@@ -1447,7 +1521,7 @@ public class TelegramVerticle extends AbstractVerticle {
                 .anyMatch(auto -> auto.telegramId == telegramRecord.id()
                                   && ((auto.download != null && auto.download.enabled)
                                       || (auto.preload != null && auto.preload.enabled)
-                                      || (auto.archive != null && auto.archive.enabled)));
+                                      || auto.getArchiveConfigs().stream().anyMatch(config -> config.enabled)));
     }
 
     private boolean canIdleSleepLocked() {

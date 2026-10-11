@@ -1126,8 +1126,7 @@ public class HttpVerticle extends AbstractVerticle {
                 .filter(automation -> (automation.preload != null && automation.preload.enabled)
                                       || (automation.download != null && automation.download.enabled)
                                       || (automation.transfer != null && automation.transfer.enabled)
-                                      || (automation.archive != null && automation.archive.rule != null
-                                          && automation.archive.rule.targetChatId != 0)
+                                      || !automation.getArchiveConfigs().isEmpty()
                                       || (automation.transfer != null && automation.transfer.rule != null
                                           && StrUtil.isNotBlank(automation.transfer.rule.destination)))
                 .toList();
@@ -1361,8 +1360,18 @@ public class HttpVerticle extends AbstractVerticle {
         int maxMessages = "ALL".equals(scanMode) ? 0
                 : Math.max(1, Math.min(Convert.toInt(body.getValue("maxMessages"), 1000), 100_000));
         int dailyLimit = Math.max(0, Convert.toInt(body.getValue("dailyLimit"), 500));
-        SettingAutoRecords.Automation automation = AutomationsHolder.INSTANCE.autoRecords()
-                .getItem(telegramId, sourceChatId);
+        SettingAutoRecords autoRecords = AutomationsHolder.INSTANCE.autoRecords();
+        long targetChatId = Convert.toLong(body.getValue("targetChatId"), 0L);
+        List<SettingAutoRecords.Automation> enabledRoutes = autoRecords.getArchiveEnabledItems(telegramId, sourceChatId);
+        if (targetChatId == 0 && enabledRoutes.size() > 1) {
+            ctx.response().setStatusCode(400).end(JsonObject.of(
+                    "error", "Choose a destination for the historical archive task"
+            ).encode());
+            return;
+        }
+        SettingAutoRecords.Automation automation = targetChatId == 0
+                ? (enabledRoutes.isEmpty() ? null : enabledRoutes.getFirst())
+                : autoRecords.getArchiveItem(telegramId, sourceChatId, targetChatId);
         if (automation == null || automation.archive == null || !automation.archive.enabled
             || automation.archive.rule == null || automation.archive.rule.targetChatId == 0) {
             ctx.response().setStatusCode(400).end(JsonObject.of(

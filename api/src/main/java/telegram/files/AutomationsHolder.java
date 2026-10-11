@@ -73,6 +73,9 @@ public class AutomationsHolder {
                 theAutomation.download.with(automation.download);
                 theAutomation.transfer.with(automation.transfer);
                 theAutomation.archive.with(automation.archive);
+                if (automation.archiveRules != null) {
+                    theAutomation.archiveRules = new ArrayList<>(automation.archiveRules);
+                }
                 log.info("Update auto records success: %s".formatted(automation.uniqueKey()));
             }
         }

@@ -36,6 +36,7 @@ export function RuleChatPicker({
   excludeChatId,
   source = "telegram",
   eligibleOnly = true,
+  disabled = false,
 }: {
   accountId?: string;
   value?: string;
@@ -44,6 +45,7 @@ export function RuleChatPicker({
   excludeChatId?: string;
   source?: "telegram" | "local";
   eligibleOnly?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -67,7 +69,7 @@ export function RuleChatPicker({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          disabled={!accountId}
+          disabled={disabled || !accountId}
           className="w-full justify-between font-normal"
         >
           <span className={cn("truncate", !selected && "text-muted-foreground")}>

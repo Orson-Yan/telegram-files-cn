@@ -49,7 +49,7 @@ class CloudArchiveExecutionOrderTest {
         rule.archive.rule.targetChatId = 200;
         rule.archive.rule.strictOrder = true;
         AutomationsHolder.INSTANCE.autoRecords().automations = new ArrayList<>(List.of(rule));
-        when(histories.findActive(7, 100)).thenReturn(Future.succeededFuture(null));
+        when(histories.findActive(7, 100, 200)).thenReturn(Future.succeededFuture(null));
     }
 
     @AfterEach
@@ -79,10 +79,34 @@ class CloudArchiveExecutionOrderTest {
         var job = new CloudArchiveHistoryJob("job-1", 7, 100, 0, 200, 0, "{}", "RUNNING",
                 "ALL", "SCANNING", 0, 0, "2026-10-10", 0, null, 0, 0, 0,
                 0, 0, 0, 0, null, null, 1_000, 1_000);
-        when(histories.findActive(7, 100)).thenReturn(Future.succeededFuture(job));
+        when(histories.findActive(7, 100, 200)).thenReturn(Future.succeededFuture(job));
         new AutoCloudArchiveVerticle().process(new AutoCloudArchiveVerticle.ArchiveWork(List.of(record(20, 0))))
                 .onComplete(context.succeeding(_ -> context.verify(() -> {
                     verifyNoInteractions(repository);
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void secondStrictDestinationUsesItsOwnHistoryAndOrderPolicy(VertxTestContext context) {
+        var extra = new SettingAutoRecords.ArchiveConfig();
+        extra.enabled = true;
+        extra.rule.targetChatId = 300;
+        extra.rule.strictOrder = true;
+        AutomationsHolder.INSTANCE.autoRecords().automations.getFirst().archiveRules = List.of(extra);
+        var firstJob = new CloudArchiveHistoryJob("job-1", 7, 100, 0, 200, 0, "{}", "RUNNING",
+                "ALL", "SCANNING", 0, 0, "2026-10-10", 0, null, 0, 0, 0,
+                0, 0, 0, 0, null, null, 1_000, 1_000);
+        when(histories.findActive(7, 100, 200)).thenReturn(Future.succeededFuture(firstJob));
+        when(histories.findActive(7, 100, 300)).thenReturn(Future.succeededFuture(null));
+        when(repository.isBatchReady(anyList(), anyLong(), eq(true))).thenReturn(Future.succeededFuture(false));
+        var second = new CloudArchiveRecord("second", 7, 100, 0, 20, 0, 300, 0, null,
+                null, "COPY", "MERGE", null, 20, "PENDING", 0, 1_000, null, null, 1_000, 1_000);
+        new AutoCloudArchiveVerticle().process(new AutoCloudArchiveVerticle.ArchiveWork(List.of(second)))
+                .onComplete(context.succeeding(_ -> context.verify(() -> {
+                    verify(histories).findActive(7, 100, 300);
+                    verify(histories, never()).findActive(7, 100, 200);
+                    verify(repository).isBatchReady(eq(List.of(second)), anyLong(), eq(true));
                     context.completeNow();
                 })));
     }

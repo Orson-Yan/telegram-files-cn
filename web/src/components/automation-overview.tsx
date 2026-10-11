@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { AutomationChatOverview } from "@/lib/types";
+import { hasArchiveEnabled } from "@/lib/automation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -46,7 +47,7 @@ function enabledCount(item: AutomationChatOverview) {
     item.auto.preload.enabled,
     item.auto.download.enabled,
     item.auto.transfer.enabled,
-    item.auto.archive?.enabled,
+    hasArchiveEnabled(item.auto),
   ].filter(Boolean).length;
 }
 
@@ -79,7 +80,7 @@ function AutomationBadges({ item }: { item: AutomationChatOverview }) {
           Transfer
         </Badge>
       )}
-      {item.auto.archive?.enabled && (
+      {hasArchiveEnabled(item.auto) && (
         <Badge variant="secondary">
           <CloudUpload data-icon="inline-start" />
           Cloud archive
@@ -97,7 +98,7 @@ function ProgressText({ item }: { item: AutomationChatOverview }) {
       isStateComplete(item.auto.state, HISTORY_DOWNLOAD_STATE),
     item.auto.transfer.enabled &&
       isStateComplete(item.auto.state, HISTORY_TRANSFER_STATE),
-    item.auto.archive?.enabled,
+    hasArchiveEnabled(item.auto),
   ].filter(Boolean).length;
   const total = enabledCount(item);
 

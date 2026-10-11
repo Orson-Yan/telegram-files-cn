@@ -154,17 +154,17 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         return Future.succeededFuture();
     }
 
-    private void onNewMessage(JsonObject payload) {
+    void onNewMessage(JsonObject payload) {
         long telegramId = payload.getLong("telegramId", 0L);
         long chatId = payload.getLong("chatId", 0L);
         long messageId = payload.getLong("messageId", 0L);
-        SettingAutoRecords.Automation automation = autoRecords.getItem(telegramId, chatId);
-        if (!isEnabled(automation) || messageId == 0) {
+        List<SettingAutoRecords.Automation> automations = autoRecords.getArchiveEnabledItems(telegramId, chatId);
+        if (automations.isEmpty() || messageId == 0) {
             return;
         }
         TelegramVerticles.get(telegramId).ifPresent(telegram ->
                 telegram.client.execute(new TdApi.GetMessage(chatId, messageId))
-                        .onSuccess(message -> collectMessage(automation, message))
+                        .onSuccess(message -> automations.forEach(automation -> collectMessage(automation, message)))
                         .onFailure(failure -> log.warn(
                                 "Failed to read cloud archive source {}:{}: {}",
                                 chatId, messageId, failure.getMessage())));
@@ -180,7 +180,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return;
         }
 
-        AlbumKey key = new AlbumKey(automation.telegramId, automation.chatId, message.mediaAlbumId);
+        AlbumKey key = new AlbumKey(automation.telegramId, automation.chatId,
+                automation.archive.rule.targetChatId, message.mediaAlbumId);
         AlbumBuffer existing = albumBuffers.get(key);
         if (existing != null) {
             existing.messageIds.add(message.id);
@@ -198,7 +199,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         if (buffer == null) {
             return;
         }
-        SettingAutoRecords.Automation automation = autoRecords.getItem(key.telegramId, key.chatId);
+        SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(key.telegramId, key.chatId, key.targetChatId);
         if (!isEnabled(automation)) {
             return;
         }
@@ -244,7 +245,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         }
 
         DataVerticle.cloudArchiveHistoryRepository.findActive(
-                        automation.telegramId, automation.chatId)
+                        automation.telegramId, automation.chatId, rule.targetChatId)
                 .compose(historyJob -> Future.all(messages.stream()
                         .map(message -> enqueueLiveMessage(automation, message, historyJob))
                         .toList()))
@@ -434,8 +435,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         if (QUEUED_RECORD_AT.containsKey(record.id())) {
                             continue;
                         }
-                        SettingAutoRecords.Automation automation = autoRecords.getItem(
-                                record.telegramId(), record.sourceChatId());
+                        SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(
+                                record.telegramId(), record.sourceChatId(), record.targetChatId());
                         SettingAutoRecords.ArchiveRule configuredRule = automation == null
                                 || automation.archive == null ? null : automation.archive.rule;
                         boolean unresolvedPreservedTopic = record.sourceTopicId() == 0
@@ -475,7 +476,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     private Future<List<RouteOrder>> dueOrderPolicies() {
         return Future.all(autoRecords.getArchiveEnabledItems().stream()
                         .filter(item -> item.archive.rule.strictOrder)
-                        .map(item -> DataVerticle.cloudArchiveHistoryRepository.findActive(item.telegramId, item.chatId)
+                        .map(item -> DataVerticle.cloudArchiveHistoryRepository.findActive(
+                                        item.telegramId, item.chatId, item.archive.rule.targetChatId)
                                 .map(job -> new RouteOrder(
                                         item.telegramId, item.chatId, item.archive.rule.targetChatId,
                                         job == null || !"PAUSED".equals(job.status()), shouldHoldForHistory(job))))
@@ -554,7 +556,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             return;
         }
         DataVerticle.cloudArchiveHistoryRepository.findActive(
-                        automation.telegramId, automation.chatId)
+                        automation.telegramId, automation.chatId, automation.archive.rule.targetChatId)
                 .compose(activeHistory -> {
                     // An actively moving backfill already reads this source. A paused backfill must
                     // not disable live delivery or automatic outage reconciliation.
@@ -778,7 +780,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     private Future<Void> processHistoryPage(CloudArchiveHistoryJob job) {
         if ("DRAINING".equals(job.status())) {
-            SettingAutoRecords.Automation automation = autoRecords.getItem(job.telegramId(), job.sourceChatId());
+            SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(
+                    job.telegramId(), job.sourceChatId(), job.targetChatId());
             boolean strict = automation != null && automation.archive != null
                     && automation.archive.rule != null && automation.archive.rule.strictOrder;
             String recoveryKey = "sync:%d:%d:%d".formatted(job.telegramId(), job.sourceChatId(), job.targetChatId());
@@ -1024,14 +1027,15 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     Future<Void> process(ArchiveWork work) {
         CloudArchiveRecord first = work.records.getFirst();
         long now = System.currentTimeMillis();
-        SettingAutoRecords.Automation automation = autoRecords.getItem(
-                first.telegramId(), first.sourceChatId());
+        SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(
+                first.telegramId(), first.sourceChatId(), first.targetChatId());
         boolean strict = automation != null && automation.archive != null
                 && automation.archive.rule != null && automation.archive.rule.strictOrder;
         // Queue entries are snapshots. A preceding batch may have failed, been deferred, or
         // become held since this work was prefetched; check the database immediately before send.
         Future<CloudArchiveHistoryJob> history = strict
-                ? DataVerticle.cloudArchiveHistoryRepository.findActive(first.telegramId(), first.sourceChatId())
+                ? DataVerticle.cloudArchiveHistoryRepository.findActive(
+                        first.telegramId(), first.sourceChatId(), first.targetChatId())
                 : Future.succeededFuture(null);
         return history.compose(job -> {
                     if (strict && job != null && Set.of("PENDING", "RUNNING").contains(job.status())) {
@@ -1063,7 +1067,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
     private Future<Void> processAfterCooldown(ArchiveWork work,
                                               CloudArchiveRecord first,
                                               long now) {
-        SettingAutoRecords.Automation automation = autoRecords.getItem(first.telegramId(), first.sourceChatId());
+        SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(
+                first.telegramId(), first.sourceChatId(), first.targetChatId());
         SettingAutoRecords.ArchiveRule configuredRule = automation == null || automation.archive == null
                 ? null : automation.archive.rule;
         boolean topicMismatch = configuredRule != null
@@ -1271,7 +1276,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             List<CloudArchiveRecord> completed = records.stream()
                     .filter(record -> partial.targets.containsKey(record.sourceMessageId())).toList();
             CloudArchiveRecord first = records.getFirst();
-            SettingAutoRecords.Automation automation = autoRecords.getItem(first.telegramId(), first.sourceChatId());
+            SettingAutoRecords.Automation automation = autoRecords.getArchiveItem(
+                    first.telegramId(), first.sourceChatId(), first.targetChatId());
             boolean partialStrictAlbum = !completed.isEmpty() && first.sourceAlbumId() != 0
                     && automation != null && automation.archive != null && automation.archive.rule != null
                     && automation.archive.rule.strictOrder;
@@ -1458,7 +1464,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
         return StrUtil.blankToDefault(failure.getMessage(), failure.getClass().getSimpleName());
     }
 
-    private record AlbumKey(long telegramId, long chatId, long albumId) {
+    private record AlbumKey(long telegramId, long chatId, long targetChatId, long albumId) {
     }
 
     private static final class AlbumBuffer {

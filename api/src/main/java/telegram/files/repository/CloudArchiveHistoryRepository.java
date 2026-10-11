@@ -28,6 +28,8 @@ public interface CloudArchiveHistoryRepository {
 
     Future<CloudArchiveHistoryJob> findActive(long telegramId, long sourceChatId);
 
+    Future<CloudArchiveHistoryJob> findActive(long telegramId, long sourceChatId, long targetChatId);
+
     Future<Void> initializeTopics(String id, String topicIdsJson, int topicCount, long currentTopicId);
 
     Future<Void> advance(String id,
