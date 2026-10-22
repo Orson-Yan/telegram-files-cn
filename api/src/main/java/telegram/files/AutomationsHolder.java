@@ -73,6 +73,7 @@ public class AutomationsHolder {
                 theAutomation.download.with(automation.download);
                 theAutomation.transfer.with(automation.transfer);
                 theAutomation.archive.with(automation.archive);
+                theAutomation.archiveDeletedAt = automation.archiveDeletedAt;
                 if (automation.archiveRules != null) {
                     theAutomation.archiveRules = new ArrayList<>(automation.archiveRules);
                 }

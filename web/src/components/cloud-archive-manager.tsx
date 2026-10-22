@@ -133,6 +133,15 @@ type RuleDraft = {
   rule: AutoArchiveRule;
 };
 
+const WAIT_REASONS: Record<string, string> = {
+  LIVE: "Waiting for new messages", PAUSED: "Rule paused", CONNECTION_ERROR: "Connection unavailable",
+  CONNECTION_CONNECTING: "Reconnecting", CONNECTION_SLEEPING: "Account sleeping", CONNECTION_INACTIVE: "Login required",
+  FLOOD_WAIT: "Waiting for Telegram cooldown", DAILY_QUOTA: "Daily quota reached", UNCONFIRMED: "Waiting for send confirmation",
+  PREDECESSOR_FAILED: "Waiting for a failed earlier message", SENDING: "Sending", RETRY_WAIT: "Waiting for retry",
+  HISTORY_PAUSED: "History task paused", ORDERED_RELEASE: "Waiting for ordered release", RECOVERING: "Recovering missed messages",
+  QUEUED: "Messages queued", SYNC_ERROR: "Synchronization error", ACCOUNT_QUOTA: "Waiting for account safety quota",
+};
+
 const FILE_TYPES = ["photo", "video", "audio", "file"] as const;
 
 function emptyDraft(telegramId = ""): RuleDraft {
@@ -266,6 +275,15 @@ export function CloudArchiveManager() {
   const [editing, setEditing] = useState<CloudArchiveRuleOverview | null>(null);
   const [draft, setDraft] = useState<RuleDraft>(() => emptyDraft());
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<CloudArchiveRuleOverview | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteSelection, setDeleteSelection] = useState<CloudArchiveRuleOverview[]>([]);
+  const [retrying, setRetrying] = useState<CloudArchiveRecord | null>(null);
+  const [ruleSearch, setRuleSearch] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [recordRoute, setRecordRoute] = useState("ALL");
+  const ruleKey = (rule: CloudArchiveRuleOverview) => `${rule.telegramId}:${rule.sourceChatId}:${rule.targetChatId}`;
   const [checking, setChecking] = useState<"validate" | "test" | null>(null);
   const [historyRule, setHistoryRule] =
     useState<CloudArchiveRuleOverview | null>(null);
@@ -295,11 +313,15 @@ export function CloudArchiveManager() {
   const [recordStatusFilter, setRecordStatusFilter] = useState<string>("ALL");
   const recordsUrl = useMemo(() => {
     const params = new URLSearchParams({ limit: "100" });
+    if (recordRoute !== "ALL") {
+      const [account, source, target] = recordRoute.split(":");
+      params.set("telegramId", account!); params.set("sourceChatId", source!); params.set("targetChatId", target!);
+    }
     if (recordStatusFilter && recordStatusFilter !== "ALL") {
       params.set("status", recordStatusFilter);
     }
     return `/cloud-archive/records?${params.toString()}`;
-  }, [recordStatusFilter]);
+  }, [recordStatusFilter, recordRoute]);
   const { data: records, mutate: reloadRecords } = useSWR<CloudArchiveRecord[]>(
     recordsUrl,
     { refreshInterval: 5000 },
@@ -438,6 +460,47 @@ export function CloudArchiveManager() {
     }
   };
 
+  const deleteRule = async () => {
+    if (!deleting) return;
+    const targets = deleteSelection.length ? deleteSelection : [deleting];
+    setDeleteBusy(true);
+    try {
+      const outcomes = await Promise.allSettled(targets.map(rule => POST(
+        `/${rule.telegramId}/file/update-auto-settings?chatId=${rule.sourceChatId}`,
+        { archiveDeleteTargetChatId: rule.targetChatId })));
+      const failures = targets.filter((_, index) => outcomes[index]?.status === "rejected");
+      setSelectedKeys(failures.map(ruleKey));
+      if (failures.length) {
+        setDeleteSelection(failures); setDeleting(failures[0]!);
+        throw new Error(`${outcomes.length - failures.length} / ${outcomes.length}`);
+      }
+      setDeleting(null); setDeleteSelection([]);
+      toast({ variant: "success", title: "Archive rule deleted" });
+    } catch (failure) {
+      toast({ variant: "error", title: "Failed to delete archive rule", description: failure instanceof Error ? failure.message : String(failure) });
+    } finally { setDeleteBusy(false); await Promise.allSettled([reloadOverview(), reloadRecords(), reloadHistory()]); }
+  };
+
+  const visibleRules = (overview?.rules || []).filter(rule =>
+    [rule.accountName, rule.sourceChatName, rule.targetChatName, rule.sourceChatId, rule.targetChatId].join(" ").toLowerCase().includes(ruleSearch.trim().toLowerCase()));
+  const selectedRules = (overview?.rules || []).filter(rule => selectedKeys.includes(ruleKey(rule)));
+  const batchToggle = async (enabled: boolean) => {
+    setBulkBusy(true);
+    try {
+      const outcomes = await Promise.allSettled(selectedRules.map(rule => saveDraft({ ...toDraft(rule), enabled }, rule.targetChatId)));
+      const failed = selectedRules.filter((_, index) => outcomes[index]?.status === "rejected");
+      setSelectedKeys(failed.map(ruleKey));
+      toast({ variant: failed.length ? "error" : "success", title: failed.length ? "Some rules could not be updated" : "Rules updated", description: `${outcomes.length - failed.length} / ${outcomes.length}` });
+      await reloadOverview().catch(() => undefined);
+    } finally { setBulkBusy(false); }
+  };
+  const deleteTargets = deleteSelection.length ? deleteSelection : deleting ? [deleting] : [];
+  const recordScope = () => {
+    if (recordRoute === "ALL") return { telegramId: 0 };
+    const [telegramId, chatId, targetChatId] = recordRoute.split(":");
+    return { telegramId, chatId, targetChatId };
+  };
+
   const toggleRule = async (rule: CloudArchiveRuleOverview) => {
     try {
       await saveDraft({ ...toDraft(rule), enabled: !rule.enabled }, rule.targetChatId);
@@ -452,10 +515,12 @@ export function CloudArchiveManager() {
     }
   };
 
-  const retry = async (record: CloudArchiveRecord) => {
+  const retry = async (record: CloudArchiveRecord, confirmed = false) => {
+    if (record.status === "UNKNOWN" && !confirmed) { setRetrying(record); return; }
     try {
       await POST(`/cloud-archive/records/${record.id}/retry`);
       await Promise.all([reloadOverview(), reloadRecords()]);
+      setRetrying(null);
       toast({ variant: "success", title: "Archive record queued for retry" });
     } catch (failure) {
       toast({
@@ -470,7 +535,7 @@ export function CloudArchiveManager() {
   const retryAllFailed = async () => {
     try {
       const res = (await POST("/cloud-archive/records/retry-all", {
-        telegramId: 0,
+        ...recordScope(),
       })) as { count?: number };
       await Promise.all([reloadOverview(), reloadRecords()]);
       toast({
@@ -491,7 +556,7 @@ export function CloudArchiveManager() {
   const clearRecords = async () => {
     try {
       const res = (await POST("/cloud-archive/records/clear", {
-        telegramId: 0,
+        ...recordScope(),
         status: recordStatusFilter !== "ALL" ? recordStatusFilter : "ALL",
       })) as { count?: number };
       await Promise.all([reloadOverview(), reloadRecords()]);
@@ -676,6 +741,15 @@ export function CloudArchiveManager() {
         </div>
 
         <TabsContent value="rules" className="mt-4 space-y-3">
+          <Input aria-label="Search archive rules" placeholder="Search account, source or destination" value={ruleSearch} onChange={event => setRuleSearch(event.target.value)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedKeys(visibleRules.map(ruleKey))}>Select visible rules</Button>
+            <Button variant="outline" size="sm" onClick={() => setSelectedKeys([])}>Clear selection</Button>
+            <span><span>Selected</span>: {selectedRules.length}</span>
+            <Button variant="outline" size="sm" disabled={!selectedRules.length || bulkBusy || deleteBusy} onClick={() => void batchToggle(false)}>Pause selected</Button>
+            <Button variant="outline" size="sm" disabled={!selectedRules.length || bulkBusy || deleteBusy} onClick={() => void batchToggle(true)}>Resume selected</Button>
+            <Button variant="destructive" size="sm" disabled={!selectedRules.length || bulkBusy || deleteBusy} onClick={() => { setDeleteSelection(selectedRules); setDeleting(selectedRules[0]!); }}>Delete selected</Button>
+          </div>
           {overview.rules.length === 0 ? (
             <Card>
               <CardContent className="p-8 text-center text-muted-foreground">
@@ -684,9 +758,10 @@ export function CloudArchiveManager() {
               </CardContent>
             </Card>
           ) : (
-            overview.rules.map((item) => (
+            visibleRules.map((item) => (
               <Card key={`${item.telegramId}:${item.sourceChatId}:${item.targetChatId}`}>
                 <CardHeader className="pb-3">
+                  <label className="flex items-center gap-2 text-xs"><input type="checkbox" aria-label="Select rule" checked={selectedKeys.includes(ruleKey(item))} disabled={bulkBusy || deleteBusy} onChange={event => setSelectedKeys(previous => event.target.checked ? [...previous, ruleKey(item)] : previous.filter(key => key !== ruleKey(item)))} /><span>Select rule</span></label>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <CardTitle className="flex flex-wrap items-center gap-2 text-base">
@@ -755,6 +830,12 @@ export function CloudArchiveManager() {
                         {item.syncQueuedCount || 0}
                       </div>
                     )}
+                    <div className="text-sm"><span>Current activity</span>: <span>{WAIT_REASONS[item.waitReason || "LIVE"] || item.waitReason}</span></div>
+                    {item.queue && <div className="text-xs text-muted-foreground">
+                      <span>Queued</span>: {item.queue.pending} · <span>Failed</span>: {item.queue.failed} · <span>Last successful archive</span>: {item.queue.lastSuccessAt ? new Date(item.queue.lastSuccessAt).toLocaleString() : "—"}
+                      {item.queue.oldestPendingAt > 0 && <div><span>Oldest pending message</span>: {new Date(item.queue.oldestPendingAt).toLocaleString()}</div>}
+                      {item.queue.nextAttemptAt && item.queue.nextAttemptAt > Date.now() ? <div><span>Next attempt</span>: {new Date(item.queue.nextAttemptAt).toLocaleString()}</div> : null}
+                    </div>}
                     {item.syncError && (
                       <div className="max-w-xl truncate text-destructive" title={item.syncError}>
                         {item.syncError}
@@ -786,6 +867,7 @@ export function CloudArchiveManager() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={deleteBusy || bulkBusy}
                       onClick={() => void toggleRule(item)}
                     >
                       {item.enabled ? (
@@ -798,10 +880,12 @@ export function CloudArchiveManager() {
                     <Button
                       variant="outline"
                       size="sm"
+                      disabled={deleteBusy || bulkBusy}
                       onClick={() => openEdit(item)}
                     >
                       <Settings2 data-icon="inline-start" /> Edit
                     </Button>
+                    <Button variant="destructive" size="sm" disabled={deleteBusy || bulkBusy} onClick={() => { setDeleteSelection([]); setDeleting(item); }}><Trash2 /> Delete rule</Button>
                   </div>
                 </CardContent>
               </Card>
@@ -992,6 +1076,10 @@ export function CloudArchiveManager() {
         </TabsContent>
 
         <TabsContent value="records" className="mt-4">
+          <label className="mb-3 flex items-center gap-2 text-sm"><span>Record destination</span><select className="max-w-full rounded border bg-background p-2" aria-label="Record destination" value={recordRoute} onChange={event => setRecordRoute(event.target.value)}>
+            <option value="ALL">All destinations</option>{recordRoute !== "ALL" && !overview.rules.some(rule => ruleKey(rule) === recordRoute) && <option value={recordRoute}>Deleted destination</option>}{overview.rules.map(rule => <option key={ruleKey(rule)} value={ruleKey(rule)}>{rule.accountName}: {rule.sourceChatName} → {rule.targetChatName}</option>)}
+          </select></label>
+          <p className="mb-3 text-xs text-muted-foreground">Batch retry excludes unconfirmed sends. Review and retry those individually.</p>
           <Card>
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b px-4 py-3 sm:px-6">
               <div className="flex flex-wrap items-center gap-3">
@@ -1014,6 +1102,8 @@ export function CloudArchiveManager() {
                       <SelectItem value="FAILED">
                         Failed ({overview?.statistics?.failed ?? 0})
                       </SelectItem>
+                      <SelectItem value="UNKNOWN">Unconfirmed sends</SelectItem>
+                      <SelectItem value="CANCELLED">Cancelled</SelectItem>
                       <SelectItem value="SKIPPED">
                         Skipped ({overview?.statistics?.skipped ?? 0})
                       </SelectItem>
@@ -1167,6 +1257,21 @@ export function CloudArchiveManager() {
         </TabsContent>
       </Tabs>
 
+      <Dialog open={!!retrying} onOpenChange={open => { if (!open) setRetrying(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>Retry unconfirmed send?</DialogTitle><DialogDescription>Telegram may already have delivered this message. Check the destination before retrying to avoid duplicates.</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setRetrying(null)}>Cancel</Button><Button variant="destructive" onClick={() => { if (retrying) void retry(retrying, true); }}>Confirm retry</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!deleting} onOpenChange={open => { if (!open && !deleteBusy) setDeleting(null); }}>
+        <DialogContent><DialogHeader><DialogTitle>Delete archive rule?</DialogTitle>
+          <DialogDescription>This stops this destination and cancels its history tasks and unsent messages. Existing Telegram messages and completed records are kept. A send already submitted to Telegram may still finish.</DialogDescription>
+        </DialogHeader>
+        <p>{deleting?.sourceChatName} → {deleting?.targetChatName}</p>
+        {deleteSelection.length > 1 && <ul className="max-h-48 overflow-y-auto text-sm">{deleteSelection.map(rule => <li key={ruleKey(rule)}>{rule.sourceChatName} → {rule.targetChatName}</li>)}</ul>}
+        <p><span>Queued</span>: {deleteTargets.reduce((total, rule) => total + (rule.queue?.pending || 0), 0)} · <span>History tasks</span>: {deleteTargets.reduce((total, rule) => total + (rule.queue?.historyTasks || 0), 0)}</p>
+        <DialogFooter><Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(null)}>Cancel</Button><Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteRule()}>Confirm delete rule</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>

@@ -82,6 +82,14 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         return Future.succeededFuture(false);
                     }
                     long now = clock.millis();
+                    String cancelledJob = historyJobId == null || historyJobId.startsWith("sync:") ? null
+                            : historyJobId.startsWith("live:") ? historyJobId.substring(5) : historyJobId;
+                    String guard = cancelledJob == null ? "" : " WHERE NOT EXISTS (SELECT 1 FROM telegram_archive_history_job WHERE id = ? AND completion_reason = 'RULE_DELETED')";
+                    Tuple parameters = Tuple.of(
+                                    UUID.randomUUID().toString(), telegramId, sourceChatId, sourceMessageId,
+                                    sourceTopicId, sourceAlbumId, targetChatId, targetTopicId, fileUniqueId,
+                                    mode, topicMode, historyJobId, sourceMessageId, status, now, now, now);
+                    if (cancelledJob != null) parameters.addString(cancelledJob);
                     return preparedQuery("""
                                     INSERT INTO telegram_archive_record
                                         (id, telegram_id, source_chat_id, source_message_id,
@@ -90,28 +98,10 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                                          status, attempt_count,
                                          next_attempt_at, last_error_code, last_error_message,
                                          created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?)
-                                    """)
-                            .execute(Tuple.of(
-                                    UUID.randomUUID().toString(),
-                                    telegramId,
-                                    sourceChatId,
-                                    sourceMessageId,
-                                    sourceTopicId,
-                                    sourceAlbumId,
-                                    targetChatId,
-                                    targetTopicId,
-                                    fileUniqueId,
-                                    mode,
-                                    topicMode,
-                                    historyJobId,
-                                    sourceMessageId,
-                                    status,
-                                    now,
-                                    now,
-                                    now
-                            ))
-                            .map(true)
+                                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, ?, ?
+                                    """ + guard)
+                            .execute(parameters)
+                            .map(rows -> rows.rowCount() > 0)
                             .recover(failure -> findExisting(
                                             telegramId, sourceChatId, sourceMessageId, targetChatId
                                     ).compose(duplicate -> duplicate
@@ -243,6 +233,55 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                 .mapEmpty();
     }
 
+    @Override
+    public Future<Void> cancelRoute(long telegramId, long sourceChatId, long targetChatId) {
+        return preparedQuery("""
+                UPDATE telegram_archive_history_job SET status = 'CANCELLED',
+                    completion_reason = 'RULE_DELETED', updated_at = ?
+                WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                    AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED', 'FAILED')
+                """).execute(Tuple.of(clock.millis(), telegramId, sourceChatId, targetChatId))
+                .compose(_ -> preparedQuery("""
+                    UPDATE telegram_archive_record SET status = 'CANCELLED',
+                        last_error_code = 'RULE_DELETED', last_error_message = 'Archive rule deleted', updated_at = ?
+                    WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                        AND status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING', 'FAILED', 'SKIPPED')
+                    """).execute(Tuple.of(clock.millis(), telegramId, sourceChatId, targetChatId))).mapEmpty();
+    }
+
+    @Override
+    public Future<JsonObject> routeStatistics(long telegramId, long sourceChatId, long targetChatId) {
+        return preparedQuery("""
+                SELECT COUNT(CASE WHEN status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING') THEN 1 END) AS pending,
+                    COUNT(CASE WHEN status IN ('FAILED', 'UNKNOWN') THEN 1 END) AS failed,
+                    MAX(CASE WHEN status = 'COMPLETED' THEN updated_at END) AS last_success_at,
+                    MIN(CASE WHEN status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING') THEN created_at END) AS oldest_pending_at
+                FROM telegram_archive_record WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                """).execute(Tuple.of(telegramId, sourceChatId, targetChatId))
+                .map(rows -> {
+                    Row row = rows.iterator().next();
+                    return new JsonObject().put("pending", value(row, "pending")).put("failed", value(row, "failed"))
+                            .put("lastSuccessAt", value(row, "last_success_at")).put("oldestPendingAt", value(row, "oldest_pending_at"));
+                }).compose(stats -> preparedQuery("""
+                    SELECT status, next_attempt_at, last_error_code FROM telegram_archive_record
+                    WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                        AND status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING', 'FAILED', 'UNKNOWN')
+                    ORDER BY source_message_id LIMIT 1
+                    """).execute(Tuple.of(telegramId, sourceChatId, targetChatId)).map(rows -> {
+                        if (rows.iterator().hasNext()) {
+                            Row row = rows.iterator().next();
+                            stats.put("firstStatus", row.getString("status")).put("nextAttemptAt", value(row, "next_attempt_at"))
+                                    .put("errorCode", row.getString("last_error_code"));
+                        }
+                        return stats;
+                    })).compose(stats -> preparedQuery("""
+                        SELECT COUNT(*) AS total FROM telegram_archive_history_job
+                        WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                            AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED', 'FAILED')
+                        """).execute(Tuple.of(telegramId, sourceChatId, targetChatId))
+                        .map(rows -> stats.put("historyTasks", value(rows.iterator().next(), "total"))));
+    }
+
     private Future<Boolean> findExisting(long telegramId,
                                          long sourceChatId,
                                          long sourceMessageId,
@@ -288,9 +327,9 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         UPDATE telegram_archive_record
                         SET status = ?, target_message_id = ?, last_error_code = ?,
                             last_error_message = ?, updated_at = ?
-                        WHERE id = ?
+                        WHERE id = ? AND (status <> 'CANCELLED' OR ? IN ('COMPLETED', 'UNKNOWN'))
                         """)
-                .execute(Tuple.of(status, targetMessageId, errorCode, truncate(message), clock.millis(), id))
+                .execute(Tuple.of(status, targetMessageId, errorCode, truncate(message), clock.millis(), id, status))
                 .mapEmpty();
     }
 
@@ -304,7 +343,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         UPDATE telegram_archive_record
                         SET status = ?, next_attempt_at = ?, last_error_code = ?,
                             last_error_message = ?, updated_at = ?
-                        WHERE id = ?
+                        WHERE id = ? AND status <> 'CANCELLED'
                         """)
                 .execute(Tuple.of(
                         retryable ? "RETRY" : "FAILED",
@@ -459,6 +498,11 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
 
     @Override
     public Future<List<CloudArchiveRecord>> listRecent(int limit, String status) {
+        return listRecent(limit, status, 0, null, null);
+    }
+
+    @Override
+    public Future<List<CloudArchiveRecord>> listRecent(int limit, String status, long telegramId, Long sourceChatId, Long targetChatId) {
         StringBuilder sql = new StringBuilder("SELECT * FROM telegram_archive_record WHERE 1=1");
         List<Object> params = new ArrayList<>();
         if (StrUtil.isNotBlank(status) && !"ALL".equalsIgnoreCase(status)) {
@@ -472,6 +516,7 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                 }
             }
         }
+        appendRouteScope(sql, params, telegramId, sourceChatId, targetChatId);
         sql.append(" ORDER BY created_at DESC LIMIT ?");
         params.add(Math.max(1, Math.min(limit, 500)));
         return preparedQuery(sql.toString())
@@ -569,24 +614,22 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
 
     @Override
     public Future<Integer> retryAll(long telegramId, Long chatId) {
+        return retryAll(telegramId, chatId, null);
+    }
+
+    @Override
+    public Future<Integer> retryAll(long telegramId, Long chatId, Long targetChatId) {
         long now = clock.millis();
         StringBuilder sql = new StringBuilder("""
                 UPDATE telegram_archive_record
                 SET status = 'RETRY', next_attempt_at = ?,
                     last_error_code = NULL, last_error_message = NULL, updated_at = ?
-                WHERE status IN ('FAILED', 'UNKNOWN', 'SKIPPED')
+                WHERE status IN ('FAILED', 'SKIPPED')
                 """);
         List<Object> params = new ArrayList<>();
         params.add(now);
         params.add(now);
-        if (telegramId != 0) {
-            sql.append(" AND telegram_id = ?");
-            params.add(telegramId);
-        }
-        if (chatId != null && chatId != 0) {
-            sql.append(" AND source_chat_id = ?");
-            params.add(chatId);
-        }
+        appendRouteScope(sql, params, telegramId, chatId, targetChatId);
         return preparedQuery(sql.toString())
                 .execute(Tuple.from(params))
                 .map(RowSet::rowCount);
@@ -594,12 +637,14 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
 
     @Override
     public Future<Integer> clearRecords(long telegramId, String status) {
+        return clearRecords(telegramId, status, null, null);
+    }
+
+    @Override
+    public Future<Integer> clearRecords(long telegramId, String status, Long sourceChatId, Long targetChatId) {
         StringBuilder sql = new StringBuilder("DELETE FROM telegram_archive_record WHERE 1=1");
         List<Object> params = new ArrayList<>();
-        if (telegramId != 0) {
-            sql.append(" AND telegram_id = ?");
-            params.add(telegramId);
-        }
+        appendRouteScope(sql, params, telegramId, sourceChatId, targetChatId);
         if (StrUtil.isNotBlank(status) && !"ALL".equalsIgnoreCase(status)) {
             sql.append(" AND status = ?");
             params.add(status.toUpperCase(Locale.ROOT));
@@ -607,6 +652,12 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
         return preparedQuery(sql.toString())
                 .execute(Tuple.from(params))
                 .map(RowSet::rowCount);
+    }
+
+    private static void appendRouteScope(StringBuilder sql, List<Object> params, long account, Long source, Long target) {
+        if (account != 0) { sql.append(" AND telegram_id = ?"); params.add(account); }
+        if (source != null && source != 0) { sql.append(" AND source_chat_id = ?"); params.add(source); }
+        if (target != null && target != 0) { sql.append(" AND target_chat_id = ?"); params.add(target); }
     }
 
     private List<CloudArchiveRecord> records(RowSet<Row> rows) {

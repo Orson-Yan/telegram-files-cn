@@ -173,6 +173,6 @@ class CloudArchiveBoundaryTest {
                     Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
         }
 
-        Future<Void> create() { return pool.query(CloudArchiveRecord.SCHEME).execute().mapEmpty(); }
+        Future<Void> create() { return pool.query(CloudArchiveRecord.SCHEME).execute().compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute()).mapEmpty(); }
     }
 }

@@ -36,6 +36,12 @@ public final class CloudArchiveService {
                                                    long sourceChatId,
                                                    List<Long> sourceMessageIds,
                                                    SettingAutoRecords.ArchiveRule rule) {
+        return archive(telegram, sourceChatId, sourceMessageIds, rule, () -> true);
+    }
+
+    static Future<Map<Long, Long>> archive(TelegramVerticle telegram, long sourceChatId,
+                                           List<Long> sourceMessageIds, SettingAutoRecords.ArchiveRule rule,
+                                           java.util.function.BooleanSupplier stillEnabled) {
         Objects.requireNonNull(telegram, "telegram");
         Objects.requireNonNull(rule, "rule");
         if (rule.targetChatId == 0) {
@@ -74,6 +80,9 @@ public final class CloudArchiveService {
                 .compose(messages -> validateMessages(telegram.client, sourceChatId, ids, messages, rule)
                         .map(_ -> messages))
                 .compose(messages -> {
+                    if (!stillEnabled.getAsBoolean()) {
+                        return Future.failedFuture(new Rejected("RULE_DELETED", "The archive rule was deleted or paused"));
+                    }
                     TdApi.MessageSendOptions options = new TdApi.MessageSendOptions();
                     options.disableNotification = rule.disableNotification;
                     options.fromBackground = true;

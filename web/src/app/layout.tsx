@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 import type { Metadata } from "next";
 import Script from "next/script";
 import React from "react";
+import { ConnectionHealthAlerts } from "@/components/connection-health";
 import { Toaster } from "@/components/ui/toaster";
 import { SWRProvider } from "@/components/swr-provider";
 import { SettingsProvider } from "@/hooks/use-settings";
@@ -67,6 +68,7 @@ export default async function RootLayout({
                     <WebSocketProvider>
                       <SettingsProvider>
                         <TelegramAccountProvider>
+                          <ConnectionHealthAlerts />
                           {children}
                         </TelegramAccountProvider>
                       </SettingsProvider>

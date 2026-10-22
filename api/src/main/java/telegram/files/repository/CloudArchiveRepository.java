@@ -86,6 +86,10 @@ public interface CloudArchiveRepository {
 
     Future<Void> cancelHistory(String historyJobId);
 
+    Future<Void> cancelRoute(long telegramId, long sourceChatId, long targetChatId);
+
+    Future<JsonObject> routeStatistics(long telegramId, long sourceChatId, long targetChatId);
+
     Future<Boolean> claim(String id);
 
     Future<Void> complete(String id, long targetMessageId);
@@ -122,6 +126,8 @@ public interface CloudArchiveRepository {
 
     Future<List<CloudArchiveRecord>> listRecent(int limit, String status);
 
+    Future<List<CloudArchiveRecord>> listRecent(int limit, String status, long telegramId, Long sourceChatId, Long targetChatId);
+
     Future<Long> maxSourceMessageId(long telegramId, long sourceChatId,
                                     long sourceTopicId, long targetChatId);
 
@@ -137,5 +143,9 @@ public interface CloudArchiveRepository {
 
     Future<Integer> retryAll(long telegramId, Long chatId);
 
+    Future<Integer> retryAll(long telegramId, Long chatId, Long targetChatId);
+
     Future<Integer> clearRecords(long telegramId, String status);
+
+    Future<Integer> clearRecords(long telegramId, String status, Long sourceChatId, Long targetChatId);
 }

@@ -42,6 +42,9 @@ public class SettingAutoRecords {
         /** Additional destinations for this source. Null preserves legacy update semantics. */
         public List<ArchiveConfig> archiveRules;
 
+        /** Durable deletion generations reject stale full-setting saves and in-flight work. */
+        public Map<Long, Long> archiveDeletedAt = new java.util.HashMap<>();
+
         @JsonIgnore
         public List<ArchiveConfig> getArchiveConfigs() {
             List<ArchiveConfig> configs = new ArrayList<>();
@@ -59,6 +62,7 @@ public class SettingAutoRecords {
             route.download = download;
             route.transfer = transfer;
             route.archive = config;
+            route.archiveDeletedAt = archiveDeletedAt;
             route.state = state;
             return route;
         }

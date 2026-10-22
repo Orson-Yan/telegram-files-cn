@@ -157,6 +157,22 @@ class CloudArchiveServiceTest {
         assertTrue(CloudArchiveService.isTopicFailure(new TelegramRunException(error)));
     }
 
+    @Test
+    void deletionDuringSourceValidationPreventsSubmission(VertxTestContext context) {
+        var gateway = new ScriptedTelegramGateway(request -> {
+            if (request instanceof TdApi.GetMessages messages) return messages(messages.messageIds);
+            if (request instanceof TdApi.GetMessageProperties) return copyableProperties();
+            throw new AssertionError("A deleted rule submitted a Telegram send");
+        });
+        CloudArchiveService.archive(telegram(gateway), 100, List.of(11L),
+                        rule(200, SettingAutoRecords.ArchiveMode.COPY), () -> false)
+                .onComplete(context.failing(failure -> context.verify(() -> {
+                    assertEquals("RULE_DELETED", assertInstanceOf(CloudArchiveService.Rejected.class, failure).code());
+                    assertTrue(gateway.requests().stream().noneMatch(request -> request instanceof TdApi.ForwardMessages));
+                    context.completeNow();
+                })));
+    }
+
     private static TelegramVerticle telegram(ScriptedTelegramGateway gateway) {
         TelegramVerticle telegram = new TelegramVerticle("/tmp/archive-fixture", () -> gateway);
         telegram.telegramRecord = new TelegramRecord(42, "test", "/tmp/archive-fixture", null);

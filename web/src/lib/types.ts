@@ -320,6 +320,9 @@ export type CloudArchiveRuleOverview = {
   enabled: boolean;
   rule: AutoArchiveRule;
   syncStatus?: "INITIALIZING" | "LIVE" | "RECOVERING" | "ERROR" | "PAUSED";
+  waitReason?: string;
+  cooldownUntil?: number;
+  queue?: { historyTasks?: number; pending: number; failed: number; lastSuccessAt: number; oldestPendingAt: number; nextAttemptAt?: number };
   syncTopicCount?: number;
   syncScannedCount?: number;
   syncMatchedCount?: number;

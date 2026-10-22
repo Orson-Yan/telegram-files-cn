@@ -22,6 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import telegram.files.repository.*;
 import telegram.files.repository.impl.SettingRepositoryImpl;
+import telegram.files.repository.impl.CloudArchiveRepositoryImpl;
+import telegram.files.repository.impl.CloudArchiveHistoryRepositoryImpl;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -156,6 +158,99 @@ class CloudArchiveHttpPersistenceTest {
                 })));
     }
 
+    @Test
+    void deletePrimaryAndLastDestinationSurvivesReloadAndRejectsStaleSettings(Vertx vertx, VertxTestContext context) {
+        Fixture fixture = new Fixture(vertx);
+        var initial = source(300);
+        initial.download.enabled = true;
+        fixture.start().compose(_ -> fixture.save(JsonObject.mapFrom(initial)))
+                .compose(_ -> fixture.save(JsonObject.of("archiveDeleteTargetChatId", "200")))
+                .compose(_ -> fixture.settings.<SettingAutoRecords>getByKey(SettingKey.automation))
+                .compose(stored -> {
+                    assertEquals(List.of(300L), destinations(stored));
+                    assertTrue(stored.getItem(7, 100).download.enabled);
+                    AutomationsHolder.INSTANCE.autoRecords().automations.clear();
+                    AutomationsHolder.INSTANCE.onAutoRecordsUpdate(stored);
+                    assertEquals(List.of(300L), destinations(AutomationsHolder.INSTANCE.autoRecords()));
+                    return fixture.send(HttpMethod.POST, "/7/file/update-auto-settings?chatId=100", JsonObject.mapFrom(source(200)));
+                }).compose(response -> {
+                    assertEquals(400, response.getInteger("status"));
+                    return fixture.save(JsonObject.of("archiveDeleteTargetChatId", "300"));
+                }).compose(_ -> fixture.settings.<SettingAutoRecords>getByKey(SettingKey.automation))
+                .eventually(fixture::close)
+                .onComplete(context.succeeding(stored -> context.verify(() -> {
+                    assertTrue(destinations(stored).isEmpty());
+                    assertTrue(stored.getItem(7, 100).download.enabled);
+                    assertEquals(2, stored.getItem(7, 100).archiveDeletedAt.size());
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void deletionCancelsOnlyTheSelectedRouteAndKeepsCompletedMappings(Vertx vertx, VertxTestContext context) {
+        Fixture fixture = new Fixture(vertx);
+        fixture.start().compose(_ -> fixture.save(JsonObject.of("archiveUpdate", JsonObject.mapFrom(source(300).archive))))
+                .compose(_ -> fixture.histories.create(7, 100, 0, 200, 0, "{}", "ALL", 0, 500))
+                .compose(job -> fixture.archives.stage(7, 100, 0, 10, 0, 200, 0, null, "COPY", job.id()))
+                .compose(_ -> fixture.archives.enqueue(7, 100, 20, 0, 200, null, "COPY"))
+                .compose(_ -> fixture.archives.enqueue(7, 100, 30, 0, 300, null, "COPY"))
+                .compose(_ -> fixture.archives.listRecent(10))
+                .compose(records -> fixture.archives.complete(records.stream().filter(record -> record.sourceMessageId() == 20).findFirst().orElseThrow().id(), 220))
+                .compose(_ -> fixture.save(JsonObject.of("archiveDeleteTargetChatId", 200)))
+                .compose(_ -> fixture.histories.listRecent(10))
+                .compose(jobs -> {
+                    assertEquals("CANCELLED", jobs.getFirst().status());
+                    return fixture.archives.stage(7, 100, 0, 40, 0, 200, 0, null, "COPY", jobs.getFirst().id());
+                }).compose(inserted -> {
+                    assertFalse(inserted);
+                    return fixture.archives.retryAll(7, 100L);
+                }).compose(retried -> {
+                    assertEquals(0, retried);
+                    return fixture.archives.listRecent(10);
+                }).compose(records -> {
+                    assertEquals("CANCELLED", records.stream().filter(record -> record.sourceMessageId() == 10).findFirst().orElseThrow().status());
+                    assertEquals("COMPLETED", records.stream().filter(record -> record.sourceMessageId() == 20).findFirst().orElseThrow().status());
+                    assertEquals("PENDING", records.stream().filter(record -> record.targetChatId() == 300).findFirst().orElseThrow().status());
+                    return fixture.send(HttpMethod.GET, "/cloud-archive/overview", null);
+                }).eventually(fixture::close)
+                .onComplete(context.succeeding(response -> context.verify(() -> {
+                    var rules = new JsonObject(response.getString("body")).getJsonArray("rules");
+                    assertEquals(1, rules.size());
+                    assertEquals("300", rules.getJsonObject(0).getString("targetChatId"));
+                    assertEquals("QUEUED", rules.getJsonObject(0).getString("waitReason"));
+                    context.completeNow();
+                })));
+    }
+
+    @Test
+    void scopedRetryAndClearDoNotTouchAnotherTargetOrUnconfirmedSends(Vertx vertx, VertxTestContext context) {
+        Fixture fixture = new Fixture(vertx);
+        fixture.start()
+                .compose(_ -> fixture.archives.enqueue(7, 100, 10, 0, 200, null, "COPY"))
+                .compose(_ -> fixture.archives.enqueue(7, 100, 20, 0, 300, null, "COPY"))
+                .compose(_ -> fixture.archives.enqueue(7, 100, 30, 0, 200, null, "COPY"))
+                .compose(_ -> fixture.archives.listRecent(10))
+                .compose(records -> Future.all(records.stream().map(record -> record.sourceMessageId() == 30
+                        ? fixture.archives.unknown(record.id(), "TIMEOUT", "Unconfirmed")
+                        : fixture.archives.fail(record.id(), false, 0, "TEST", "Failure")).toList()))
+                .compose(_ -> fixture.archives.retryAll(7, 100L, 200L))
+                .compose(count -> {
+                    assertEquals(1, count);
+                    return fixture.archives.listRecent(10, null, 7, 100L, 200L);
+                }).compose(records -> {
+                    assertEquals(2, records.size());
+                    assertEquals(1, records.stream().filter(record -> "UNKNOWN".equals(record.status())).count());
+                    return fixture.archives.clearRecords(7, "UNKNOWN", 100L, 200L);
+                }).compose(count -> fixture.archives.listRecent(10))
+                .eventually(fixture::close)
+                .onComplete(context.succeeding(records -> context.verify(() -> {
+                    assertEquals(2, records.size());
+                    assertEquals("FAILED", records.stream().filter(record -> record.targetChatId() == 300).findFirst().orElseThrow().status());
+                    assertEquals("RETRY", records.stream().filter(record -> record.targetChatId() == 200).findFirst().orElseThrow().status());
+                    context.completeNow();
+                })));
+    }
+
     private static List<Long> destinations(SettingAutoRecords records) {
         return records.getArchiveConfiguredItems().stream().map(item -> item.archive.rule.targetChatId).sorted().toList();
     }
@@ -174,6 +269,9 @@ class CloudArchiveHttpPersistenceTest {
         private final Vertx vertx;
         private final Pool pool;
         private final SettingRepositoryImpl settings;
+        private final CloudArchiveRepository archives;
+        private final CloudArchiveHistoryRepository histories;
+        private final CloudArchiveHistoryRepository previousHistories = DataVerticle.cloudArchiveHistoryRepository;
         private final HttpClient client;
         private final TelegramVerticle telegram;
         private final HttpVerticle http;
@@ -197,15 +295,21 @@ class CloudArchiveHttpPersistenceTest {
             telegram = new TelegramVerticle(new TelegramRecord(7, "fixture", "http-multi-route", null),
                     () -> new ScriptedTelegramGateway(_ -> new TdApi.Ok()));
             telegram.authorized = true;
+            try {
+                var field = TelegramVerticle.class.getDeclaredField("clientLifecycle");
+                field.setAccessible(true);
+                field.set(telegram, java.util.Arrays.stream(field.getType().getEnumConstants())
+                        .filter(value -> value.toString().equals("ACTIVE")).findFirst().orElseThrow());
+            } catch (ReflectiveOperationException failure) { throw new RuntimeException(failure); }
             telegram.init(vertx, vertx.getOrCreateContext());
             TelegramVerticles.add(telegram);
             http = new HttpVerticle();
             http.init(vertx, vertx.getOrCreateContext());
             DataVerticle.settingRepository = settings;
-            var archives = mock(CloudArchiveRepository.class);
-            when(archives.statistics()).thenReturn(Future.succeededFuture(JsonObject.of(
-                    "total", 0, "pending", 0, "completed", 0, "failed", 0, "skipped", 0)));
+            archives = new CloudArchiveRepositoryImpl(pool);
+            histories = new CloudArchiveHistoryRepositoryImpl(pool);
             DataVerticle.cloudArchiveRepository = archives;
+            DataVerticle.cloudArchiveHistoryRepository = histories;
             var syncs = mock(CloudArchiveSyncRepository.class);
             when(syncs.listRoute(anyLong(), anyLong(), anyLong())).thenReturn(Future.succeededFuture(List.of()));
             DataVerticle.cloudArchiveSyncRepository = syncs;
@@ -233,7 +337,9 @@ class CloudArchiveHttpPersistenceTest {
             router.route().handler(BodyHandler.create());
             router.post("/:telegramId/file/update-auto-settings").handler(ctx -> invoke("handleAutoSettingsUpdate", ctx));
             router.get("/cloud-archive/overview").handler(ctx -> invoke("handleCloudArchiveOverview", ctx));
-            return pool.query(SettingRecord.SCHEME).execute()
+            return pool.query(CloudArchiveRecord.SCHEME).execute()
+                    .compose(_ -> pool.query(CloudArchiveHistoryJob.SCHEME).execute())
+                    .compose(_ -> pool.query(SettingRecord.SCHEME).execute())
                     .compose(_ -> settings.createOrUpdate("automation", Json.encode(
                             new SettingAutoRecords(List.of(source(200))))))
                     .compose(_ -> vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"))
@@ -274,6 +380,7 @@ class CloudArchiveHttpPersistenceTest {
                         TelegramVerticles.remove(telegram);
                         DataVerticle.settingRepository = previousSettings;
                         DataVerticle.cloudArchiveRepository = previousArchives;
+                        DataVerticle.cloudArchiveHistoryRepository = previousHistories;
                         DataVerticle.cloudArchiveSyncRepository = previousSyncs;
                         AutomationsHolder.INSTANCE.autoRecords().automations = previousRules;
                     });

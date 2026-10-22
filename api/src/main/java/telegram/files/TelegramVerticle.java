@@ -1015,8 +1015,21 @@ public class TelegramVerticle extends AbstractVerticle {
                         settingAutoRecords = new SettingAutoRecords();
                     }
                     SettingAutoRecords.Automation previous = settingAutoRecords.getItem(this.telegramRecord.id(), chatId);
+                    if (previous != null) normalizeAutomation(previous);
                     SettingAutoRecords.Automation automation;
-                    if (params.containsKey("archiveUpdate")) {
+                    long deleteTarget = Convert.toLong(params.getValue("archiveDeleteTargetChatId"), 0L);
+                    if (params.containsKey("archiveDeleteTargetChatId")) {
+                        if (deleteTarget == 0 || previous == null) {
+                            return Future.failedFuture(new IllegalArgumentException("The rule no longer exists"));
+                        }
+                        automation = previous;
+                        List<SettingAutoRecords.ArchiveConfig> remaining = new ArrayList<>(automation.getArchiveConfigs());
+                        remaining.removeIf(config -> config.rule.targetChatId == deleteTarget);
+                        automation.archive = remaining.isEmpty() ? new SettingAutoRecords.ArchiveConfig() : remaining.removeFirst();
+                        automation.archiveRules = remaining;
+                        automation.archiveDeletedAt = new HashMap<>(automation.archiveDeletedAt);
+                        automation.archiveDeletedAt.put(deleteTarget, System.nanoTime());
+                    } else if (params.containsKey("archiveUpdate")) {
                         automation = previous == null ? new SettingAutoRecords.Automation() : previous;
                         updateArchiveDestination(automation, params);
                     } else {
@@ -1037,7 +1050,8 @@ public class TelegramVerticle extends AbstractVerticle {
                                          || automation.download.enabled
                                          || automation.transfer.enabled
                                          || automation.getArchiveConfigs().stream().anyMatch(config -> config.enabled);
-                    boolean hasConfiguredArchive = !automation.getArchiveConfigs().isEmpty();
+                    boolean hasConfiguredArchive = !automation.getArchiveConfigs().isEmpty()
+                                                   || !automation.archiveDeletedAt.isEmpty();
                     boolean hasConfiguredTransfer = StrUtil.isNotBlank(automation.transfer.rule.destination);
 
                     if (settingAutoRecords.exists(this.telegramRecord.id(), chatId)
@@ -1055,7 +1069,9 @@ public class TelegramVerticle extends AbstractVerticle {
                     // A successful response must also make the saved routes available to the
                     // next overview/history request, not just finish the database write.
                     return DataVerticle.settingRepository.createOrUpdate(SettingKey.automation.name(), Json.encode(settingAutoRecords))
-                            .compose(r -> vertx.eventBus().request(EventEnum.AUTO_DOWNLOAD_UPDATE.address(), r.value()).mapEmpty());
+                            .compose(r -> vertx.eventBus().request(EventEnum.AUTO_DOWNLOAD_UPDATE.address(), r.value()).mapEmpty())
+                            .compose(_ -> deleteTarget == 0 ? Future.succeededFuture()
+                                    : DataVerticle.cloudArchiveRepository.cancelRoute(this.telegramRecord.id(), chatId, deleteTarget));
                 })
                 .mapEmpty();
     }
@@ -1073,6 +1089,10 @@ public class TelegramVerticle extends AbstractVerticle {
                                                       SettingAutoRecords.Automation previous) {
         if (previous == null) return;
         List<SettingAutoRecords.ArchiveConfig> updates = incoming.getArchiveConfigs();
+        incoming.archiveDeletedAt = previous.archiveDeletedAt;
+        if (updates.stream().anyMatch(config -> previous.archiveDeletedAt.containsKey(config.rule.targetChatId))) {
+            throw new IllegalArgumentException("The rules have changed. Refresh before saving");
+        }
         incoming.archive = previous.archive;
         incoming.archiveRules = previous.archiveRules == null ? null : new ArrayList<>(previous.archiveRules);
         // Full source settings have no route-edit identity. Treat a different destination as
@@ -1125,6 +1145,7 @@ public class TelegramVerticle extends AbstractVerticle {
     }
 
     private static void normalizeAutomation(SettingAutoRecords.Automation automation) {
+        if (automation.archiveDeletedAt == null) automation.archiveDeletedAt = new HashMap<>();
         if (automation.preload == null) automation.preload = new SettingAutoRecords.PreloadConfig();
         if (automation.download == null) automation.download = new SettingAutoRecords.DownloadConfig();
         if (automation.download.rule == null) automation.download.rule = new SettingAutoRecords.DownloadRule();
@@ -1340,9 +1361,30 @@ public class TelegramVerticle extends AbstractVerticle {
                         .orElse(null));
     }
 
+    public JsonObject connectionSnapshot() {
+        return JsonObject.of("telegramId", String.valueOf(getId()), "accountName", telegramRecord == null ? getRootId() : telegramRecord.firstName(),
+                "proxy", proxyName, "authorized", authorized, "sleeping", isSleepingOrWaking(),
+                "connectionState", lastConnectionState == null ? "unknown" : connectionStateName(lastConnectionState));
+    }
+
+    public Future<Double> probeConnection() {
+        TelegramGateway gateway;
+        synchronized (lifecycleLock) {
+            if (!authorized || clientLifecycle != ClientLifecycle.ACTIVE || tdlibClient == null) {
+                return Future.failedFuture("The account is sleeping or unavailable");
+            }
+            gateway = tdlibClient;
+        }
+        // Background probes must not wake the account or reset its idle sleep timer.
+        return gateway.execute(new TdApi.GetProxies(), 8000, vertx)
+                .compose(proxies -> gateway.execute(new TdApi.PingProxy(Stream.of(proxies.proxies)
+                        .filter(proxy -> proxy.isEnabled).map(proxy -> proxy.proxy).findFirst().orElse(null)), 8000, vertx))
+                .map(seconds -> seconds.seconds);
+    }
+
     public Future<Double> ping() {
         return this.getEnabledTdProxy()
-                .compose(proxy -> client.execute(new TdApi.PingProxy(proxy)))
+                .compose(proxy -> client.execute(new TdApi.PingProxy(proxy), 8000, vertx))
                 .map(r -> r.seconds);
     }
 

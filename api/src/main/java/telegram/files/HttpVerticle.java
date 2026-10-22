@@ -109,6 +109,13 @@ public class HttpVerticle extends AbstractVerticle {
 
     private BootstrapState bootstrapState;
 
+    private TelegramHealthMonitor healthMonitor;
+
+    private TelegramHealthMonitor healthMonitor() {
+        if (healthMonitor == null) healthMonitor = new TelegramHealthMonitor(vertx);
+        return healthMonitor;
+    }
+
     @Override
     public void start(Promise<Void> startPromise) {
         adminAuthService = new AdminAuthService(vertx, DataVerticle.pool);
@@ -139,12 +146,16 @@ public class HttpVerticle extends AbstractVerticle {
                 .compose(_ -> initTransferVerticle())
                 .compose(_ -> initPreloadMessageVerticle())
                 .compose(_ -> initEventConsumer())
-                .onSuccess(startPromise::complete)
+                .onSuccess(_ -> {
+                    healthMonitor().start();
+                    startPromise.complete();
+                })
                 .onFailure(startPromise::fail);
     }
 
     @Override
     public void stop(Promise<Void> stopPromise) {
+        if (healthMonitor != null) healthMonitor.stop();
         AutomationsHolder.INSTANCE.saveAutoRecords()
                 .onComplete(ignore -> {
                     System.out.println("Http verticle stopped!");
@@ -243,6 +254,11 @@ public class HttpVerticle extends AbstractVerticle {
         router.get("/settings").handler(this::handleSettings);
         router.post("/settings/create").handler(this::handleSettingsCreate);
         router.get("/automations/chats").handler(this::handleAutomationChats);
+        router.get("/telegram/health").handler(ctx -> ctx.json(healthMonitor().snapshots()));
+        router.post("/telegram/:telegramId/check-health").handler(ctx ->
+                TelegramVerticles.get(ctx.pathParam("telegramId")).ifPresentOrElse(telegram ->
+                        healthMonitor().check(telegram).onSuccess(_ -> ctx.json(healthMonitor().snapshot(telegram)))
+                                .onFailure(ctx::fail), () -> ctx.fail(404)));
         router.get("/cloud-archive/overview").handler(this::handleCloudArchiveOverview);
         router.get("/cloud-archive/records").handler(this::handleCloudArchiveRecords);
         router.get("/cloud-archive/history").handler(this::handleCloudArchiveHistory);
@@ -1201,7 +1217,7 @@ public class HttpVerticle extends AbstractVerticle {
                 })
                 .sorted(Comparator.comparing(item -> item.getString("sourceChatName", "")))
                 .toList();
-        Future.all(rules.stream().map(this::withCloudArchiveSync).toList())
+        Future.all(rules.stream().map(rule -> withCloudArchiveSync(rule).compose(this::withCloudArchiveDiagnostics)).toList())
                 .compose(enriched -> DataVerticle.cloudArchiveRepository.statistics()
                         .map(statistics -> {
                             long now = System.currentTimeMillis();
@@ -1221,6 +1237,40 @@ public class HttpVerticle extends AbstractVerticle {
                         }))
                 .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
+    }
+
+    private Future<JsonObject> withCloudArchiveDiagnostics(JsonObject item) {
+        long account = Convert.toLong(item.getValue("telegramId"));
+        long source = Convert.toLong(item.getValue("sourceChatId"));
+        long target = Convert.toLong(item.getValue("targetChatId"));
+        return Future.all(DataVerticle.cloudArchiveRepository.routeStatistics(account, source, target),
+                        DataVerticle.cloudArchiveHistoryRepository.findActive(account, source, target),
+                        DataVerticle.cloudArchiveRepository.cooldownUntil(account, System.currentTimeMillis()))
+                .map(results -> {
+                    JsonObject stats = results.resultAt(0);
+                    CloudArchiveHistoryJob job = results.resultAt(1);
+                    Long cooldown = results.resultAt(2);
+                    item.put("queue", stats);
+                    String reason = "LIVE";
+                    String first = stats.getString("firstStatus", "");
+                    var telegram = TelegramVerticles.get(account).orElse(null);
+                    String health = telegram == null ? "INACTIVE" : healthMonitor().snapshot(telegram).getString("status");
+                    if (!item.getBoolean("enabled")) reason = "PAUSED";
+                    else if (Set.of("ERROR", "CONNECTING", "SLEEPING", "INACTIVE").contains(health)) reason = "CONNECTION_" + health;
+                    else if (cooldown != null && cooldown > System.currentTimeMillis()) reason = "FLOOD_WAIT";
+                    else if (job != null && job.dailyLimit() > 0 && java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString().equals(job.dailyDate())
+                            && job.dailyForwardedCount() >= job.dailyLimit()) reason = "DAILY_QUOTA";
+                    else if ("UNKNOWN".equals(first)) reason = "UNCONFIRMED";
+                    else if ("FAILED".equals(first) && JsonObject.mapFrom(item.getValue("rule")).getBoolean("strictOrder", false)) reason = "PREDECESSOR_FAILED";
+                    else if ("SENDING".equals(first)) reason = "SENDING";
+                    else if (stats.getLong("nextAttemptAt", 0L) > System.currentTimeMillis() && "RETRY".equals(first))
+                        reason = stats.getString("errorCode", "").endsWith("SAFETY_LIMIT") ? "ACCOUNT_QUOTA" : "RETRY_WAIT";
+                    else if ("STAGED".equals(first)) reason = job != null && "PAUSED".equals(job.status()) ? "HISTORY_PAUSED" : "ORDERED_RELEASE";
+                    else if ("RECOVERING".equals(item.getString("syncStatus"))) reason = "RECOVERING";
+                    else if (stats.getLong("pending", 0L) > 0) reason = "QUEUED";
+                    else if ("ERROR".equals(item.getString("syncStatus"))) reason = "SYNC_ERROR";
+                    return item.put("waitReason", reason).put("cooldownUntil", cooldown == null ? 0 : cooldown);
+                });
     }
 
     private Future<JsonObject> withCloudArchiveSync(JsonObject item) {
@@ -1277,7 +1327,10 @@ public class HttpVerticle extends AbstractVerticle {
     private void handleCloudArchiveRecords(RoutingContext ctx) {
         int limit = Math.max(1, Math.min(Convert.toInt(ctx.queryParams().get("limit"), 100), 500));
         String status = ctx.queryParams().get("status");
-        DataVerticle.cloudArchiveRepository.listRecent(limit, status)
+        DataVerticle.cloudArchiveRepository.listRecent(limit, status,
+                        Convert.toLong(ctx.queryParams().get("telegramId"), 0L),
+                        Convert.toLong(ctx.queryParams().get("sourceChatId")),
+                        Convert.toLong(ctx.queryParams().get("targetChatId")))
                 .compose(records -> {
                     List<Future<JsonObject>> items = records.stream()
                             .map(this::cloudArchiveRecordJson)
@@ -1545,7 +1598,8 @@ public class HttpVerticle extends AbstractVerticle {
         long telegramId = body != null ? Convert.toLong(body.getValue("telegramId"), 0L) : 0L;
         Long chatId = body != null && body.getValue("chatId") != null ? Convert.toLong(body.getValue("chatId")) : null;
         AutoCloudArchiveVerticle.QUEUED_RECORD_AT.clear();
-        DataVerticle.cloudArchiveRepository.retryAll(telegramId, chatId)
+        DataVerticle.cloudArchiveRepository.retryAll(telegramId, chatId,
+                        body == null ? null : Convert.toLong(body.getValue("targetChatId")))
                 .onSuccess(count -> ctx.json(JsonObject.of("count", count, "queued", true)))
                 .onFailure(ctx::fail);
     }
@@ -1554,7 +1608,9 @@ public class HttpVerticle extends AbstractVerticle {
         JsonObject body = ctx.body().asJsonObject();
         long telegramId = body != null ? Convert.toLong(body.getValue("telegramId"), 0L) : 0L;
         String status = body != null ? body.getString("status", "ALL") : "ALL";
-        DataVerticle.cloudArchiveRepository.clearRecords(telegramId, status)
+        DataVerticle.cloudArchiveRepository.clearRecords(telegramId, status,
+                        body == null ? null : Convert.toLong(body.getValue("chatId")),
+                        body == null ? null : Convert.toLong(body.getValue("targetChatId")))
                 .onSuccess(count -> ctx.json(JsonObject.of("count", count)))
                 .onFailure(ctx::fail);
     }

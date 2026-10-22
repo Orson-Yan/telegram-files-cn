@@ -46,6 +46,7 @@ interface EmptyStateProps {
   hasAccounts: boolean;
   accounts?: TelegramAccount[];
   message?: string;
+  connectionHealth?: React.ReactNode;
   onSelectAccount?: (accountId: string) => void;
 }
 
@@ -55,6 +56,7 @@ export function EmptyState({
   accounts = [],
   message,
   onSelectAccount,
+  connectionHealth,
 }: EmptyStateProps) {
   const { session, logout } = useAdminSession();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -85,7 +87,7 @@ export function EmptyState({
   return (
     <div className="container mx-auto space-y-8 px-4 py-6">
       {/* Top Navigation & Controls Bar */}
-      <div className="flex items-center justify-between gap-4 rounded-xl border border-border/60 bg-card/60 p-3.5 shadow-sm backdrop-blur-sm sm:p-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/60 bg-card/60 p-3.5 shadow-sm backdrop-blur-sm sm:p-4">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <PlatformTelegramIcon className="size-5" />
@@ -129,6 +131,7 @@ export function EmptyState({
         </div>
       </div>
 
+      {connectionHealth}
       {/* Account Workspace (First Priority) */}
       <section className="space-y-3.5">
         <div className="flex items-center justify-between">

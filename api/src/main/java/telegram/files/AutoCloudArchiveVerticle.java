@@ -121,7 +121,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
 
     @Override
     public void start(Promise<Void> startPromise) {
-        DataVerticle.cloudArchiveRepository.recoverSendingAsUnknown()
+        Future.all(autoRecords.automations.stream().flatMap(source -> source.archiveDeletedAt.keySet().stream()
+                        .filter(target -> source.getArchiveConfigs().stream().noneMatch(config -> config.rule.targetChatId == target))
+                        .map(target -> DataVerticle.cloudArchiveRepository.cancelRoute(source.telegramId, source.chatId, target))).toList())
+                .compose(_ -> DataVerticle.cloudArchiveRepository.recoverSendingAsUnknown())
                 .compose(_ -> initEventConsumer())
                 .onSuccess(_ -> {
                     vertx.setPeriodic(0, RETRY_SCAN_INTERVAL, _ -> {
@@ -840,6 +843,8 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
             if (!allHistory && remaining == 0) {
                 return finishHistoryScan(job, "LIMIT_REACHED");
             }
+            var historyAutomation = autoRecords.getItem(job.telegramId(), job.sourceChatId());
+            Long generation = historyAutomation == null ? null : historyAutomation.archiveDeletedAt.get(job.targetChatId());
             int pageSize = Math.min(50, remaining);
             return historyMessages(telegram, job, pageSize).compose(rawMessages -> {
                 TdApi.Message[] messages = Arrays.stream(rawMessages)
@@ -853,6 +858,10 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         .filter(message -> matches(message, rule))
                         .toList();
                 return resolveHistoryTargetTopic(telegram, job, rule).compose(targetTopicId -> {
+                    var current = autoRecords.getItem(job.telegramId(), job.sourceChatId());
+                    if (current != null && !Objects.equals(generation, current.archiveDeletedAt.get(job.targetChatId()))) {
+                        return Future.all(List.<Future<Boolean>>of());
+                    }
                     List<Future<Boolean>> inserts = candidates.stream()
                             .map(message -> DataVerticle.cloudArchiveRepository.stage(
                                     job.telegramId(), job.sourceChatId(), messageTopicId(message),
@@ -863,7 +872,7 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                     return Future.all(inserts);
                 }).compose(results -> {
                     int queued = 0;
-                    for (int index = 0; index < candidates.size(); index++) {
+                    for (int index = 0; index < results.size(); index++) {
                         if (Boolean.TRUE.equals(results.resultAt(index))) {
                             queued++;
                         }
@@ -1152,7 +1161,12 @@ public final class AutoCloudArchiveVerticle extends AbstractVerticle {
                         List<Long> ids = prepared.stream()
                                 .map(CloudArchiveRecord::sourceMessageId).sorted().toList();
                         return CloudArchiveService.archive(
-                                        telegram, preparedFirst.sourceChatId(), ids, rule)
+                                        telegram, preparedFirst.sourceChatId(), ids, rule, () -> {
+                                            var current = autoRecords.getArchiveItem(first.telegramId(), first.sourceChatId(), first.targetChatId());
+                                            return isEnabled(current) && Objects.equals(
+                                                    current.archiveDeletedAt.get(first.targetChatId()),
+                                                    automation.archiveDeletedAt.get(first.targetChatId()));
+                                        })
                                 .compose(targets -> completeAll(prepared, targets));
                     })
                     .recover(failure -> handleFailure(claimed, failure));

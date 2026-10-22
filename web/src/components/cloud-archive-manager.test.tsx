@@ -115,6 +115,37 @@ describe("cloud archive rules with a shared source", () => {
     ]);
   });
 
+  it("requires confirmation and deletes only the second destination", async () => {
+    render(<CloudArchiveManager />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete rule" })[1]!);
+    expect(mocks.post).not.toHaveBeenCalled();
+    expect(screen.getByText("Shared source → Destination 300")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete rule" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith(
+      "/7/file/update-auto-settings?chatId=100", { archiveDeleteTargetChatId: "300" },
+    ));
+  });
+
+  it("searches rules and pauses only the selected visible route", async () => {
+    render(<CloudArchiveManager />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search archive rules" }), { target: { value: "Destination 300" } });
+    expect(screen.queryByText("Destination 200")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Select visible rules" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause selected" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1));
+    expect(mocks.post.mock.calls[0]?.[1]).toMatchObject({ archiveUpdate: { enabled: false, rule: { targetChatId: 300 } }, previousTargetChatId: "300" });
+  });
+
+  it("requires confirmation before deleting multiple selected routes", async () => {
+    render(<CloudArchiveManager />);
+    fireEvent.click(screen.getByRole("button", { name: "Select visible rules" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(mocks.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete rule" }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
+    expect(mocks.post.mock.calls.map(call => call[1].archiveDeleteTargetChatId)).toEqual(["200", "300"]);
+  });
+
   it("starts history for the selected destination", async () => {
     render(<CloudArchiveManager />);
     fireEvent.click(screen.getAllByRole("button", { name: "Archive history" })[1]!);

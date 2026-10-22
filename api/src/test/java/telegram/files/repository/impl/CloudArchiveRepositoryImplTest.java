@@ -39,6 +39,7 @@ class CloudArchiveRepositoryImplTest {
                 new CloudArchiveHistoryRepositoryImpl(pool, clock);
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> pool.query(CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> histories.create(7, 100, 0, 200, 0, "{}", "ALL", 0, 500))
                 .compose(job -> repository.stage(
@@ -66,6 +67,7 @@ class CloudArchiveRepositoryImplTest {
                 pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.stage(
                         7, 100, 0, 10, 0, 200, 0, null, "COPY", "job-1"))
                 .compose(_ -> repository.stage(
@@ -93,6 +95,7 @@ class CloudArchiveRepositoryImplTest {
         CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.stage(
                         7, 100, 11, 30, 0, 200, 21, null, "COPY", "job-1"))
                 .compose(_ -> repository.stage(
@@ -169,6 +172,7 @@ class CloudArchiveRepositoryImplTest {
                 pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.stage(
                         7, 100, 0, 1, 0, 200, 0, null, "COPY", "job-1"))
                 .compose(_ -> repository.stage(
@@ -201,6 +205,7 @@ class CloudArchiveRepositoryImplTest {
                 pool, Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC));
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.enqueue(
                         7, 100, 0, 50, 0, 200, 0, null, "COPY", "MERGE"))
                 .compose(_ -> repository.listDue(1_000, 10))
@@ -234,6 +239,7 @@ class CloudArchiveRepositoryImplTest {
         CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.enqueue(7, 100, 11, 0, 200, "file-11", "COPY"))
                 .compose(inserted -> {
                     context.verify(() -> assertTrue(inserted));
@@ -291,6 +297,7 @@ class CloudArchiveRepositoryImplTest {
         CloudArchiveRepositoryImpl repository = new CloudArchiveRepositoryImpl(pool, clock);
 
         pool.query(CloudArchiveRecord.SCHEME).execute()
+                .compose(_ -> pool.query(telegram.files.repository.CloudArchiveHistoryJob.SCHEME).execute())
                 .compose(_ -> repository.enqueue(7, 100, 1, 0, 200, null, "COPY"))
                 .compose(_ -> repository.enqueue(7, 100, 2, 0, 200, null, "COPY"))
                 .compose(_ -> repository.listDue(1_000, 10))
