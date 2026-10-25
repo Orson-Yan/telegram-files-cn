@@ -322,7 +322,7 @@ export type CloudArchiveRuleOverview = {
   syncStatus?: "INITIALIZING" | "LIVE" | "RECOVERING" | "ERROR" | "PAUSED";
   waitReason?: string;
   cooldownUntil?: number;
-  queue?: { historyTasks?: number; pending: number; failed: number; lastSuccessAt: number; oldestPendingAt: number; nextAttemptAt?: number };
+  queue?: { historyTasks?: number; pending: number; failed: number; unconfirmed?: number; lastSuccessAt: number; oldestPendingAt: number; nextAttemptAt?: number; firstRecordId?: string; firstStatus?: string; firstUpdatedAt?: number };
   syncTopicCount?: number;
   syncScannedCount?: number;
   syncMatchedCount?: number;
@@ -335,6 +335,7 @@ export type CloudArchiveRuleOverview = {
 };
 
 export type CloudArchiveStatistics = {
+  unconfirmed?: number;
   total: number;
   completed: number;
   skipped: number;

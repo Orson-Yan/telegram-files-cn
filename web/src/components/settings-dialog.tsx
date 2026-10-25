@@ -14,6 +14,7 @@ import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import Proxys from "@/components/proxys";
 import SettingsForm from "@/components/settings-form";
 import About from "@/components/about";
+import { BarkNotificationSettings } from "@/components/bark-notification-settings";
 import { ChartColumnIncreasingIcon } from "@/components/ui/chart-column-increasing";
 import { LayoutPanelTopIcon } from "@/components/ui/layout-panel-top";
 import FilePhaseStatistics from "@/components/file-phase-statistics";
@@ -51,6 +52,7 @@ export const SettingsDialog: React.FC = () => {
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="statistics">Statistics</TabsTrigger>
             <TabsTrigger value="proxys">Proxys</TabsTrigger>
+            <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="api">API</TabsTrigger>
             <TabsTrigger value="about">About</TabsTrigger>
           </TabsList>
@@ -100,6 +102,9 @@ export const SettingsDialog: React.FC = () => {
                 onProxyNameChange={() => setIsOpen(false)}
               />
             </div>
+          </TabsContent>
+          <TabsContent value="notifications" className="min-h-0 overflow-y-auto">
+            <BarkNotificationSettings />
           </TabsContent>
           <TabsContent value="api" className="h-full overflow-hidden">
             <DebugTelegramMethod />

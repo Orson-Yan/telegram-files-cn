@@ -282,7 +282,8 @@ class CloudArchiveRepositoryImplTest {
                 .onComplete(context.succeeding(statistics -> context.verify(() -> {
                     assertEquals(2L, statistics.getLong("total"));
                     assertEquals(1L, statistics.getLong("completed"));
-                    assertEquals(1L, statistics.getLong("failed"));
+                    assertEquals(0L, statistics.getLong("failed"));
+                    assertEquals(1L, statistics.getLong("unconfirmed"));
                     context.completeNow();
                 })));
     }

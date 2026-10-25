@@ -26,7 +26,7 @@ export function AccountList({
   showAddCard = true,
 }: AccountListProps) {
   return (
-    <div className="mx-auto grid max-w-5xl grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className={`grid max-h-52 grid-cols-1 gap-2 overflow-y-auto ${accounts.length > 1 ? "sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2" : ""}`}>
       {accounts.map((account) => {
         const isActive = account.status === "active" && !account.sleeping;
         const isSleeping = account.sleeping;
@@ -44,10 +44,10 @@ export function AccountList({
               <AccountDeleteDialog telegramId={account.id} />
             </div>
 
-            <CardContent className="flex flex-col gap-4 p-5">
+            <CardContent className="flex flex-col gap-2 p-3">
               <div className="flex items-start gap-3.5 pr-8">
                 <div className="relative">
-                  <Avatar className="h-12 w-12 border border-border/80 shadow-sm">
+                  <Avatar className="h-10 w-10 border border-border/80 shadow-sm">
                     <AvatarImage
                       src={`data:image/jpeg;base64,${account.avatar}`}
                       alt={account.name}
@@ -69,7 +69,7 @@ export function AccountList({
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <h3 className="truncate font-semibold text-foreground">
+                    <h3 translate="no" className="truncate font-semibold text-foreground">
                       {account.name}
                     </h3>
                   </div>
@@ -97,7 +97,7 @@ export function AccountList({
               </div>
 
               {/* Status and Proxy Meta info */}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2 text-xs">
                 <div className="flex items-center gap-1.5">
                   <Badge
                     variant={isActive ? "default" : "secondary"}
@@ -112,7 +112,7 @@ export function AccountList({
                             : "text-gray-400"
                       }`}
                     />
-                    {isSleeping ? "Sleeping" : account.status}
+                    {isSleeping ? "Sleeping" : account.status === "active" ? "Running" : "Inactive"}
                   </Badge>
 
                   {account.proxy && (
@@ -121,7 +121,7 @@ export function AccountList({
                       className="h-5 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground"
                     >
                       <Network className="size-2.5 text-blue-500" />
-                      <span className="max-w-[90px] truncate">{account.proxy}</span>
+                      <span translate="no" className="max-w-[90px] truncate">{account.proxy}</span>
                     </Badge>
                   )}
                 </div>

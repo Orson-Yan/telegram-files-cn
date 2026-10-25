@@ -19,6 +19,7 @@ import org.jooq.lambda.tuple.Tuple;
 import telegram.files.repository.*;
 import telegram.files.repository.impl.FileRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveRepositoryImpl;
+import telegram.files.repository.impl.ArchiveOperationsRepository;
 import telegram.files.repository.impl.CloudArchiveHistoryRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveTopicRepositoryImpl;
 import telegram.files.repository.impl.CloudArchiveSyncRepositoryImpl;
@@ -67,6 +68,8 @@ public class DataVerticle extends AbstractVerticle {
 
     public static TorrentUploadSessionRepository torrentUploadSessionRepository;
 
+    public static ArchiveOperationsRepository archiveOperations;
+
     public static CloudArchiveRepository cloudArchiveRepository;
 
     public static CloudArchiveHistoryRepository cloudArchiveHistoryRepository;
@@ -109,6 +112,7 @@ public class DataVerticle extends AbstractVerticle {
                 new TorrentRecord.TorrentRecordDefinition(),
                 new TorrentStatisticEventRecord.TorrentStatisticEventRecordDefinition(),
                 new TorrentUploadSessionRecord.TorrentUploadSessionRecordDefinition(),
+                new ArchiveOperationsRepository.StorageDefinition(),
                 new CloudArchiveRecord.CloudArchiveRecordDefinition(),
                 new CloudArchiveHistoryJob.CloudArchiveHistoryJobDefinition(),
                 new CloudArchiveTopicMap.CloudArchiveTopicMapDefinition(),
@@ -130,7 +134,8 @@ public class DataVerticle extends AbstractVerticle {
         torrentRepository = new TorrentRepositoryImpl(pool);
         torrentStatisticEventRepository = new TorrentStatisticEventRepositoryImpl(pool);
         torrentUploadSessionRepository = new TorrentUploadSessionRepositoryImpl(pool);
-        cloudArchiveRepository = new CloudArchiveRepositoryImpl(pool);
+        archiveOperations = new ArchiveOperationsRepository(pool);
+        cloudArchiveRepository = new CloudArchiveRepositoryImpl(pool, archiveOperations);
         cloudArchiveHistoryRepository = new CloudArchiveHistoryRepositoryImpl(pool);
         cloudArchiveTopicRepository = new CloudArchiveTopicRepositoryImpl(pool);
         cloudArchiveSyncRepository = new CloudArchiveSyncRepositoryImpl(pool);
@@ -143,6 +148,7 @@ public class DataVerticle extends AbstractVerticle {
                     Version version = tuple.v2 == null ? new Version("0.0.0") : tuple.v2;
                     return migrateSequentially(version, new Version(BuildInfo.VERSION));
                 })
+                .compose(_ -> archiveOperations.backfill())
                 .compose(_ ->
                         settingRepository.createOrUpdate(SettingKey.version.name(), BuildInfo.VERSION))
                 .onSuccess(_ -> {
@@ -161,7 +167,9 @@ public class DataVerticle extends AbstractVerticle {
             stopPromise.complete();
             return;
         }
+        ArchiveOperationsRepository closingOperations = archiveOperations;
         pool.close().onComplete(r -> {
+            if (archiveOperations == closingOperations) archiveOperations = null;
             if (r.succeeded()) {
                 log.debug("Data verticle stopped!");
             } else {

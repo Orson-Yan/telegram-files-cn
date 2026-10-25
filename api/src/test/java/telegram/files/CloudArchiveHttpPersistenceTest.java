@@ -244,9 +244,10 @@ class CloudArchiveHttpPersistenceTest {
                 }).compose(count -> fixture.archives.listRecent(10))
                 .eventually(fixture::close)
                 .onComplete(context.succeeding(records -> context.verify(() -> {
-                    assertEquals(2, records.size());
+                    assertEquals(3, records.size());
+                    assertEquals(1, records.stream().filter(record -> "UNKNOWN".equals(record.status())).count());
                     assertEquals("FAILED", records.stream().filter(record -> record.targetChatId() == 300).findFirst().orElseThrow().status());
-                    assertEquals("RETRY", records.stream().filter(record -> record.targetChatId() == 200).findFirst().orElseThrow().status());
+                    assertEquals("RETRY", records.stream().filter(record -> record.targetChatId() == 200 && record.sourceMessageId() == 10).findFirst().orElseThrow().status());
                     context.completeNow();
                 })));
     }

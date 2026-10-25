@@ -13,7 +13,7 @@ export function LanguageToggleButton() {
 
   const { locale, toggleLocale } = language;
   const switchLabel =
-    locale === "zh-CN" ? "Switch to English" : "切换为简体中文";
+    locale === "zh-CN" ? "切换为英语" : "Switch to Simplified Chinese";
 
   return (
     <TooltipWrapper content={switchLabel}>
@@ -27,7 +27,7 @@ export function LanguageToggleButton() {
         data-i18n-skip
       >
         <Languages className="h-4 w-4" aria-hidden="true" />
-        <span>{locale === "zh-CN" ? "EN" : "中"}</span>
+        <span>{locale === "zh-CN" ? "英" : "中"}</span>
       </Button>
     </TooltipWrapper>
   );

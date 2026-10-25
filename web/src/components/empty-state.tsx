@@ -18,6 +18,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { AccountList } from "./account-list";
+import { ArchiveDailyStatistics } from "./archive-daily-statistics";
 import { type TelegramAccount } from "@/lib/types";
 import { PlatformTelegramIcon } from "@/components/platform-telegram-icon";
 import { AccountDialog } from "@/components/account-dialog";
@@ -85,7 +86,7 @@ export function EmptyState({
   }
 
   return (
-    <div className="container mx-auto space-y-8 px-4 py-6">
+    <div className="container mx-auto space-y-4 px-4 py-4">
       {/* Top Navigation & Controls Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border/60 bg-card/60 p-3.5 shadow-sm backdrop-blur-sm sm:p-4">
         <div className="flex items-center gap-3">
@@ -131,9 +132,9 @@ export function EmptyState({
         </div>
       </div>
 
-      {connectionHealth}
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-testid="home-account-connection">
       {/* Account Workspace (First Priority) */}
-      <section className="space-y-3.5">
+      <section className="space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Users className="size-4 text-primary" />
@@ -146,6 +147,7 @@ export function EmptyState({
               </Badge>
             )}
           </div>
+          <AccountDialog isAdd={true}><Button size="sm" variant="outline">Add Account</Button></AccountDialog>
         </div>
 
         {isLoadingAccount ? (
@@ -161,7 +163,7 @@ export function EmptyState({
             />
           </div>
         ) : hasAccounts && accounts.length > 0 && onSelectAccount ? (
-          <AccountList accounts={accounts} onSelectAccount={onSelectAccount} showAddCard={true} />
+          <AccountList accounts={accounts} onSelectAccount={onSelectAccount} showAddCard={false} />
         ) : (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 px-6 py-12 text-center">
             <div className="mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
@@ -184,6 +186,9 @@ export function EmptyState({
           </div>
         )}
       </section>
+      <aside className="min-w-0">{connectionHealth}</aside>
+      </div>
+      <ArchiveDailyStatistics compact />
 
       {/* Overview & Feature Hub */}
       <DashboardMetricsAndFeatures />
@@ -224,7 +229,7 @@ function DashboardMetricsAndFeatures() {
   const isDownloading = statistics.downloading > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Real-time System Overview Metric Cards */}
       <section className="space-y-3">
         <h2 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
@@ -270,7 +275,7 @@ function DashboardMetricsAndFeatures() {
         <h2 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
           Features & Tools
         </h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {/* 1. Cloud Archive */}
           <FeatureCard
             icon={<CloudUpload className="size-5 text-sky-500" />}
@@ -370,10 +375,10 @@ function FeatureCard({
       onClick={onClick}
       className="group relative cursor-pointer border-border/70 bg-card transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
     >
-      <CardContent className="flex flex-col justify-between gap-4 p-5 h-full">
+      <CardContent className="flex h-full flex-col justify-between gap-2 p-3.5">
         <div>
-          <div className="mb-3 flex items-center justify-between">
-            <div className={`flex size-10 items-center justify-center rounded-xl ${iconBg}`}>
+          <div className="mb-2 flex items-center justify-between">
+            <div className={`flex size-8 items-center justify-center rounded-lg ${iconBg}`}>
               {icon}
             </div>
             {badge && (

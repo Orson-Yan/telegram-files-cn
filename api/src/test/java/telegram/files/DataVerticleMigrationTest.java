@@ -116,7 +116,7 @@ public class DataVerticleMigrationTest {
                             .compose(conn -> conn.query(getTablesQuery()).execute()
                                     .compose(result -> {
                                         testContext.verify(() -> {
-                                            Assertions.assertEquals(DataVerticle.definitions.size(), result.size());
+                                            Assertions.assertEquals(DataVerticle.definitions.size() + telegram.files.repository.impl.ArchiveOperationsRepository.StorageDefinition.tableCount() - 1, result.size());
                                         });
                                         return conn.close();
                                     }));
@@ -229,17 +229,17 @@ public class DataVerticleMigrationTest {
         if (Config.isPostgres()) {
             getTablesQuery = """
                     SELECT table_name FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state')
+                    WHERE table_schema = 'public' AND table_name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state', 'archive_delivery_attempt', 'archive_success', 'archive_operator_audit', 'notification_incident', 'notification_settings', 'archive_delivery_update')
                     """;
         } else if (Config.isMysql()) {
             getTablesQuery = """
                     SELECT table_name FROM information_schema.tables
-                    WHERE table_schema = DATABASE() AND table_name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state')
+                    WHERE table_schema = DATABASE() AND table_name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state', 'archive_delivery_attempt', 'archive_success', 'archive_operator_audit', 'notification_incident', 'notification_settings', 'archive_delivery_update')
                     """;
         } else {
             getTablesQuery = """
                     SELECT name FROM sqlite_master
-                    WHERE type='table' AND name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state')
+                    WHERE type='table' AND name IN ('setting_record', 'telegram_record', 'file_record', 'statistic_record', 'admin_account', 'admin_session', 'admin_bootstrap_token', 'admin_recovery_token', 'admin_security_event', 'share_job', 'seed_node_identity', 'installation_identity', 'share_source', 'node_task_execution', 'disk_reservation', 'torrent_record', 'torrent_statistic_event', 'torrent_upload_session', 'telegram_archive_record', 'telegram_archive_history_job', 'telegram_archive_topic_map', 'telegram_archive_sync_state', 'archive_delivery_attempt', 'archive_success', 'archive_operator_audit', 'notification_incident', 'notification_settings', 'archive_delivery_update')
                     """;
         }
         return getTablesQuery;
