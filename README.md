@@ -1,4 +1,4 @@
-# Telegram Files 中文增强版 (v1.3.1 正式版)
+# Telegram Files 中文增强版 (v1.3.2 正式版)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jarvis2f/telegram-files/main/web/public/logo.png" alt="Telegram Files" width="120" />
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/1.3.1"><img src="https://img.shields.io/badge/Release-v1.3.1-emerald.svg" alt="v1.3.1" /></a>
+  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/1.3.2"><img src="https://img.shields.io/badge/Release-v1.3.2-emerald.svg" alt="v1.3.2" /></a>
   <a href="https://github.com/Orson-Yan/telegram-files-cn/pkgs/container/telegram-files-cn"><img src="https://img.shields.io/badge/Docker-ghcr.io-blue.svg?logo=docker" alt="Docker" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" /></a>
 </p>
@@ -40,6 +40,7 @@
 - **严格时序保障 (Strict Order)**：按来源消息 ID 依次发送，前序消息重试或发送结果未确认时，后续消息继续等待；普通消息等待 Telegram 最终发送确认，相册保持整组发送。历史与实时交接只释放已核实的消息范围。手动暂停历史任务会解除顺序等待，已经发出的消息无法自动重新排序。详见 [云端转发顺序检查报告](CLOUD_ARCHIVE_ORDER_AUDIT.md)。
 - **广告与杂质清洗**：自动剔除超链接、去掉 `@username` 提及，支持自定义正则表达式违禁词替换与文末自定义小尾巴签名。
 - **论坛主题映射 (Forum Topics)**：自动对齐并保留来源频道/群组的主题论坛结构。
+- **首页统计合并**：发送统计和下载摘要合并在同一张紧凑卡片，下载状态、大小和速度同排显示。详见 [1.3.2 发布说明](RELEASE_NOTES_1.3.2.md)。
 - **批量处理异常与统一统计**：任务内完整列出失败和未确认消息，支持逐条或勾选批量跳过；恢复检查自动续试已知失败，未确认消息保留自动核实。每日及累计统计统一放在首页，云端页面按任务显示。账号卡整合当前代理、连接状态和检测入口。详见 [1.3.1 发布说明](RELEASE_NOTES_1.3.1.md)。
 - **发送恢复、每日统计与推送通知**：持久保存发送证据，自动核实超时与重启后的结果；提供批量跳过及处理记录。按北京时间查看复制发送和转发每日统计，首页采用紧凑布局并补齐中文文案。支持通过 Bark 推送需要处理的异常，告警跨重启去重、恢复通知一次。详见 [1.3.0 发布说明](RELEASE_NOTES_1.3.0.md)。
 - **连接健康与规则管理**：首页按账号显示当前代理/直连、Telegram 连接、探测延迟及最近成功时间；后台持续检测，异常时全局提醒。云端规则支持单条/批量删除、搜索、批量暂停/恢复，以及按目标查看和重试记录。详见 [1.2.4 审查记录](CLOUD_ARCHIVE_MANAGEMENT_AUDIT.md)。
@@ -65,7 +66,7 @@
 ```yaml
 services:
   telegram-files:
-    image: ghcr.io/orson-yan/telegram-files-cn:1.3.1
+    image: ghcr.io/orson-yan/telegram-files-cn:1.3.2
     container_name: telegram-files
     restart: unless-stopped
     ports:
@@ -95,7 +96,7 @@ docker compose up -d
 
 本项目提供预构建的多架构 Docker 镜像（支持 `linux/amd64` 与 `linux/arm64`）：
 
-- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.3.1`
+- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.3.2`
 - **最新版**：`ghcr.io/orson-yan/telegram-files-cn:latest`
 
 ---

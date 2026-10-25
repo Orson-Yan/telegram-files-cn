@@ -51,14 +51,21 @@ test("Chinese home combines each account and its connection in a compact card wi
   expect(card!.width).toBeLessThanOrEqual(320);
   await expect(cards).toContainText("办公室代理");
   await expect(cards).toContainText("141 毫秒");
+  const statistics = page.getByRole("region", { name: "发送与下载统计", exact: true });
+  await expect(statistics.getByText("128", { exact: true })).toBeVisible();
+  await expect(statistics.getByText("当前下载速度", { exact: true })).toBeVisible();
+  expect((await statistics.boundingBox())!.height).toBeLessThanOrEqual(100);
+  await expect(page.getByRole("heading", { name: "系统实时概览", exact: true })).toHaveCount(0);
   const overflow = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
   expect(overflow).toBeLessThanOrEqual(2);
   const text = await page.locator("body").innerText(); expect(text).not.toMatch(/\b(active|Inactive|Dashboard|Recovery|Queued|Skipped)\b/);
-  await page.screenshot({ path: "test-results/home-1.3.1-desktop.png", fullPage: true });
+  await page.screenshot({ path: "test-results/home-1.3.2-desktop.png", fullPage: true });
 });
 
 test("daily statistics show copy and forward counts and validate custom dates", async ({ page }) => {
-  await fixture(page); await page.goto("/");
+  await fixture(page);
+  await page.route("http://localhost:8080/files/count", route => route.fulfill({ status: 503, headers: { "access-control-allow-origin": "http://localhost:3000", "access-control-allow-credentials": "true" }, body: "temporary download metrics failure" }));
+  await page.goto("/");
   await expect(page.getByRole("button", { name: "查看统计", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "查看统计", exact: true }).click();
   await expect(page.getByRole("columnheader", { name: "复制发送", exact: true })).toBeVisible();
@@ -153,7 +160,7 @@ test("mobile home keeps controls reachable without horizontal overflow", async (
   await fixture(page); await page.setViewportSize({ width: 390, height: 844 }); await page.goto("/");
   await expect(page.getByRole("button", { name: "账号选项", exact: true })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); expect(overflow).toBeLessThanOrEqual(1);
-  await page.screenshot({ path: "test-results/home-1.3.1-mobile.png", fullPage: true });
+  await page.screenshot({ path: "test-results/home-1.3.2-mobile.png", fullPage: true });
   await page.getByRole("button", { name: "账号选项", exact: true }).click();
   await page.getByRole("menuitem", { name: "更换代理", exact: true }).click();
   const dialog = page.getByRole("dialog");

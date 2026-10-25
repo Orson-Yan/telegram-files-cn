@@ -184,8 +184,6 @@ export function EmptyState({
           </div>
         )}
       </section>
-      <ArchiveDailyStatistics />
-
       {/* Overview & Feature Hub */}
       <DashboardMetricsAndFeatures />
     </div>
@@ -199,39 +197,17 @@ function DashboardMetricsAndFeatures() {
   const { downloadActivity } = useWebsocket();
   const { data, error, isLoading } = useSWR<FileCount, Error>(`/files/count`);
 
-  if (error) {
-    return (
-      <Card className="border-destructive/30">
-        <CardContent className="flex items-center justify-center p-6 text-sm text-destructive">
-          <AlertTriangle className="mr-2 size-4" />
-          Failed to load system metrics
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (isLoading || !data) {
-    return (
-      <Card className="border-border/60">
-        <CardContent className="flex items-center justify-center p-6 text-sm text-muted-foreground">
-          <Loader2 className="mr-2 size-4 animate-spin" />
-          Loading statistics...
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const statistics = normalizeDownloadOverview(data);
+  const statistics = normalizeDownloadOverview(data ?? {});
   const isDownloading = statistics.downloading > 0;
 
   return (
     <div className="space-y-4">
-      {/* Real-time System Overview Metric Cards */}
-      <section className="space-y-3">
-        <h2 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-          Live System Overview
-        </h2>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border bg-card px-3 py-2 sm:grid-cols-4">
+      <ArchiveDailyStatistics>
+        <div className="mt-2 border-t pt-2">
+        {error ? <p className="flex items-center gap-1.5 text-xs text-destructive"><AlertTriangle className="size-3.5" />Failed to load system metrics</p>
+          : isLoading || !data ? <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Loading statistics...</p>
+          : <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <strong className="text-xs">Download</strong>
           <OverviewMetric
             icon={<Check className="size-4 text-emerald-500" />}
             label="Downloaded"
@@ -263,8 +239,9 @@ function DashboardMetricsAndFeatures() {
             value={`${prettyBytes(downloadActivity.speed)}/s`}
             highlight={downloadActivity.speed > 0}
           />
+        </div>}
         </div>
-      </section>
+      </ArchiveDailyStatistics>
 
       {/* Feature Navigation Hub */}
       <section className="space-y-3">
@@ -326,14 +303,14 @@ function OverviewMetric({
   highlight?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-1.5 text-xs">
+      <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
         {icon}
       </div>
-      <div className="min-w-0 flex-1">
-        <span className="block truncate text-xs text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate text-muted-foreground">{label}</span>
         <span
-          className={`block truncate font-mono text-sm font-semibold tabular-nums ${
+          className={`truncate font-semibold tabular-nums ${
             highlight ? "text-cyan-500 font-bold" : "text-foreground"
           }`}
         >
