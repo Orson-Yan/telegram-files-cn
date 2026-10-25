@@ -5,8 +5,6 @@ import Link from "next/link";
 import useSWR from "swr";
 import {
   AlertTriangle,
-  CheckCircle2,
-  CloudUpload,
   Copy,
   Filter,
   History,
@@ -18,7 +16,6 @@ import {
   Send,
   Settings2,
   ShieldCheck,
-  SkipForward,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -108,8 +105,8 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { RuleChatPicker } from "@/components/rule-chat-picker";
-import { ArchiveDailyStatistics } from "@/components/archive-daily-statistics";
-import { ArchiveRecoveryDialog } from "@/components/archive-recovery-dialog";
+import { TaskStatistics } from "@/components/task-statistics";
+import { TaskIssuesDialog } from "@/components/task-issues-dialog";
 import { RuleTopicPicker } from "@/components/rule-topic-picker";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useToast } from "@/hooks/use-toast";
@@ -245,30 +242,6 @@ async function saveDraft(draft: RuleDraft, previousTargetChatId?: string) {
   );
 }
 
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-between gap-2 p-2.5">
-        <div>
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-base font-semibold tabular-nums">{value.toLocaleString()}</p>
-        </div>
-        <div className="rounded-full bg-muted p-1.5 text-muted-foreground [&_svg]:size-4">
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export function CloudArchiveManager() {
   const { getAccounts } = useTelegramAccount();
   const accounts = getAccounts("active");
@@ -282,7 +255,7 @@ export function CloudArchiveManager() {
   const [deleting, setDeleting] = useState<CloudArchiveRuleOverview | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteSelection, setDeleteSelection] = useState<CloudArchiveRuleOverview[]>([]);
-  const [retrying, setRetrying] = useState<CloudArchiveRecord | null>(null);
+  const [issueTask, setIssueTask] = useState<CloudArchiveRuleOverview | null>(null);
   const [ruleSearch, setRuleSearch] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -519,44 +492,6 @@ export function CloudArchiveManager() {
     }
   };
 
-  const retry = async (record: CloudArchiveRecord, confirmed = false) => {
-    if (record.status === "UNKNOWN" && !confirmed) { setRetrying(record); return; }
-    try {
-      await POST(`/cloud-archive/records/${record.id}/retry`, { confirmUncertain: confirmed });
-      await Promise.all([reloadOverview(), reloadRecords()]);
-      setRetrying(null);
-      toast({ variant: "success", title: "Archive record queued for retry" });
-    } catch (failure) {
-      toast({
-        variant: "error",
-        title: "Retry failed",
-        description:
-          failure instanceof Error ? failure.message : String(failure),
-      });
-    }
-  };
-
-  const retryAllFailed = async () => {
-    try {
-      const res = (await POST("/cloud-archive/records/retry-all", {
-        ...recordScope(),
-      })) as { count?: number };
-      await Promise.all([reloadOverview(), reloadRecords()]);
-      toast({
-        variant: "success",
-        title: "Retried failed records",
-        description: `Successfully queued ${res?.count ?? 0} record(s) for retry.`,
-      });
-    } catch (failure) {
-      toast({
-        variant: "error",
-        title: "Retry all failed",
-        description:
-          failure instanceof Error ? failure.message : String(failure),
-      });
-    }
-  };
-
   const clearRecords = async () => {
     try {
       const res = (await POST("/cloud-archive/records/clear", {
@@ -709,31 +644,6 @@ export function CloudArchiveManager() {
           </div>
         )}
 
-      <ArchiveDailyStatistics rules={overview.rules} />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        <StatCard
-          label="Completed"
-          value={overview.statistics.completed}
-          icon={<CheckCircle2 className="text-green-500" />}
-        />
-        <StatCard
-          label="Pending"
-          value={overview.statistics.pending}
-          icon={<CloudUpload className="text-blue-500" />}
-        />
-        <StatCard
-          label="Skipped"
-          value={overview.statistics.skipped}
-          icon={<SkipForward className="text-amber-500" />}
-        />
-        <StatCard
-          label="Failed"
-          value={overview.statistics.failed}
-          icon={<AlertTriangle className="text-red-500" />}
-        />
-        <StatCard label="Unconfirmed sends" value={overview.statistics.unconfirmed || 0} icon={<AlertTriangle className="text-amber-500" />} />
-      </div>
-
       <Tabs defaultValue="rules">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList>
@@ -814,7 +724,9 @@ export function CloudArchiveManager() {
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-1 text-sm text-muted-foreground">
+                  <div className="min-w-0 space-y-2 text-sm text-muted-foreground">
+                    <TaskStatistics task={item} activity={WAIT_REASONS[item.waitReason || "LIVE"] || item.waitReason || "LIVE"} onIssues={() => setIssueTask(item)} />
+                    <details className="text-xs"><summary className="cursor-pointer">Task details</summary><div className="mt-2 space-y-1">
                     <div>
                       Target auto download:{" "}
                       {item.targetDownloadEnabled ? "Enabled" : "Disabled"}
@@ -842,12 +754,12 @@ export function CloudArchiveManager() {
                       {item.queue.oldestPendingAt > 0 && <div><span>Oldest pending message</span>: {new Date(item.queue.oldestPendingAt).toLocaleString()}</div>}
                       {item.queue.nextAttemptAt && item.queue.nextAttemptAt > Date.now() ? <div><span>Next attempt</span>: {new Date(item.queue.nextAttemptAt).toLocaleString()}</div> : null}
                     </div>}
-                    {item.queue?.firstRecordId && (["UNCONFIRMED", "PREDECESSOR_FAILED"].includes(item.waitReason || "") || (item.queue.firstStatus === "UNKNOWN" || (item.queue.firstStatus === "FAILED" && item.rule.strictOrder))) && <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Blocked since</span><span>{item.queue.firstUpdatedAt ? new Date(item.queue.firstUpdatedAt).toLocaleString() : "—"}</span><Button size="sm" variant="outline" onClick={() => setResolving(item.queue!.firstRecordId!)}>Resolve blocked delivery</Button></div>}
                     {item.syncError && (
                       <div className="max-w-xl truncate text-destructive" title={item.syncError}>
                         {item.syncError}
                       </div>
                     )}
+                    </div></details>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -1134,14 +1046,6 @@ export function CloudArchiveManager() {
                   Refresh
                 </Button>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void retryAllFailed()}
-                >
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-amber-500" />
-                  Retry Failed
-                </Button>
-                <Button
                   variant="ghost"
                   size="sm"
                   className="text-destructive hover:bg-destructive/10"
@@ -1244,18 +1148,6 @@ export function CloudArchiveManager() {
                         </TableCell>
                         <TableCell>
                           {["FAILED", "UNKNOWN"].includes(record.status) && <Button size="sm" variant="outline" onClick={() => setResolving(record.id)}>Resolve</Button>}
-                          {["FAILED", "UNKNOWN", "SKIPPED"].includes(
-                            record.status,
-                          ) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Retry"
-                              onClick={() => void retry(record)}
-                            >
-                              <RefreshCw />
-                            </Button>
-                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1267,12 +1159,7 @@ export function CloudArchiveManager() {
         </TabsContent>
       </Tabs>
 
-      <ArchiveRecoveryDialog recordId={resolving} onClose={() => setResolving(null)} onChanged={() => { void reloadOverview(); void reloadRecords(); void reloadHistory(); }} />
-      <Dialog open={!!retrying} onOpenChange={open => { if (!open) setRetrying(null); }}>
-        <DialogContent><DialogHeader><DialogTitle>Retry unconfirmed send?</DialogTitle><DialogDescription>Telegram may already have delivered this message. Check the destination before retrying to avoid duplicates.</DialogDescription></DialogHeader>
-          <DialogFooter><Button variant="outline" onClick={() => setRetrying(null)}>Cancel</Button><Button variant="destructive" onClick={() => { if (retrying) void retry(retrying, true); }}>Confirm retry</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TaskIssuesDialog task={issueTask} recordId={resolving} onClose={() => { setIssueTask(null); setResolving(null); }} onChanged={() => { void reloadOverview(); void reloadRecords(); void reloadHistory(); }} />
       <Dialog open={!!deleting} onOpenChange={open => { if (!open && !deleteBusy) setDeleting(null); }}>
         <DialogContent><DialogHeader><DialogTitle>Delete archive rule?</DialogTitle>
           <DialogDescription>This stops this destination and cancels its history tasks and unsent messages. Existing Telegram messages and completed records are kept. A send already submitted to Telegram may still finish.</DialogDescription>

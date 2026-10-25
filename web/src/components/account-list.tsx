@@ -1,11 +1,7 @@
 import { type TelegramAccount } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import {
-  ArrowRight,
-  Circle,
-  Network,
   PhoneCall,
   Plus,
 } from "lucide-react";
@@ -13,6 +9,7 @@ import { Spoiler } from "spoiled";
 import AccountDeleteDialog from "@/components/account-delete-dialog";
 import { AccountDialog } from "@/components/account-dialog";
 import { Button } from "@/components/ui/button";
+import { AccountConnection } from "@/components/account-connection";
 
 interface AccountListProps {
   accounts: TelegramAccount[];
@@ -26,7 +23,7 @@ export function AccountList({
   showAddCard = true,
 }: AccountListProps) {
   return (
-    <div className={`grid max-h-52 grid-cols-1 gap-2 overflow-y-auto ${accounts.length > 1 ? "sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2" : ""}`}>
+    <div className="flex max-h-[23rem] flex-wrap items-start gap-3 overflow-y-auto" data-testid="account-cards">
       {accounts.map((account) => {
         const isActive = account.status === "active" && !account.sleeping;
         const isSleeping = account.sleeping;
@@ -34,7 +31,7 @@ export function AccountList({
         return (
           <Card
             key={account.id}
-            className="group relative flex cursor-pointer flex-col justify-between border-border/70 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
+            className="group relative flex w-full cursor-pointer flex-col border-border/70 transition-colors hover:border-primary/50 sm:w-[300px]"
             onClick={(_e) => {
               onSelectAccount(account.id);
             }}
@@ -96,41 +93,7 @@ export function AccountList({
                 </div>
               </div>
 
-              {/* Status and Proxy Meta info */}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-2 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <Badge
-                    variant={isActive ? "default" : "secondary"}
-                    className="h-5 px-1.5 text-[11px] font-normal"
-                  >
-                    <Circle
-                      className={`mr-1 size-1.5 fill-current ${
-                        isSleeping
-                          ? "text-amber-500"
-                          : isActive
-                            ? "text-emerald-400"
-                            : "text-gray-400"
-                      }`}
-                    />
-                    {isSleeping ? "Sleeping" : account.status === "active" ? "Running" : "Inactive"}
-                  </Badge>
-
-                  {account.proxy && (
-                    <Badge
-                      variant="outline"
-                      className="h-5 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground"
-                    >
-                      <Network className="size-2.5 text-blue-500" />
-                      <span translate="no" className="max-w-[90px] truncate">{account.proxy}</span>
-                    </Badge>
-                  )}
-                </div>
-
-                <span className="flex items-center text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                  Open account
-                  <ArrowRight className="ml-1 size-3 transition-transform duration-200 group-hover:translate-x-0.5" />
-                </span>
-              </div>
+              <AccountConnection telegramId={account.id} configuredProxy={account.proxy} />
             </CardContent>
           </Card>
         );

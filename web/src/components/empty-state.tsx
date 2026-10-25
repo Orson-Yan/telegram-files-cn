@@ -8,7 +8,6 @@ import {
   CloudUpload,
   Download,
   FolderOpen,
-  FolderSync,
   HardDrive,
   Loader2,
   LogOut,
@@ -47,7 +46,6 @@ interface EmptyStateProps {
   hasAccounts: boolean;
   accounts?: TelegramAccount[];
   message?: string;
-  connectionHealth?: React.ReactNode;
   onSelectAccount?: (accountId: string) => void;
 }
 
@@ -57,10 +55,10 @@ export function EmptyState({
   accounts = [],
   message,
   onSelectAccount,
-  connectionHealth,
 }: EmptyStateProps) {
   const { session, logout } = useAdminSession();
   const [loggingOut, setLoggingOut] = useState(false);
+  const { connectionStatus } = useWebsocket();
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -108,7 +106,8 @@ export function EmptyState({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-1.5">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+          <Badge variant="outline" className="mr-1 text-[10px]"><span>Browser connection</span>: <span>{connectionStatus === "Open" ? "Connected" : "Reconnecting"}</span></Badge>
           <ThemeToggleButton />
           <LanguageToggleButton />
           <PlatformBindingShortcut />
@@ -132,7 +131,6 @@ export function EmptyState({
         </div>
       </div>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-testid="home-account-connection">
       {/* Account Workspace (First Priority) */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
@@ -186,9 +184,7 @@ export function EmptyState({
           </div>
         )}
       </section>
-      <aside className="min-w-0">{connectionHealth}</aside>
-      </div>
-      <ArchiveDailyStatistics compact />
+      <ArchiveDailyStatistics />
 
       {/* Overview & Feature Hub */}
       <DashboardMetricsAndFeatures />
@@ -235,7 +231,7 @@ function DashboardMetricsAndFeatures() {
         <h2 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
           Live System Overview
         </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-xl border bg-card px-3 py-2 sm:grid-cols-4">
           <OverviewMetric
             icon={<Check className="size-4 text-emerald-500" />}
             label="Downloaded"
@@ -330,8 +326,8 @@ function OverviewMetric({
   highlight?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-card p-3.5 shadow-sm transition-colors">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
+    <div className="flex items-center gap-2">
+      <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
         {icon}
       </div>
       <div className="min-w-0 flex-1">

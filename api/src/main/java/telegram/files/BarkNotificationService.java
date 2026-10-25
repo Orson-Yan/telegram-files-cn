@@ -266,8 +266,9 @@ public final class BarkNotificationService {
                 boolean replaced = issues.keySet().stream().anyMatch(key -> !key.equals(oldKey) && key.startsWith(base + ":"));
                 String next = number(prior, "notified", 0) == 1 && config.getBoolean("recovery", true)
                         && config.getJsonArray("events").contains(event) && monitorEnabled && !replaced ? "RECOVERY" : "CLOSED";
-                result = result.compose(_ -> store().execute("UPDATE notification_incident SET state = ?, attempts = 0, next_attempt_at = 0 WHERE incident_key = ?",
-                        Tuple.of(next, prior.getString("incident_key"))).mapEmpty());
+                result = result.compose(_ -> recoveryPending(prior).compose(pending -> pending && monitorEnabled && !replaced
+                        ? Future.succeededFuture() : store().execute("UPDATE notification_incident SET state = ?, attempts = 0, next_attempt_at = 0 WHERE incident_key = ?",
+                        Tuple.of(next, prior.getString("incident_key"))).mapEmpty()));
             }
             return result.compose(_ -> store().query("SELECT * FROM notification_incident WHERE state IN ('OPEN', 'RECOVERY')", Tuple.tuple())).compose(current -> {
                 Future<Void> sends = Future.succeededFuture();
@@ -296,6 +297,15 @@ public final class BarkNotificationService {
                 return sends;
             });
         });
+    }
+
+    private Future<Boolean> recoveryPending(JsonObject incident) {
+        if (!incident.getString("incident_key").startsWith("route:")) return Future.succeededFuture(false);
+        String path = new JsonObject(incident.getString("payload")).getString("path", "");
+        String prefix = "/cloud-archive?record=";
+        if (!path.startsWith(prefix)) return Future.succeededFuture(false);
+        return store().find(path.substring(prefix.length())).map(record -> record != null
+                && Set.of("PENDING", "RETRY", "SENDING", "UNKNOWN", "FAILED").contains(record.status()));
     }
 
     private static long number(JsonObject value, String key, long fallback) {

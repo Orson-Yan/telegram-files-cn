@@ -33,8 +33,8 @@ test("home reports a proxy outage, recovers after a manual check and fits mobile
   void csrfToken;
   const api = await installApi(page);
   await page.goto("/");
-  await expect(page.getByText("Connection health", { exact: true })).toBeVisible();
-  await expect(page.getByText(/126 ms/)).toBeVisible();
+  await expect(page.getByTestId("account-cards")).toContainText("Office SOCKS5");
+  await expect(page.getByText(/126 Milliseconds/)).toBeVisible();
   api.fail();
   await page.reload();
   await expect(page.getByRole("alert").filter({ hasText: "Telegram connection unavailable" })).toBeVisible();
@@ -71,6 +71,6 @@ test("Chinese health panel and deletion confirmation are localized", async ({ pa
   await page.getByRole("button", { name: "确认删除规则", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.goto("/");
-  await expect(page.getByText("连接健康", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("account-cards")).toContainText("当前代理");
   await expect(page.getByRole("button", { name: "立即检查", exact: true })).toBeVisible();
 });
