@@ -102,24 +102,30 @@ class TaskIssueOperationsTest {
             var server = await(f.vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"));
             var client = f.vertx.createHttpClient();
             try {
-                var missing = await(client.request(io.vertx.core.http.HttpMethod.GET, server.actualPort(), "127.0.0.1", "/cloud-archive/issues").compose(request -> request.send()));
-                assertEquals(400, missing.statusCode()); await(missing.body());
+                var missing = await(send(client, server.actualPort(), io.vertx.core.http.HttpMethod.GET, "/cloud-archive/issues", null));
+                assertEquals(400, missing.getInteger("status"));
                 var scope = JsonObject.of("telegramId", "7", "sourceChatId", "100", "targetChatId", "200");
                 for (JsonObject body : List.of(new JsonObject(), scope.copy().put("ids", new io.vertx.core.json.JsonArray()),
                         scope.copy().put("ids", new io.vertx.core.json.JsonArray(java.util.Collections.nCopies(201, record.id()))),
                         scope.copy().put("ids", new io.vertx.core.json.JsonArray().add(123)))) {
-                    var response = await(client.request(io.vertx.core.http.HttpMethod.POST, server.actualPort(), "127.0.0.1", "/cloud-archive/issues/skip")
-                            .compose(request -> request.putHeader("Content-Type", "application/json").send(body.encode())));
-                    assertEquals(400, response.statusCode()); await(response.body());
+                    var response = await(send(client, server.actualPort(), io.vertx.core.http.HttpMethod.POST, "/cloud-archive/issues/skip", body));
+                    assertEquals(400, response.getInteger("status"));
                 }
                 assertEquals("UNKNOWN", await(f.operations.find(record.id())).status());
-                var response = await(client.request(io.vertx.core.http.HttpMethod.POST, server.actualPort(), "127.0.0.1", "/cloud-archive/issues/skip")
-                        .compose(request -> request.putHeader("Content-Type", "application/json").send(scope.put("ids", new io.vertx.core.json.JsonArray().add(record.id())).encode())));
-                assertEquals(200, response.statusCode());
-                assertEquals(1L, (long) await(response.body()).toJsonObject().getInteger("skipped"));
+                var response = await(send(client, server.actualPort(), io.vertx.core.http.HttpMethod.POST, "/cloud-archive/issues/skip",
+                        scope.put("ids", new io.vertx.core.json.JsonArray().add(record.id()))));
+                assertEquals(200, response.getInteger("status"));
+                assertEquals(1, new JsonObject(response.getString("body")).getInteger("skipped"));
                 assertEquals("SKIPPED", await(f.operations.find(record.id())).status());
             } finally { client.close(); await(server.close()); routes.stop(); }
         }
+    }
+
+    private static io.vertx.core.Future<JsonObject> send(io.vertx.core.http.HttpClient client, int port,
+                                                        io.vertx.core.http.HttpMethod method, String path, JsonObject body) {
+        return client.request(method, port, "127.0.0.1", path)
+                .compose(request -> request.putHeader("Content-Type", "application/json").send(body == null ? "" : body.encode()))
+                .compose(response -> response.body().map(bytes -> JsonObject.of("status", response.statusCode(), "body", bytes.toString())));
     }
 
 }
