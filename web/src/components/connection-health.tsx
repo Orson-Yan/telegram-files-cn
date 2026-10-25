@@ -18,7 +18,7 @@ export type ConnectionHealth = {
   lastSuccessAt: number; unhealthySince: number; latencyMs: number | null;
 };
 
-const labels: Record<string, string> = {
+export const labels: Record<string, string> = {
   HEALTHY: "Connected", CONNECTING: "Reconnecting", ERROR: "Connection unavailable",
   UNKNOWN: "Status unknown", SLEEPING: "Sleeping", INACTIVE: "Login required",
   ready: "Connected", connecting: "Connecting", connectingToProxy: "Connecting to proxy",
@@ -32,7 +32,7 @@ export function healthStatus(item: ConnectionHealth, unavailable = false, now = 
   return !item.checkedAt || now - item.checkedAt > 90_000 ? "UNKNOWN" : item.status;
 }
 
-function useHealth() {
+export function useHealth() {
   return useSWR<ConnectionHealth[]>("/telegram/health", { refreshInterval: 15_000, dedupingInterval: 5_000 });
 }
 

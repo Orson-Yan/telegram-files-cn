@@ -96,6 +96,13 @@ public final class ArchiveOperationsRepository extends AbstractSqlRepository {
                 target_message_id BIGINT NOT NULL, delivered_at BIGINT NOT NULL,
                 state VARCHAR(32) NOT NULL, error_message VARCHAR(1024)
             )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS archive_recovery_state (
+                record_id VARCHAR(64) PRIMARY KEY, signature VARCHAR(512) NOT NULL,
+                rounds INT NOT NULL DEFAULT 0, checked_at BIGINT NOT NULL,
+                next_check_at BIGINT NOT NULL DEFAULT 0
+            )
             """);
 
     public Future<Void> backfill() {
@@ -328,7 +335,8 @@ public final class ArchiveOperationsRepository extends AbstractSqlRepository {
                         .put("estimated", number(row, "estimated")));
             }).mapEmpty());
         }
-        return result.map(_ -> JsonObject.of("timeZone", zone.getId(), "days", days));
+        return result.compose(_ -> summary(account, source, target))
+                .map(statistics -> JsonObject.of("timeZone", zone.getId(), "days", days, "statistics", statistics));
     }
 
     public Future<JsonArray> query(String sql, Tuple values) {
@@ -346,6 +354,109 @@ public final class ArchiveOperationsRepository extends AbstractSqlRepository {
         return execute("INSERT INTO archive_operator_audit (id, record_id, action, reason, created_at) SELECT " + id
                 + ", r.id, 'HIDE_LOG', 'Log hidden; delivery and deduplication retained', " + System.currentTimeMillis()
                 + " FROM (" + selection + ") r WHERE NOT EXISTS (SELECT 1 FROM archive_operator_audit a WHERE a.record_id = r.id AND a.action = 'HIDE_LOG')", values);
+    }
+
+    public Future<JsonObject> successCounts(long account, Long source, Long target) {
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        LocalDate today = LocalDate.now(zone);
+        Tuple values = Tuple.of(today.atStartOfDay(zone).toInstant().toEpochMilli(), today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli());
+        String scope = scope(values, account, source, target);
+        return preparedQuery("SELECT COUNT(*) AS completed, COUNT(CASE WHEN delivered_at >= ? AND delivered_at < ? THEN 1 END) AS today_completed FROM archive_success WHERE 1=1" + scope)
+                .execute(values).map(rows -> JsonObject.of("completed", number(rows.iterator().next(), "completed"), "todayCompleted", number(rows.iterator().next(), "today_completed")));
+    }
+
+    public Future<JsonObject> summary(long account, Long source, Long target) {
+        Tuple values = Tuple.tuple();
+        return preparedQuery("""
+                SELECT COUNT(CASE WHEN status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING') THEN 1 END) AS pending,
+                    COUNT(CASE WHEN status = 'FAILED' THEN 1 END) AS failed,
+                    COUNT(CASE WHEN status = 'UNKNOWN' THEN 1 END) AS unconfirmed,
+                    COUNT(CASE WHEN status = 'SKIPPED' THEN 1 END) AS skipped
+                FROM telegram_archive_record WHERE 1=1
+                """ + scope(values, account, source, target)).execute(values).compose(rows -> {
+            Row row = rows.iterator().next();
+            JsonObject result = JsonObject.of("pending", number(row, "pending"), "failed", number(row, "failed"),
+                    "unconfirmed", number(row, "unconfirmed"), "skipped", number(row, "skipped"));
+            return successCounts(account, source, target).map(result::mergeIn);
+        });
+    }
+
+    public Future<JsonObject> issues(long account, long source, long target, long after, int limit) {
+        return preparedQuery("""
+                SELECT id, source_message_id, status, updated_at, last_error_code FROM telegram_archive_record
+                WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
+                  AND status IN ('UNKNOWN', 'FAILED') AND source_message_id > ?
+                ORDER BY source_message_id, id LIMIT ?
+                """).execute(Tuple.of(account, source, target, after, limit)).compose(rows -> {
+            JsonArray items = new JsonArray();
+            long cursor = after;
+            for (Row row : rows) {
+                cursor = ((Number) row.getValue("source_message_id")).longValue();
+                items.add(JsonObject.of("id", row.getString("id"), "sourceMessageId", String.valueOf(cursor),
+                        "status", row.getString("status"), "updatedAt", row.getValue("updated_at"), "errorCode", row.getString("last_error_code")));
+            }
+            String next = rows.size() == limit ? String.valueOf(cursor) : null;
+            return preparedQuery("SELECT COUNT(*) AS total FROM telegram_archive_record WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ? AND status IN ('UNKNOWN', 'FAILED')")
+                    .execute(Tuple.of(account, source, target)).map(count -> JsonObject.of("items", items, "total", number(count.iterator().next(), "total"), "nextCursor", next));
+        });
+    }
+
+    public Future<JsonObject> skipSelected(long account, long source, long target, List<String> ids) {
+        JsonArray results = new JsonArray();
+        Future<Void> work = Future.succeededFuture();
+        for (String id : ids) work = work.compose(_ -> find(id).compose(record -> {
+            if (record == null || record.telegramId() != account || record.sourceChatId() != source || record.targetChatId() != target) {
+                results.add(JsonObject.of("id", id, "result", "OUT_OF_SCOPE")); return Future.succeededFuture();
+            }
+            if (!List.of("UNKNOWN", "FAILED").contains(record.status())) {
+                results.add(JsonObject.of("id", id, "result", "CHANGED")); return Future.succeededFuture();
+            }
+            return manualSkip(record, "用户在任务异常列表中选择跳过")
+                    .onSuccess(_ -> { results.add(JsonObject.of("id", id, "result", "SKIPPED")); telegram.files.AutoCloudArchiveVerticle.QUEUED_RECORD_AT.remove(id); })
+                    .recover(_ -> find(id).map(current -> {
+                        results.add(JsonObject.of("id", id, "result", current != null && List.of("UNKNOWN", "FAILED").contains(current.status()) ? "ERROR" : "CHANGED"));
+                        return null;
+                    }));
+        }).recover(_ -> { results.add(JsonObject.of("id", id, "result", "ERROR")); return Future.succeededFuture(); }));
+        return work.map(_ -> JsonObject.of("results", results, "skipped", results.stream().filter(value -> "SKIPPED".equals(((JsonObject) value).getString("result"))).count()));
+    }
+
+    public Future<Void> rememberRecovery(String id, String signature, int rounds, long nextCheck) {
+        long now = System.currentTimeMillis();
+        return execute("INSERT INTO archive_recovery_state (record_id, signature, rounds, checked_at, next_check_at) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM archive_recovery_state WHERE record_id = ?)",
+                Tuple.of(id, signature, rounds, now, nextCheck, id))
+                .compose(_ -> execute("UPDATE archive_recovery_state SET signature = ?, rounds = ?, checked_at = ?, next_check_at = ? WHERE record_id = ?", Tuple.of(signature, rounds, now, nextCheck, id))).mapEmpty();
+    }
+
+    public Future<Void> skipUnavailableSource(CloudArchiveRecord record) {
+        return pool.withTransaction(connection -> preparedQuery(connection, """
+                UPDATE telegram_archive_record SET status = 'SKIPPED', last_error_code = 'SOURCE_UNAVAILABLE',
+                    last_error_message = 'Source message was removed or cannot be copied', updated_at = ?
+                WHERE id = ? AND status = 'FAILED' AND updated_at = ?
+                """).execute(Tuple.of(System.currentTimeMillis(), record.id(), record.updatedAt())).compose(rows -> rows.rowCount() == 0
+                        ? Future.succeededFuture() : audit(connection, record.id(), "AUTO_SKIP", "来源消息已删除或明确不可转存", null)));
+    }
+
+    public Future<Boolean> resumeFailed(CloudArchiveRecord record, String signature, int rounds) {
+        long now = System.currentTimeMillis();
+        return pool.withTransaction(connection -> preparedQuery(connection, """
+                UPDATE telegram_archive_record SET status = 'RETRY', attempt_count = 0, next_attempt_at = ?,
+                    last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                WHERE id = ? AND status = 'FAILED' AND updated_at = ?
+                """).execute(Tuple.of(now, now, record.id(), record.updatedAt())).compose(updated -> {
+            if (updated.rowCount() == 0) return Future.succeededFuture(false);
+            return preparedQuery(connection, "UPDATE archive_recovery_state SET signature = ?, rounds = ?, checked_at = ?, next_check_at = ? WHERE record_id = ?")
+                    .execute(Tuple.of(signature, rounds, now, now + 15 * 60_000L, record.id()))
+                    .compose(_ -> audit(connection, record.id(), "AUTO_RETRY", "自动检查确认发送条件可用后恢复重试", null)).map(true);
+        }));
+    }
+
+    private static String scope(Tuple values, long account, Long source, Long target) {
+        StringBuilder sql = new StringBuilder();
+        if (account != 0) { sql.append(" AND telegram_id = ?"); values.addLong(account); }
+        if (source != null && source != 0) { sql.append(" AND source_chat_id = ?"); values.addLong(source); }
+        if (target != null && target != 0) { sql.append(" AND target_chat_id = ?"); values.addLong(target); }
+        return sql.toString();
     }
 
     private static long number(Row row, String column) { return ((Number) row.getValue(column)).longValue(); }

@@ -294,7 +294,9 @@ public final class CloudArchiveRepositoryImpl extends AbstractSqlRepository impl
                         WHERE telegram_id = ? AND source_chat_id = ? AND target_chat_id = ?
                             AND status IN ('PENDING', 'RUNNING', 'DRAINING', 'PAUSED', 'FAILED')
                         """).execute(Tuple.of(telegramId, sourceChatId, targetChatId))
-                        .map(rows -> stats.put("historyTasks", value(rows.iterator().next(), "total"))));
+                        .map(rows -> stats.put("historyTasks", value(rows.iterator().next(), "total"))))
+                .compose(stats -> operations == null ? Future.succeededFuture(stats)
+                        : operations.successCounts(telegramId, sourceChatId, targetChatId).map(stats::mergeIn));
     }
 
     private Future<Boolean> findExisting(long telegramId,

@@ -86,6 +86,25 @@ class BarkNotificationServiceTest {
     }
 
     @Test
+    void queuedAutomaticRecoveryDoesNotSendRecoveryBeforeDeliverySucceeds() throws Exception {
+        try (Setup setup = new Setup()) {
+            var record = setup.database.add(10, "COPY");
+            await(setup.database.records.fail(record.id(), false, 0, "MAX_RETRIES_EXCEEDED", "Test"));
+            await(setup.service.tick());
+            assertEquals(1, setup.received.size());
+            await(setup.database.operations.resumeFailed(await(setup.database.operations.find(record.id())), "ready:test", 1));
+            await(setup.service.tick()); await(setup.service.tick());
+            assertEquals(1, setup.received.size());
+            await(setup.database.records.fail(record.id(), false, 0, "MAX_RETRIES_EXCEEDED", "Test"));
+            await(setup.service.tick());
+            assertEquals(1, setup.received.size(), "Retry exhaustion is the same incident");
+            await(setup.database.records.complete(record.id(), 9001));
+            await(setup.service.tick()); await(setup.service.tick());
+            assertEquals(2, setup.received.size());
+        }
+    }
+
+    @Test
     void failedPushHasBoundedRetriesAndDoesNotBlockTheArchiveQueue() throws Exception {
         try (Setup setup = new Setup()) {
             setup.status = 503; setup.blocked();

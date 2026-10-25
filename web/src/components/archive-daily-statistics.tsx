@@ -5,10 +5,10 @@ import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { useOptionalLanguage } from "@/i18n/language-provider";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
-import type { CloudArchiveRuleOverview } from "@/lib/types";
+import type { CloudArchiveOverview, CloudArchiveRuleOverview } from "@/lib/types";
 
 type Day = { date: string; copied: number; forwarded: number; total: number; estimated: number };
-type Statistics = { timeZone: string; days: Day[] };
+type Statistics = { timeZone: string; days: Day[]; statistics?: { completed: number; pending: number; skipped: number; failed: number; unconfirmed: number } };
 
 export function shanghaiToday(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
@@ -26,6 +26,7 @@ export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?
   const accounts = getAccounts();
   const today = shanghaiToday();
   const [expanded, setExpanded] = useState(false);
+  const { data: overview } = useSWR<CloudArchiveOverview>(expanded ? "/cloud-archive/overview" : null);
   const [account, setAccount] = useState("ALL");
   const [route, setRoute] = useState("ALL");
   const [range, setRange] = useState("7");
@@ -44,17 +45,24 @@ export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?
   const { data, error } = useSWR<Statistics>(expanded && (range !== "custom" || validRange) ? `/cloud-archive/daily?${dailyQuery}` : null, { refreshInterval: 15_000 });
   const current = summary?.days?.[0];
   const count = (value?: number) => value == null ? "—" : value.toLocaleString();
-  const selectedRules = rules.filter(rule => account === "ALL" || rule.telegramId === account);
+  const selectedRules = (rules.length ? rules : overview?.rules ?? []).filter(rule => account === "ALL" || rule.telegramId === account);
   return <section className="rounded-xl border bg-card px-3 py-2.5" aria-label={t("Daily send statistics")}>
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 tabular-nums">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 tabular-nums">
         <strong>{t("Today")}</strong>
         <span>{t("Copied sends")} <strong>{count(current?.copied)}</strong></span>
         <span>{t("Forwards")} <strong>{count(current?.forwarded)}</strong></span>
         <span>{t("Successful total")} <strong>{count(current?.total)}</strong></span>
         {todayError && <span className="text-destructive">{t("Failed to load daily statistics")}</span>}
       </div>
-      <Button size="sm" variant="ghost" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t(expanded ? "Hide daily statistics" : "View daily statistics")}</Button>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground tabular-nums" aria-label={t("Cumulative overview")}>
+        <span>{t("Cumulative successes")} <strong className="text-foreground">{count(summary?.statistics?.completed)}</strong></span>
+        <span>{t("Queued")} <strong className="text-foreground">{count(summary?.statistics?.pending)}</strong></span>
+        <span>{t("Skipped")} <strong className="text-foreground">{count(summary?.statistics?.skipped)}</strong></span>
+        <span>{t("Failed")} <strong>{count(summary?.statistics?.failed)}</strong></span>
+        <span>{t("Unconfirmed sends")} <strong>{count(summary?.statistics?.unconfirmed)}</strong></span>
+      </div>
+      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t(expanded ? "Hide statistics" : "View statistics")}</Button>
     </div>
     {expanded && <div className="mt-3 space-y-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -76,6 +84,7 @@ export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?
           {!data?.days && <tr><td colSpan={4} className="py-3 text-center text-muted-foreground">{t("Loading statistics...")}</td></tr>}
         </tbody></table></div>}
       {data?.days?.some(day => day.estimated > 0) && <p className="text-xs text-muted-foreground">* {t("Historical dates are estimated from old records")}</p>}
+      {route !== "ALL" && <p translate="no" className="truncate text-xs text-muted-foreground">{selectedRules.find(rule => `${rule.telegramId}:${rule.sourceChatId}:${rule.targetChatId}` === route)?.sourceChatName} → {selectedRules.find(rule => `${rule.telegramId}:${rule.sourceChatId}:${rule.targetChatId}` === route)?.targetChatName}</p>}
     </div>}
   </section>;
 }

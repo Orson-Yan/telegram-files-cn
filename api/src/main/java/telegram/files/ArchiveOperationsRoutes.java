@@ -17,34 +17,20 @@ import java.util.function.Supplier;
 public final class ArchiveOperationsRoutes {
     private final Vertx vertx;
     private final BarkNotificationService notifications;
+    private final ArchiveAutoRecovery recovery;
     private long timer;
     private boolean reconciling;
 
     public ArchiveOperationsRoutes(Vertx vertx, Supplier<TelegramHealthMonitor> health) {
         this.vertx = vertx;
         notifications = new BarkNotificationService(vertx, health);
+        recovery = new ArchiveAutoRecovery(health);
     }
 
     public void register(Router router) {
         router.get("/cloud-archive/daily").handler(this::daily);
-        router.get("/cloud-archive/issues").handler(ctx -> DataVerticle.archiveOperations.query("""
-                SELECT r.* FROM telegram_archive_record r WHERE r.status IN ('UNKNOWN', 'FAILED')
-                    AND NOT EXISTS (SELECT 1 FROM telegram_archive_record p
-                        WHERE p.telegram_id = r.telegram_id AND p.source_chat_id = r.source_chat_id
-                          AND p.target_chat_id = r.target_chat_id AND p.source_message_id < r.source_message_id
-                          AND p.status IN ('STAGED', 'PENDING', 'RETRY', 'SENDING', 'UNKNOWN', 'FAILED'))
-                ORDER BY r.updated_at LIMIT 100
-                """, Tuple.tuple()).onSuccess(rows -> {
-            JsonArray records = new JsonArray();
-            rows.forEach(value -> {
-                JsonObject row = (JsonObject) value;
-                records.add(JsonObject.of("id", row.getString("id"), "telegramId", row.getValue("telegram_id"),
-                        "sourceChatId", row.getValue("source_chat_id"), "targetChatId", row.getValue("target_chat_id"),
-                        "sourceMessageId", row.getValue("source_message_id"), "status", row.getString("status"),
-                        "updatedAt", row.getValue("updated_at"), "errorCode", row.getString("last_error_code")));
-            });
-            ctx.json(records);
-        }).onFailure(ctx::fail));
+        router.get("/cloud-archive/issues").handler(this::issues);
+        router.post("/cloud-archive/issues/skip").handler(this::skipIssues);
         router.get("/cloud-archive/records/:recordId/diagnostics").handler(ctx ->
                 DataVerticle.archiveOperations.find(ctx.pathParam("recordId")).compose(record -> {
                     if (record == null) return Future.failedFuture("Record not found");
@@ -67,6 +53,38 @@ public final class ArchiveOperationsRoutes {
                 .onSuccess(_ -> ctx.json(JsonObject.of("accepted", true))).onFailure(failure -> fail(ctx, failure)));
     }
 
+    private void issues(RoutingContext ctx) {
+        try {
+            long account = Long.parseLong(ctx.request().getParam("telegramId", "0"));
+            long source = Long.parseLong(ctx.request().getParam("sourceChatId", "0"));
+            long target = Long.parseLong(ctx.request().getParam("targetChatId", "0"));
+            if (account <= 0 || source == 0 || target == 0) throw new IllegalArgumentException("A task scope is required");
+            long after = Long.parseLong(ctx.request().getParam("cursor", "0"));
+            int limit = Math.max(1, Math.min(200, Integer.parseInt(ctx.request().getParam("limit", "200"))));
+            DataVerticle.archiveOperations.issues(account, source, target, after, limit).onSuccess(ctx::json).onFailure(failure -> fail(ctx, failure));
+        } catch (RuntimeException invalid) { fail(ctx, new IllegalArgumentException("A valid task scope and cursor are required")); }
+    }
+
+    private void skipIssues(RoutingContext ctx) {
+        try {
+            JsonObject body = ctx.body().asJsonObject();
+            if (body == null) throw new IllegalArgumentException();
+            long account = Long.parseLong(String.valueOf(body.getValue("telegramId", "0")));
+            long source = Long.parseLong(String.valueOf(body.getValue("sourceChatId", "0")));
+            long target = Long.parseLong(String.valueOf(body.getValue("targetChatId", "0")));
+            JsonArray selected = body.getJsonArray("ids");
+            if (account <= 0 || source == 0 || target == 0 || selected == null || selected.isEmpty() || selected.size() > 200)
+                throw new IllegalArgumentException();
+            java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+            for (Object value : selected) {
+                if (!(value instanceof String id) || id.isBlank() || id.length() > 64) throw new IllegalArgumentException();
+                ids.add(id);
+            }
+            DataVerticle.archiveOperations.skipSelected(account, source, target, ids.stream().toList())
+                    .onSuccess(ctx::json).onFailure(failure -> fail(ctx, failure));
+        } catch (RuntimeException invalid) { fail(ctx, new IllegalArgumentException("Select 1 to 200 issues from one task")); }
+    }
+
     private void daily(RoutingContext ctx) {
         try {
             ZoneId zone = ZoneId.of(ctx.request().getParam("timeZone", "Asia/Shanghai"));
@@ -81,6 +99,7 @@ public final class ArchiveOperationsRoutes {
 
     public void start() {
         timer = vertx.setPeriodic(30_000, _ -> {
+            recovery.scan();
             if (reconciling) return;
             reconciling = true;
             DataVerticle.archiveOperations.unresolved().compose(records -> {

@@ -170,6 +170,7 @@ export default function Proxys({
   const handleProxySubmit = async () => {
     if (telegramId) {
       await triggerProxy();
+      onProxyNameChange?.(innerProxyName);
     } else {
       if (typeof window !== "undefined") {
         if (innerProxyName) {
@@ -313,7 +314,7 @@ export default function Proxys({
           <Button
             className="w-full md:w-auto"
             disabled={isToggleProxyMutating}
-            onClick={() => handleProxySubmit()}
+            onClick={() => void handleProxySubmit().catch(() => toast({ variant: "error", description: "Failed to apply proxy" }))}
           >
             <Check />
             Apply proxy
