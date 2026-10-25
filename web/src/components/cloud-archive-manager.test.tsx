@@ -21,6 +21,7 @@ vi.mock("@/hooks/use-telegram-account", () => ({
   useTelegramAccount: () => ({ getAccounts: () => mocks.accounts }),
 }));
 vi.mock("swr", () => ({
+  useSWRConfig: () => ({ mutate: mocks.reload }),
   default: (key: string) => ({
     data: key === "/cloud-archive/overview" ? overview : [],
     isLoading: false,

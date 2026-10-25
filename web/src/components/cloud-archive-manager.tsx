@@ -108,6 +108,8 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { RuleChatPicker } from "@/components/rule-chat-picker";
+import { ArchiveDailyStatistics } from "@/components/archive-daily-statistics";
+import { ArchiveRecoveryDialog } from "@/components/archive-recovery-dialog";
 import { RuleTopicPicker } from "@/components/rule-topic-picker";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useToast } from "@/hooks/use-toast";
@@ -254,12 +256,12 @@ function StatCard({
 }) {
   return (
     <Card>
-      <CardContent className="flex items-center justify-between p-4">
+      <CardContent className="flex items-center justify-between gap-2 p-2.5">
         <div>
           <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+          <p className="text-base font-semibold tabular-nums">{value.toLocaleString()}</p>
         </div>
-        <div className="rounded-full bg-muted p-2 text-muted-foreground">
+        <div className="rounded-full bg-muted p-1.5 text-muted-foreground [&_svg]:size-4">
           {icon}
         </div>
       </CardContent>
@@ -272,6 +274,8 @@ export function CloudArchiveManager() {
   const accounts = getAccounts("active");
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [resolving, setResolving] = useState<string | null>(null);
+  useEffect(() => { setResolving(new URLSearchParams(window.location.search).get("record")); }, []);
   const [editing, setEditing] = useState<CloudArchiveRuleOverview | null>(null);
   const [draft, setDraft] = useState<RuleDraft>(() => emptyDraft());
   const [saving, setSaving] = useState(false);
@@ -518,7 +522,7 @@ export function CloudArchiveManager() {
   const retry = async (record: CloudArchiveRecord, confirmed = false) => {
     if (record.status === "UNKNOWN" && !confirmed) { setRetrying(record); return; }
     try {
-      await POST(`/cloud-archive/records/${record.id}/retry`);
+      await POST(`/cloud-archive/records/${record.id}/retry`, { confirmUncertain: confirmed });
       await Promise.all([reloadOverview(), reloadRecords()]);
       setRetrying(null);
       toast({ variant: "success", title: "Archive record queued for retry" });
@@ -705,7 +709,8 @@ export function CloudArchiveManager() {
           </div>
         )}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <ArchiveDailyStatistics rules={overview.rules} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard
           label="Completed"
           value={overview.statistics.completed}
@@ -726,6 +731,7 @@ export function CloudArchiveManager() {
           value={overview.statistics.failed}
           icon={<AlertTriangle className="text-red-500" />}
         />
+        <StatCard label="Unconfirmed sends" value={overview.statistics.unconfirmed || 0} icon={<AlertTriangle className="text-amber-500" />} />
       </div>
 
       <Tabs defaultValue="rules">
@@ -814,13 +820,13 @@ export function CloudArchiveManager() {
                       {item.targetDownloadEnabled ? "Enabled" : "Disabled"}
                     </div>
                     <div>
-                      Recovery: {item.rule.recoveryEnabled === false ? "Off" : "On"}
-                      {item.rule.strictOrder ? " · Strict order" : " · Live priority"}
+                      <span>Recovery</span>: <span>{item.rule.recoveryEnabled === false ? "Off" : "On"}</span>
+                      {" · "}<span>{item.rule.strictOrder ? "Strict order" : "Live priority"}</span>
                       {item.syncTopicCount
-                        ? ` · ${item.syncTopicCount} checkpoint${item.syncTopicCount === 1 ? "" : "s"}`
+                        ? <span>{" · "}{item.syncTopicCount} <span>checkpoints</span></span>
                         : ""}
                       {item.syncLastObservedMessageId
-                        ? ` · checked through #${item.syncLastObservedMessageId}`
+                        ? <span>{" · "}<span>Checked through</span> #{item.syncLastObservedMessageId}</span>
                         : ""}
                     </div>
                     {item.syncStatus === "RECOVERING" && (
@@ -832,10 +838,11 @@ export function CloudArchiveManager() {
                     )}
                     <div className="text-sm"><span>Current activity</span>: <span>{WAIT_REASONS[item.waitReason || "LIVE"] || item.waitReason}</span></div>
                     {item.queue && <div className="text-xs text-muted-foreground">
-                      <span>Queued</span>: {item.queue.pending} · <span>Failed</span>: {item.queue.failed} · <span>Last successful archive</span>: {item.queue.lastSuccessAt ? new Date(item.queue.lastSuccessAt).toLocaleString() : "—"}
+                      <span>Queued</span>: {item.queue.pending} · <span>Failed</span>: {item.queue.failed} · <span>Unconfirmed sends</span>: {item.queue.unconfirmed || 0} · <span>Last successful archive</span>: {item.queue.lastSuccessAt ? new Date(item.queue.lastSuccessAt).toLocaleString() : "—"}
                       {item.queue.oldestPendingAt > 0 && <div><span>Oldest pending message</span>: {new Date(item.queue.oldestPendingAt).toLocaleString()}</div>}
                       {item.queue.nextAttemptAt && item.queue.nextAttemptAt > Date.now() ? <div><span>Next attempt</span>: {new Date(item.queue.nextAttemptAt).toLocaleString()}</div> : null}
                     </div>}
+                    {item.queue?.firstRecordId && (["UNCONFIRMED", "PREDECESSOR_FAILED"].includes(item.waitReason || "") || (item.queue.firstStatus === "UNKNOWN" || (item.queue.firstStatus === "FAILED" && item.rule.strictOrder))) && <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-destructive"><span>Blocked since</span><span>{item.queue.firstUpdatedAt ? new Date(item.queue.firstUpdatedAt).toLocaleString() : "—"}</span><Button size="sm" variant="outline" onClick={() => setResolving(item.queue!.firstRecordId!)}>Resolve blocked delivery</Button></div>}
                     {item.syncError && (
                       <div className="max-w-xl truncate text-destructive" title={item.syncError}>
                         {item.syncError}
@@ -1138,6 +1145,8 @@ export function CloudArchiveManager() {
                   variant="ghost"
                   size="sm"
                   className="text-destructive hover:bg-destructive/10"
+                  disabled={!["ALL", "COMPLETED", "SKIPPED", "CANCELLED"].includes(recordStatusFilter)}
+                  title="Clear only completed, skipped and cancelled records. Pending and unresolved records are retained."
                   onClick={() => void clearRecords()}
                 >
                   <Trash2 className="mr-1.5 h-3.5 w-3.5" />
@@ -1234,6 +1243,7 @@ export function CloudArchiveManager() {
                           {record.lastErrorCode || "—"}
                         </TableCell>
                         <TableCell>
+                          {["FAILED", "UNKNOWN"].includes(record.status) && <Button size="sm" variant="outline" onClick={() => setResolving(record.id)}>Resolve</Button>}
                           {["FAILED", "UNKNOWN", "SKIPPED"].includes(
                             record.status,
                           ) && (
@@ -1257,6 +1267,7 @@ export function CloudArchiveManager() {
         </TabsContent>
       </Tabs>
 
+      <ArchiveRecoveryDialog recordId={resolving} onClose={() => setResolving(null)} onChanged={() => { void reloadOverview(); void reloadRecords(); void reloadHistory(); }} />
       <Dialog open={!!retrying} onOpenChange={open => { if (!open) setRetrying(null); }}>
         <DialogContent><DialogHeader><DialogTitle>Retry unconfirmed send?</DialogTitle><DialogDescription>Telegram may already have delivered this message. Check the destination before retrying to avoid duplicates.</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => setRetrying(null)}>Cancel</Button><Button variant="destructive" onClick={() => { if (retrying) void retry(retrying, true); }}>Confirm retry</Button></DialogFooter>

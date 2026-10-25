@@ -176,7 +176,9 @@ public class TelegramVerticle extends AbstractVerticle {
         telegramUpdateHandler.setOnChatUpdated(telegramChats::onChatUpdated);
         telegramUpdateHandler.setOnMessageReceived(this::onMessageReceived);
         telegramUpdateHandler.setOnConnectionStateUpdated(this::onConnectionStateUpdated);
-        telegramUpdateHandler.setOnMessageSendUpdated(archiveDeliveries::onUpdate);
+        telegramUpdateHandler.setOnMessageSendUpdated(update ->
+                ArchiveDeliveryService.onUpdate(cn.hutool.core.convert.Convert.toLong(getId()), update)
+                        .onComplete(_ -> archiveDeliveries.onUpdate(update)));
 
         tdlibClient.initialize(telegramUpdateHandler, this::handleException, this::handleException);
     }
@@ -184,7 +186,7 @@ public class TelegramVerticle extends AbstractVerticle {
     Future<TdApi.Messages> forwardArchiveMessages(TdApi.ForwardMessages request) {
         // Keep the account awake until server confirmation, rather than just until acceptance.
         onRequestStarted();
-        return archiveDeliveries.forward(client, request, vertx)
+        return ArchiveDeliveryService.forward(this, archiveDeliveries, request, vertx)
                 .eventually(() -> {
                     onRequestFinished();
                     return Future.succeededFuture();

@@ -111,6 +111,8 @@ public class HttpVerticle extends AbstractVerticle {
 
     private TelegramHealthMonitor healthMonitor;
 
+    private ArchiveOperationsRoutes archiveOperationsRoutes;
+
     private TelegramHealthMonitor healthMonitor() {
         if (healthMonitor == null) healthMonitor = new TelegramHealthMonitor(vertx);
         return healthMonitor;
@@ -148,6 +150,7 @@ public class HttpVerticle extends AbstractVerticle {
                 .compose(_ -> initEventConsumer())
                 .onSuccess(_ -> {
                     healthMonitor().start();
+                    archiveOperationsRoutes.start();
                     startPromise.complete();
                 })
                 .onFailure(startPromise::fail);
@@ -156,6 +159,7 @@ public class HttpVerticle extends AbstractVerticle {
     @Override
     public void stop(Promise<Void> stopPromise) {
         if (healthMonitor != null) healthMonitor.stop();
+        if (archiveOperationsRoutes != null) archiveOperationsRoutes.stop();
         AutomationsHolder.INSTANCE.saveAutoRecords()
                 .onComplete(ignore -> {
                     System.out.println("Http verticle stopped!");
@@ -259,6 +263,8 @@ public class HttpVerticle extends AbstractVerticle {
                 TelegramVerticles.get(ctx.pathParam("telegramId")).ifPresentOrElse(telegram ->
                         healthMonitor().check(telegram).onSuccess(_ -> ctx.json(healthMonitor().snapshot(telegram)))
                                 .onFailure(ctx::fail), () -> ctx.fail(404)));
+        archiveOperationsRoutes = new ArchiveOperationsRoutes(vertx, this::healthMonitor);
+        archiveOperationsRoutes.register(router);
         router.get("/cloud-archive/overview").handler(this::handleCloudArchiveOverview);
         router.get("/cloud-archive/records").handler(this::handleCloudArchiveRecords);
         router.get("/cloud-archive/history").handler(this::handleCloudArchiveHistory);
@@ -1582,8 +1588,18 @@ public class HttpVerticle extends AbstractVerticle {
             return;
         }
         AutoCloudArchiveVerticle.QUEUED_RECORD_AT.remove(recordId);
-        DataVerticle.cloudArchiveRepository.retry(recordId)
-                .onSuccess(updated -> {
+        Future<Boolean> retry;
+        if (DataVerticle.archiveOperations == null) retry = DataVerticle.cloudArchiveRepository.retry(recordId);
+        else retry = DataVerticle.archiveOperations.find(recordId).compose(record -> {
+            if (record == null) return Future.succeededFuture(false);
+            JsonObject body = ctx.body().asJsonObject();
+            if ("UNKNOWN".equals(record.status()) && (body == null || !body.getBoolean("confirmUncertain", false)))
+                return Future.failedFuture("Confirm the destination was checked before retrying an uncertain send");
+            return DataVerticle.cloudArchiveRepository.retry(recordId).compose(updated -> !updated ? Future.succeededFuture(false)
+                    : DataVerticle.archiveOperations.audit(recordId, "RETRY", body != null && body.getString("reason", "").length() <= 1024 && !body.getString("reason", "").isBlank()
+                            ? body.getString("reason") : "Retry requested by operator").map(true));
+        });
+        retry.onSuccess(updated -> {
                     if (!updated) {
                         ctx.fail(404);
                     } else {

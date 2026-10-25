@@ -81,23 +81,23 @@ export function ConnectionHealthPanel() {
     catch { toast({ variant: "error", title: "Connection check failed" }); }
     finally { setChecking(null); }
   };
-  return <Card className="mb-6">
-    <CardHeader><CardTitle>Connection health</CardTitle>
-      <p className="text-sm text-muted-foreground"><span>Browser connection</span>: <span>{connectionStatus === "Open" ? "Connected" : "Reconnecting"}</span></p>
+  return <Card>
+    <CardHeader className="px-3 pb-2 pt-3"><CardTitle className="text-sm">Connection health</CardTitle>
+      <p className="text-xs text-muted-foreground"><span>Browser connection</span>: <span>{connectionStatus === "Open" ? "Connected" : "Reconnecting"}</span></p>
     </CardHeader>
-    <CardContent className="space-y-3">
+    <CardContent className="max-h-52 space-y-2 overflow-y-auto px-3 pb-3">
       {isLoading && <p>Checking connection...</p>}
       {error && <p className="text-destructive">Connection status unavailable</p>}
       {!isLoading && !error && !accounts.length && <p>No Accounts Found</p>}
       {accounts.map(item => {
         const status = healthStatus(item, !!error);
-        return <div key={item.telegramId} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
-          <div className="space-y-1 text-sm">
-            <div className="flex items-center gap-2"><strong>{item.accountName}</strong><Badge variant={status === "ERROR" ? "destructive" : status === "HEALTHY" ? "default" : "secondary"}>{labels[status]}</Badge></div>
-            <div><span>Connection route</span>: {item.proxy || <span>Direct connection</span>} · <span>Telegram connection state</span>: <span>{labels[item.connectionState] || labels.UNKNOWN}</span></div>
+        return <div key={item.telegramId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/30 p-2">
+          <div className="min-w-0 space-y-1 text-xs">
+            <div className="flex items-center gap-2"><strong translate="no">{item.accountName}</strong><Badge variant={status === "ERROR" ? "destructive" : status === "HEALTHY" ? "default" : "secondary"}>{labels[status]}</Badge></div>
+            <div><span>Connection route</span>: {item.proxy ? <span translate="no">{item.proxy}</span> : <span>Direct connection</span>} · <span>Telegram connection state</span>: <span>{labels[item.connectionState] || labels.UNKNOWN}</span></div>
             <div className="text-muted-foreground"><span>{status === "UNKNOWN" ? labels.UNKNOWN : labels[item.probeStatus] || labels.UNKNOWN}</span>{status !== "UNKNOWN" && item.latencyMs != null && ` · ${item.latencyMs} ms`}</div>
-            <div className="text-xs text-muted-foreground"><span>Last checked</span>: {item.checkedAt ? new Date(item.checkedAt).toLocaleString() : "—"} · <span>Last successful connection</span>: {item.lastSuccessAt ? new Date(item.lastSuccessAt).toLocaleString() : "—"}</div>
-            {status === "ERROR" && item.unhealthySince > 0 && <div className="text-xs text-destructive"><span>Connection issue since</span>: {new Date(item.unhealthySince).toLocaleString()}</div>}
+            <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Connection details</summary><div className="mt-1"><span>Last checked</span>: {item.checkedAt ? new Date(item.checkedAt).toLocaleString() : "—"} · <span>Last successful connection</span>: {item.lastSuccessAt ? new Date(item.lastSuccessAt).toLocaleString() : "—"}</div>
+            {status === "ERROR" && item.unhealthySince > 0 && <div className="text-xs text-destructive"><span>Connection issue since</span>: {new Date(item.unhealthySince).toLocaleString()}</div>}</details>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={checking !== null || ["SLEEPING", "INACTIVE"].includes(status)} onClick={() => void check(item)}>{checking === item.telegramId ? "Checking connection..." : "Check now"}</Button>
