@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { useOptionalLanguage } from "@/i18n/language-provider";
@@ -19,7 +19,7 @@ function previousDay(to: string, count: number) {
   const date = new Date(`${to}T00:00:00Z`); date.setUTCDate(date.getUTCDate() - count); return date.toISOString().slice(0, 10);
 }
 
-export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?: CloudArchiveRuleOverview[]; compact?: boolean }) {
+export function ArchiveDailyStatistics({ rules = [], compact = false, children }: { rules?: CloudArchiveRuleOverview[]; compact?: boolean; children?: ReactNode }) {
   const language = useOptionalLanguage();
   const t = language?.t ?? ((text: string) => text);
   const { getAccounts } = useTelegramAccount();
@@ -46,7 +46,7 @@ export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?
   const current = summary?.days?.[0];
   const count = (value?: number) => value == null ? "—" : value.toLocaleString();
   const selectedRules = (rules.length ? rules : overview?.rules ?? []).filter(rule => account === "ALL" || rule.telegramId === account);
-  return <section className="rounded-xl border bg-card px-3 py-2.5" aria-label={t("Daily send statistics")}>
+  return <section className="rounded-xl border bg-card px-3 py-2.5" aria-label={t(children ? "Send and download statistics" : "Daily send statistics")}>
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 tabular-nums">
         <strong>{t("Today")}</strong>
@@ -64,6 +64,7 @@ export function ArchiveDailyStatistics({ rules = [], compact = false }: { rules?
       </div>
       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t(expanded ? "Hide statistics" : "View statistics")}</Button>
     </div>
+    {children}
     {expanded && <div className="mt-3 space-y-2 border-t pt-3">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <select className="h-8 max-w-full rounded border bg-background px-2" aria-label={t("Statistics account")} value={account} onChange={event => { setAccount(event.target.value); setRoute("ALL"); }}>

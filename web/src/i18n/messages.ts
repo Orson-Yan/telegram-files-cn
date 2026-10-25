@@ -162,6 +162,7 @@ export const zhCNMessages: Readonly<Record<string, string>> = {
   "Loading...": "加载中…",
   "Notifications": "通知",
   "Daily send statistics": "每日发送统计",
+  "Send and download statistics": "发送与下载统计",
   "Copied sends": "复制发送",
   "Forwards": "转发",
   "Successful total": "成功合计",
