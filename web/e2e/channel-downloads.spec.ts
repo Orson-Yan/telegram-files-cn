@@ -50,7 +50,7 @@ test("creates a historical and live channel download with a video content preset
   const created = api.calls.find(call => call.path === "/channel-downloads")!;
   expect(created.body.accountId).toBe("7");
   expect(created.body.chatIds).toEqual(["999"]);
-  expect(created.body.rule).toMatchObject({ downloadHistory: true, contentTypes: ["video"], fileTypes: [] });
+  expect(created.body.rule).toMatchObject({ downloadHistory: true, fileTypes: ["video"] });
 });
 
 test("pauses and resumes only the selected channel task", async ({ page, csrfToken }) => {

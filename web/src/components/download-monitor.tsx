@@ -55,10 +55,10 @@ interface FileSample {
 
 function formatDuration(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) return "--";
-  if (seconds < 60) return `${Math.ceil(seconds)}s`;
-  if (seconds < 3_600) return `${Math.ceil(seconds / 60)}m`;
-  if (seconds < 86_400) return `${(seconds / 3_600).toFixed(1)}h`;
-  return `${(seconds / 86_400).toFixed(1)}d`;
+  if (seconds < 60) return `${Math.ceil(seconds)}秒`;
+  if (seconds < 3_600) return `${Math.ceil(seconds / 60)}分钟`;
+  if (seconds < 86_400) return `${(seconds / 3_600).toFixed(1)}小时`;
+  return `${(seconds / 86_400).toFixed(1)}天`;
 }
 
 function percentage(downloadedSize: number, totalSize: number) {
@@ -107,15 +107,15 @@ export function DownloadMonitor({
           : { fileId: file.id, isPaused: isCurrentlyDownloading },
       );
       toast({
-        title: isCurrentlyDownloading ? "Download paused" : "Download resumed",
+        title: isCurrentlyDownloading ? "已暂停下载" : "已恢复下载",
         description: file.fileName || `${file.type} #${file.id}`,
       });
       void mutate();
     } catch (err: any) {
       toast({
         variant: "error",
-        title: "Action failed",
-        description: err?.message || "Failed to update download status",
+        title: "操作失败",
+        description: err?.message || "更新下载状态失败",
       });
     } finally {
       setOperatingId(null);
@@ -143,7 +143,7 @@ export function DownloadMonitor({
           : { fileId: file.id },
       );
       toast({
-        title: "Download cancelled",
+        title: "已取消下载",
         description: file.fileName || `${file.type} #${file.id}`,
       });
       setDownloads((prev) => prev.filter((d) => d.uniqueId !== file.uniqueId));
@@ -151,8 +151,8 @@ export function DownloadMonitor({
     } catch (err: any) {
       toast({
         variant: "error",
-        title: "Cancel failed",
-        description: err?.message || "Failed to cancel download",
+        title: "取消失败",
+        description: err?.message || "未能取消下载",
       });
     } finally {
       setOperatingId(null);
@@ -170,15 +170,15 @@ export function DownloadMonitor({
         fileId: file.id,
       });
       toast({
-        title: "Restarted stalled download",
+        title: "已重新尝试下载停滞文件",
         description: file.fileName || `${file.type} #${file.id}`,
       });
       void mutate();
     } catch (err: any) {
       toast({
         variant: "error",
-        title: "Restart failed",
-        description: err?.message || "Failed to restart download",
+        title: "重试失败",
+        description: err?.message || "重启下载失败",
       });
     } finally {
       setOperatingId(null);
@@ -199,14 +199,14 @@ export function DownloadMonitor({
         isPaused: true,
       });
       toast({
-        title: "Paused all active downloads",
+        title: "已暂停所有活跃下载",
       });
       void mutate();
     } catch (err: any) {
       toast({
         variant: "error",
-        title: "Pause all failed",
-        description: err?.message || "Failed to pause all downloads",
+        title: "批量暂停失败",
+        description: err?.message || "无法暂停全部下载",
       });
     } finally {
       setOperatingId(null);
@@ -227,14 +227,14 @@ export function DownloadMonitor({
         isPaused: false,
       });
       toast({
-        title: "Resumed all downloads",
+        title: "已恢复所有下载",
       });
       void mutate();
     } catch (err: any) {
       toast({
         variant: "error",
-        title: "Resume all failed",
-        description: err?.message || "Failed to resume downloads",
+        title: "批量恢复失败",
+        description: err?.message || "无法恢复全部下载",
       });
     } finally {
       setOperatingId(null);
@@ -370,16 +370,16 @@ export function DownloadMonitor({
     now - downloadActivity.lastProgressAt > STALLED_AFTER_MILLIS;
 
   return (
-    <Card className="mx-auto mb-8 max-w-5xl">
-      <CardHeader className="gap-3 pb-3">
+    <Card className="mb-6 shadow-sm">
+      <CardHeader className="gap-3 border-b bg-muted/10 pb-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Activity className="size-5 text-blue-500" />
-              Active downloads
+              活跃下载与传输队列
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Live speed, traffic, queue and per-file progress
+              实时下载速率、网络流量、队列槽位及单文件进度监控。
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -393,7 +393,7 @@ export function DownloadMonitor({
                   className="gap-1 text-xs"
                 >
                   <Pause className="size-3.5" />
-                  Pause all
+                  全部暂停
                 </Button>
                 <Button
                   variant="outline"
@@ -403,62 +403,70 @@ export function DownloadMonitor({
                   className="gap-1 text-xs"
                 >
                   <Play className="size-3.5" />
-                  Resume all
+                  全部继续
                 </Button>
               </>
             )}
             <Button asChild variant="outline" size="sm">
-              <Link href="/files">View all files</Link>
+              <Link href="/files">查看全部文件</Link>
             </Button>
           </div>
         </div>
 
+        {/* 顶部指标看板 */}
         <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
           <Metric
-            label="Download slots"
+            label="并发下载槽位"
             value={`${overview.downloading} / ${overview.downloadLimit}`}
           />
           <Metric
-            label="Download speed"
+            label="实时下载速度"
             value={`${prettyBytes(downloadActivity.speed, speedOptions)}/s`}
             warning={aggregateStalled}
           />
           <Metric
-            label="Current traffic"
-            value={`${prettyBytes(downloadActivity.downloadedSize)} / ${prettyBytes(downloadActivity.totalSize || overview.activeSize)}`}
+            label="当前活跃传输"
+            value={`${prettyBytes(downloadActivity.downloadedSize)} / ${prettyBytes(
+              downloadActivity.totalSize || overview.activeSize,
+            )}`}
           />
           <Metric
-            label="Session traffic"
+            label="本次会话流量"
             value={prettyBytes(downloadActivity.sessionDownloadedBytes)}
           />
           <Metric
-            label="Estimated time"
+            label="预计完成时间"
             value={formatDuration(estimatedSeconds)}
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        {/* 排队与异常提示 */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <ListChecks className="size-4" />
-          <span>{overview.queued} queued</span>
+          <span>{overview.queued} 个文件排队中</span>
           <span>·</span>
-          <span>{prettyBytes(overview.queuedSize)}</span>
+          <span>共 {prettyBytes(overview.queuedSize)}</span>
           {aggregateStalled && (
-            <Badge variant="destructive" className="gap-1">
+            <Badge variant="destructive" className="gap-1 text-xs">
               <TriangleAlert className="size-3" />
-              Possibly stalled
+              下载可能已停滞
             </Badge>
           )}
         </div>
       </CardHeader>
 
-      <CardContent className="pt-0">
+      <CardContent className="pt-4">
         {error ? (
-          <div className="rounded-md border border-destructive/40 p-4 text-sm text-destructive">
-            Failed to load active downloads
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+            加载活跃下载列表失败，请检查服务连接。
           </div>
         ) : downloads.length === 0 ? (
-          <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
-            No active downloads. Waiting tasks will be dispatched automatically.
+          <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+            <Download className="mb-2 size-8 text-muted-foreground/60" />
+            <p className="font-medium text-foreground">当前没有进行中的下载</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              排队等待中的文件将在槽位空闲时自动派发开始。
+            </p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -466,32 +474,39 @@ export function DownloadMonitor({
               const progress = percentage(file.downloadedSize, file.size);
               const stalled = now - file.lastProgressAt > STALLED_AFTER_MILLIS;
               return (
-                <div key={file.uniqueId} className="rounded-md border p-3">
+                <div
+                  key={file.uniqueId}
+                  className="rounded-lg border bg-card p-3 shadow-xs transition-shadow hover:shadow-sm"
+                >
                   <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate font-medium">
+                      <p className="truncate font-medium text-sm text-foreground">
                         {file.fileName || `${file.type} #${file.id}`}
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
+                      <p className="mt-0.5 text-xs text-muted-foreground">
                         {prettyBytes(file.downloadedSize)} /{" "}
                         {prettyBytes(file.size)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 text-xs">
                       {stalled && (
-                        <Badge variant="destructive">Possibly stalled</Badge>
+                        <Badge variant="destructive" className="text-[10px]">
+                          可能停滞
+                        </Badge>
                       )}
-                      <Badge variant="secondary">
+                      <Badge variant="secondary" className="font-mono text-xs">
                         <Download className="mr-1 size-3" />
                         {prettyBytes(stalled ? 0 : file.speed, speedOptions)}/s
                       </Badge>
-                      <Badge variant="outline">{progress.toFixed(1)}%</Badge>
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {progress.toFixed(1)}%
+                      </Badge>
                       <div className="flex items-center gap-1 border-l pl-2">
                         <Button
                           size="icon"
                           variant="ghost"
                           className="size-7 text-muted-foreground hover:text-foreground"
-                          title={file.downloadStatus === "paused" ? "Resume" : "Pause"}
+                          title={file.downloadStatus === "paused" ? "继续下载" : "暂停下载"}
                           disabled={operatingId === file.uniqueId}
                           onClick={() => handleTogglePause(file)}
                         >
@@ -506,7 +521,7 @@ export function DownloadMonitor({
                             size="icon"
                             variant="ghost"
                             className="size-7 text-amber-500 hover:text-amber-600"
-                            title="Restart stalled download"
+                            title="重新尝试下载停滞文件"
                             disabled={operatingId === file.uniqueId}
                             onClick={() => handleRetry(file)}
                           >
@@ -517,7 +532,7 @@ export function DownloadMonitor({
                           size="icon"
                           variant="ghost"
                           className="size-7 text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
-                          title="Cancel download"
+                          title="取消下载"
                           disabled={operatingId === file.uniqueId}
                           onClick={() => handleCancel(file)}
                         >
@@ -528,6 +543,7 @@ export function DownloadMonitor({
                   </div>
                   <Progress
                     value={progress}
+                    className="h-1.5"
                     aria-label={`${file.fileName} download progress`}
                   />
                 </div>
@@ -550,10 +566,12 @@ function Metric({
   warning?: boolean;
 }) {
   return (
-    <div className="rounded-md border bg-muted/35 p-3">
+    <div className="rounded-md border bg-muted/20 p-2.5">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p
-        className={`mt-1 truncate font-mono text-sm font-semibold ${warning ? "text-destructive" : ""}`}
+        className={`mt-1 truncate font-mono text-sm font-semibold ${
+          warning ? "text-destructive" : "text-foreground"
+        }`}
       >
         {value}
       </p>

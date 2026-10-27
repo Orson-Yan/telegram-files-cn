@@ -9,11 +9,16 @@ describe("channel downloads", () => {
     expect(channelTaskState({ ...task, history_done: 1, counts: { COMPLETED: 4 } })).toBe("历史已完成，持续监听中");
     expect(channelTaskState({ ...task, paused: 1 })).toBe("已暂停派发");
   });
-  it("video templates include document videos rather than restricting the Telegram message type", () => {
+  it("video templates configure Telegram native video message type", () => {
     const rule = downloadTemplate("video");
-    expect(rule.contentTypes).toEqual(["video"]);
-    expect(rule.fileTypes).toEqual([]);
+    expect(rule.fileTypes).toEqual(["video"]);
+    expect(rule.contentTypes).toEqual([]);
     expect(rule.downloadHistory).toBe(true);
-    expect(downloadTemplate("all").contentTypes).toEqual([]);
+    expect(downloadTemplate("all").fileTypes).toEqual([]);
+  });
+  it("media templates configure photo, video, and audio message types", () => {
+    const rule = downloadTemplate("media");
+    expect(rule.fileTypes).toEqual(["photo", "video", "audio"]);
+    expect(rule.downloadHistory).toBe(true);
   });
 });
