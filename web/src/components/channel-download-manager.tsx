@@ -593,7 +593,7 @@ export function ChannelDownloadManager() {
                       onClick={() => void act([task.id], isPaused ? "resume" : "pause")}
                     >
                       {isPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                      {isPaused ? "继续派发" : "暂停派发"}
+                      {isPaused ? "继续" : "暂停派发"}
                     </Button>
                     {failedCount > 0 ? (
                       <Button
@@ -846,6 +846,7 @@ export function ChannelDownloadManager() {
                     >
                       <input
                         type="checkbox"
+                        aria-label={chat.name || chat.id}
                         checked={selected.includes(chat.id)}
                         onChange={() => setSelected(toggle(selected, chat.id))}
                         className="size-4 rounded border-gray-300 accent-primary"
