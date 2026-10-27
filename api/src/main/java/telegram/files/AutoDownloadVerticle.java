@@ -697,6 +697,7 @@ public class AutoDownloadVerticle extends AbstractVerticle {
 
     static boolean matchNewMessage(TdApi.Message message, SettingAutoRecords.DownloadRule rule) {
         if (message == null || message.content == null) return false;
+        if (!DownloadRules.matches(message, rule)) return false;
         if (!TdApiHelp.FILE_CONTENT_CONSTRUCTORS.contains(message.content.getConstructor())) {
             return false;
         }
@@ -707,6 +708,10 @@ public class AutoDownloadVerticle extends AbstractVerticle {
                     case TdApi.MessageVideo.CONSTRUCTOR -> "video";
                     case TdApi.MessageAudio.CONSTRUCTOR -> "audio";
                     case TdApi.MessageDocument.CONSTRUCTOR -> "file";
+                    case TdApi.MessageVoiceNote.CONSTRUCTOR -> "voice";
+                    case TdApi.MessageVideoNote.CONSTRUCTOR -> "video_note";
+                    case TdApi.MessageAnimation.CONSTRUCTOR -> "animation";
+                    case TdApi.MessageSticker.CONSTRUCTOR -> "sticker";
                     default -> "";
                 };
                 if (!rule.fileTypes.contains(fileType) && !rule.fileTypes.contains("all")) {

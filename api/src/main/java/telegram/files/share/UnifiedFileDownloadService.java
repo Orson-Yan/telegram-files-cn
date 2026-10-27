@@ -126,7 +126,7 @@ public final class UnifiedFileDownloadService {
     private Future<TorrentRecord> findTorrent(String fileUniqueId) {
         if (fileUniqueId == null || fileUniqueId.isBlank()) return Future.succeededFuture(null);
         return torrentRepository.listByTelegramFileUniqueIds(List.of(fileUniqueId))
-                .map(torrents -> torrents.stream().filter(torrent -> !"STOPPED".equals(torrent.status()))
+                .map(torrents -> torrents.stream().filter(torrent -> !java.util.Set.of("STOPPED", "FAILED", "ERROR").contains(torrent.status()))
                         .findFirst().orElse(null));
     }
 

@@ -116,7 +116,10 @@ public class DataVerticle extends AbstractVerticle {
                 new CloudArchiveRecord.CloudArchiveRecordDefinition(),
                 new CloudArchiveHistoryJob.CloudArchiveHistoryJobDefinition(),
                 new CloudArchiveTopicMap.CloudArchiveTopicMapDefinition(),
-                new CloudArchiveSyncState.CloudArchiveSyncStateDefinition()
+                new CloudArchiveSyncState.CloudArchiveSyncStateDefinition(),
+                new ChannelDownloadStore.Sources(),
+                new ChannelDownloadStore.Jobs(),
+                new ChannelDownloadStore.Threads()
         );
     }
 

@@ -392,7 +392,12 @@ public class TelegramVerticle extends AbstractVerticle {
     }
 
     public Future<JsonArray> getChats(Long activatedChatId, String query, boolean archived) {
-        return TelegramConverter.convertChat(this.telegramRecord.id(), telegramChats.getChatList(activatedChatId, query, 100, archived));
+        return getChats(activatedChatId, query, archived ? "archive" : "main", 100, 0, false);
+    }
+
+    public Future<JsonArray> getChats(Long activatedChatId, String query, String scope, int limit, int offset, boolean refresh) {
+        return wake().compose(_ -> telegramChats.search(activatedChatId, query, scope, limit, offset, refresh))
+            .compose(chats -> TelegramConverter.convertChat(this.telegramRecord.id(), chats));
     }
 
     public TdApi.Chat getChat(long chatId) {
@@ -906,6 +911,9 @@ public class TelegramVerticle extends AbstractVerticle {
                 })
                 .compose(file -> client.execute(new TdApi.DeleteFile(fileId)).map(file))
                 .compose(file -> DataVerticle.fileRepository.deleteByUniqueId(file.remote.uniqueId).map(file))
+                .compose(file -> DataVerticle.pool == null ? Future.succeededFuture(file) :
+                        new ChannelDownloadStore(DataVerticle.pool).query("UPDATE channel_download_job SET status='SKIPPED',last_error='Download cancelled by user' WHERE unique_id=? AND account_id=? AND status IN ('WAITING','RETRY','STARTING','RUNNING','PAUSED')",
+                                file.remote.uniqueId, telegramRecord.id()).map(file))
                 .onSuccess(file ->
                         sendEvent(EventPayload.build(EventPayload.TYPE_FILE_STATUS, new JsonObject()
                                 .put("fileId", fileId)
@@ -1020,7 +1028,23 @@ public class TelegramVerticle extends AbstractVerticle {
                     if (previous != null) normalizeAutomation(previous);
                     SettingAutoRecords.Automation automation;
                     long deleteTarget = Convert.toLong(params.getValue("archiveDeleteTargetChatId"), 0L);
-                    if (params.containsKey("archiveDeleteTargetChatId")) {
+                    if (params.containsKey("downloadUpdate")) {
+                        automation = previous == null ? new SettingAutoRecords.Automation() : previous;
+                        normalizeAutomation(automation);
+                        var downloadRule = params.getJsonObject("downloadUpdate").mapTo(SettingAutoRecords.DownloadRule.class);
+                        DownloadRules.validate(downloadRule);
+                        automation.download.enabled = true;
+                        automation.download.rule = downloadRule;
+                        String destination = params.getString("downloadDestination", "");
+                        if (!destination.isBlank()) {
+                            if (!java.nio.file.Path.of(destination).isAbsolute())
+                                return Future.failedFuture(new IllegalArgumentException("Destination must be an absolute path"));
+                            automation.transfer.enabled = true;
+                            automation.transfer.rule.destination = destination;
+                            automation.transfer.rule.transferPolicy = Transfer.TransferPolicy.GROUP_BY_CHAT;
+                            automation.transfer.rule.duplicationPolicy = Transfer.DuplicationPolicy.RENAME;
+                        }
+                    } else if (params.containsKey("archiveDeleteTargetChatId")) {
                         if (deleteTarget == 0 || previous == null) {
                             return Future.failedFuture(new IllegalArgumentException("The rule no longer exists"));
                         }
@@ -1048,6 +1072,7 @@ public class TelegramVerticle extends AbstractVerticle {
                     for (SettingAutoRecords.ArchiveConfig archive : automation.getArchiveConfigs()) {
                         validateArchiveRule(settingAutoRecords, chatId, archive);
                     }
+                    if (automation.download.enabled) DownloadRules.validate(automation.download.rule);
                     boolean hasEnabled = automation.preload.enabled
                                          || automation.download.enabled
                                          || automation.transfer.enabled
@@ -1897,8 +1922,7 @@ public class TelegramVerticle extends AbstractVerticle {
                 }
                 refreshAccountCache();
                 sendEvent(EventPayload.build(EventPayload.TYPE_AUTHORIZATION, authorizationState));
-                telegramChats.loadMainChatList();
-                telegramChats.loadArchivedChatList();
+                telegramChats.ensureLoaded(false).onFailure(error -> log.warn("Channel list load failed: {}", error.getMessage()));
                 if (becameActive) scheduleIdleSleep();
                 break;
             case TdApi.AuthorizationStateLoggingOut.CONSTRUCTOR:

@@ -1,4 +1,4 @@
-# Telegram Files 中文增强版 (v1.3.2 正式版)
+# Telegram Files 中文增强版 (v1.4.0 正式版)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jarvis2f/telegram-files/main/web/public/logo.png" alt="Telegram Files" width="120" />
@@ -50,6 +50,7 @@
 
 ### 3. 🤖 频道全自动流水线 (Channel Automations)
 7×24 小时无人值守监听频道、过滤并自动下载与整理：
+- **频道下载任务**：批量建立全部历史与持续新增任务，持久队列支持恢复、重试、补扫及清单导出。在线搜索包含归档，并提供内容类别与消息类型筛选。详见 [1.4.0 发布说明](RELEASE_NOTES_1.4.0.md)。
 - **可视化扩展名过滤**：直观提供放行白名单（如 `mp4, mkv, pdf`）与排除黑名单（如 `apk, exe`），免去手写复杂表达式。
 - **最小/最大体积保护**：精准过滤轻量垃圾表情包与过大光盘镜像。
 - **磁盘防爆盘水位保护**：实时探测本地/挂载盘可用空间，低于 5GB 安全水位时自动暂停拉取与下载，确保服务器永不宕机。

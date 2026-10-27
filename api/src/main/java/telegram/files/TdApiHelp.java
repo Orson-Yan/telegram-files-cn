@@ -29,7 +29,11 @@ public class TdApiHelp {
             TdApi.MessagePhoto.CONSTRUCTOR,
             TdApi.MessageVideo.CONSTRUCTOR,
             TdApi.MessageAudio.CONSTRUCTOR,
-            TdApi.MessageDocument.CONSTRUCTOR
+            TdApi.MessageDocument.CONSTRUCTOR,
+            TdApi.MessageVoiceNote.CONSTRUCTOR,
+            TdApi.MessageVideoNote.CONSTRUCTOR,
+            TdApi.MessageAnimation.CONSTRUCTOR,
+            TdApi.MessageSticker.CONSTRUCTOR
     );
 
     private static final TypeConverter TD_API_TYPE_CONVERTER = (targetType, value) -> {
@@ -198,7 +202,7 @@ public class TdApiHelp {
     }
 
     public static <T extends FileHandler<? extends TdApi.MessageContent>> Optional<T> getFileHandler(TdApi.Message message) {
-        if (message == null) return Optional.empty();
+        if (message == null || message.content == null) return Optional.empty();
         switch (message.content.getConstructor()) {
             case TdApi.MessagePhoto.CONSTRUCTOR -> {
                 return Optional.of((T) new PhotoHandler(message));
@@ -211,6 +215,10 @@ public class TdApiHelp {
             }
             case TdApi.MessageDocument.CONSTRUCTOR -> {
                 return Optional.of((T) new DocumentHandler(message));
+            }
+            case TdApi.MessageVoiceNote.CONSTRUCTOR, TdApi.MessageVideoNote.CONSTRUCTOR,
+                 TdApi.MessageAnimation.CONSTRUCTOR, TdApi.MessageSticker.CONSTRUCTOR -> {
+                return Optional.of((T) new ExtraMediaHandler(message));
             }
             default -> {
                 return Optional.empty();
