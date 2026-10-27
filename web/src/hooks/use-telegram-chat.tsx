@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { createContext, useContext, useMemo, useState } from "react";
 import { type TelegramChat } from "@/lib/types";
 import useSWR from "swr";
+import { request } from "@/lib/api";
 import { useDebouncedCallback } from "use-debounce";
 import { type KeyedMutator } from "swr/_internal";
 
@@ -48,7 +49,8 @@ export const TelegramChatProvider: React.FC<TelegramChatProviderProps> = ({
     isLoading,
     mutate,
   } = useSWR<TelegramChat[]>(
-    `/telegram/${accountId}/chats?query=${query}&archived=${archived}&chatId=${chatId ?? ""}`,
+    accountId ? `/telegram/${accountId}/chats?query=${encodeURIComponent(query)}&scope=${archived ? "archive" : "all"}&limit=5000&chatId=${chatId ?? ""}` : null,
+    { refreshInterval: 30_000, refreshWhenHidden: false },
   );
 
   const chat = useMemo(
@@ -72,7 +74,7 @@ export const TelegramChatProvider: React.FC<TelegramChatProviderProps> = ({
     <TelegramChatContext.Provider
       value={{
         isLoading,
-        reload: mutate,
+        reload: () => mutate(request<TelegramChat[]>(`/telegram/${accountId}/chats?query=${encodeURIComponent(query)}&scope=${archived ? "archive" : "all"}&limit=5000&chatId=${chatId}&refresh=true`), { revalidate: false }),
         chatId,
         chat,
         chats: chats ?? [],

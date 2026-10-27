@@ -1,5 +1,6 @@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { DownloadContentFields } from "@/components/download-content-fields";
 import {
   type Auto,
   type AutoDownloadRule,
@@ -181,6 +182,7 @@ export default function AutomationForm({
                 </Badge>
               </HintLine>
             </HintPanel>
+            <DownloadContentFields value={auto.download.rule} onChange={(rule) => onChange({ ...auto, download: { ...auto.download, rule } })} />
             <DownloadRule
               value={auto.download.rule}
               onChange={(value) => {
@@ -326,7 +328,7 @@ function DownloadRule({ value, onChange }: DownloadRuleProps) {
                   <SelectValue placeholder="Select File Types" />
                 </SelectTrigger>
                 <SelectContent>
-                  {["photo", "video", "audio", "file"].map((type) => (
+                  {["photo", "video", "audio", "file", "voice", "video_note", "animation", "sticker"].map((type) => (
                     <SelectItem key={type} value={type}>
                       {type}
                     </SelectItem>

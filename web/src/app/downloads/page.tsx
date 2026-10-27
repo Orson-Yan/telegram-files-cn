@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadMonitor } from "@/components/download-monitor";
+import { ChannelDownloadManager } from "@/components/channel-download-manager";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { type DownloadOverviewStatistics } from "@/lib/download-activity";
@@ -24,6 +25,8 @@ export default function DownloadsPage() {
         title="Download tasks"
         icon={<Activity className="size-5 text-blue-500" />}
       />
+
+      <ChannelDownloadManager />
 
       {error ? (
         <Card className="mx-auto mb-8 max-w-5xl">

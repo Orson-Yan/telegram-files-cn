@@ -26,7 +26,7 @@ export type TelegramChat = {
   };
 };
 
-export type FileType = "media" | "photo" | "video" | "audio" | "file";
+export type FileType = "media" | "photo" | "video" | "audio" | "file" | "voice" | "video_note" | "animation" | "sticker";
 export type DownloadStatus =
   | "idle"
   | "downloading"
@@ -253,6 +253,10 @@ export type AutoTransferRule = {
 };
 
 export type AutoDownloadRule = {
+  schemaVersion?: number;
+  contentTypes?: string[];
+  fromDate?: number;
+  toDate?: number;
   query: string;
   fileTypes: Array<Exclude<FileType, "media">>;
   downloadHistory: boolean;

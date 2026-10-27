@@ -6,6 +6,7 @@ export function createDefaultAuto(): Auto {
     download: {
       enabled: false,
       rule: {
+        schemaVersion: 1,
         query: "",
         fileTypes: [],
         downloadHistory: true,

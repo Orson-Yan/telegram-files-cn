@@ -128,6 +128,10 @@ public class SettingAutoRecords {
     }
 
     public static class DownloadRule {
+        public int schemaVersion;
+        public List<String> contentTypes = new ArrayList<>();
+        public long fromDate;
+        public long toDate;
         public String query;
 
         public List<String> fileTypes = new ArrayList<>();

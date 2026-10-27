@@ -258,6 +258,7 @@ public class HttpVerticle extends AbstractVerticle {
         router.get("/settings").handler(this::handleSettings);
         router.post("/settings/create").handler(this::handleSettingsCreate);
         router.get("/automations/chats").handler(this::handleAutomationChats);
+        new ChannelDownloadRoutes().register(router);
         router.get("/telegram/health").handler(ctx -> ctx.json(healthMonitor().snapshots()));
         router.post("/telegram/:telegramId/check-health").handler(ctx ->
                 TelegramVerticles.get(ctx.pathParam("telegramId")).ifPresentOrElse(telegram ->
@@ -342,7 +343,7 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     public Future<Void> initAutoDownloadVerticle() {
-        return vertx.deployVerticle(new AutoDownloadVerticle(), Config.VIRTUAL_THREAD_DEPLOYMENT_OPTIONS)
+        return vertx.deployVerticle(new ChannelDownloadVerticle(), Config.VIRTUAL_THREAD_DEPLOYMENT_OPTIONS)
                 .mapEmpty();
     }
 
@@ -1144,7 +1145,11 @@ public class HttpVerticle extends AbstractVerticle {
         String query = ctx.request().getParam("query");
         String chatId = ctx.request().getParam("chatId");
         String archived = ctx.request().getParam("archived");
-        telegramVerticle.getChats(Convert.toLong(chatId), query, Convert.toBool(archived, false))
+        telegramVerticle.getChats(Convert.toLong(chatId), query,
+                        ctx.request().getParam("scope", Convert.toBool(archived, false) ? "archive" : "main"),
+                        Math.max(1, Math.min(5000, Convert.toInt(ctx.request().getParam("limit"), 100))),
+                        Math.max(0, Convert.toInt(ctx.request().getParam("offset"), 0)),
+                        Convert.toBool(ctx.request().getParam("refresh"), false))
                 .onSuccess(ctx::json)
                 .onFailure(ctx::fail);
     }

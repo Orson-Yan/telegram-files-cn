@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useDebounce } from "use-debounce";
 import { useMaybeTelegramChat } from "@/hooks/use-telegram-chat";
 import { useTelegramAccount } from "@/hooks/use-telegram-account";
 import { useLanguage } from "@/i18n/language-provider";
@@ -9,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
+import { request } from "@/lib/api";
 import {
   CheckCircle2,
   ChevronLeft,
@@ -20,6 +22,7 @@ import {
   ImageIcon,
   Layers,
   Search,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type FileFilter, type TelegramChat } from "@/lib/types";
@@ -48,16 +51,23 @@ export default function FilesSidebar({
     getAccounts()[0]?.id;
 
   const [channelMode, setChannelMode] = useState<"cached" | "online">("cached");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebounce(search, 300);
+  const [channelLimit, setChannelLimit] = useState(200);
+  const updateChatQuery = chatContext?.handleQueryChange;
+  useEffect(() => { updateChatQuery?.(search); }, [search, updateChatQuery]);
+  useEffect(() => { setChannelLimit(200); }, [debouncedSearch, activeAccountId]);
 
   // Fetch online channels for active account
-  const { data: onlineChats, isLoading: isOnlineLoading } = useSWR<TelegramChat[]>(
+  const { data: onlineChats, isLoading: isOnlineLoading, error: channelError, mutate: refreshChannels } = useSWR<TelegramChat[]>(
     !chatContext && activeAccountId && channelMode === "online"
-      ? `/telegram/${activeAccountId}/chats`
+      ? `/telegram/${activeAccountId}/chats?scope=all&limit=${channelLimit}&query=${encodeURIComponent(debouncedSearch)}`
       : null,
+    { refreshInterval: 30_000, refreshWhenHidden: false },
   );
 
   // Fetch locally cached / downloaded channels from database
-  const { data: cachedChats, isLoading: isCachedLoading } = useSWR<
+  const { data: cachedChats, isLoading: isCachedLoading, mutate: refreshCachedChats } = useSWR<
     (TelegramChat & { downloadedCount?: number; totalCount?: number })[]
   >(
     !chatContext && channelMode === "cached"
@@ -76,8 +86,6 @@ export default function FilesSidebar({
     : channelMode === "online"
       ? isOnlineLoading
       : isCachedLoading;
-  const [search, setSearch] = useState("");
-
   const handleChatSelect = (targetChatId: string) => {
     if (chatContext) {
       chatContext.handleChatChange(targetChatId);
@@ -95,13 +103,13 @@ export default function FilesSidebar({
 
   const filteredChats = React.useMemo(() => {
     if (!chats) return [];
-    if (!search.trim()) return chats;
+    if (chatContext || channelMode === "online" || !search.trim()) return chats;
     const q = search.toLowerCase().trim();
     return chats.filter(
       (c) =>
         c.name?.toLowerCase().includes(q) || c.id.toString().includes(q),
     );
-  }, [chats, search]);
+  }, [chats, search, chatContext, channelMode]);
 
   const quickNavItems = [
     {
@@ -290,6 +298,10 @@ export default function FilesSidebar({
               : t("Local Channels") || "本地频道"}{" "}
             ({chats?.length ?? 0})
           </span>
+          <button type="button" aria-label="刷新频道" className="rounded p-1 hover:bg-muted"
+            onClick={() => { if (chatContext) void chatContext.reload().catch(() => undefined); else if (channelMode === "cached") void refreshCachedChats(); else void refreshChannels(request<TelegramChat[]>(`/telegram/${activeAccountId}/chats?scope=all&limit=${channelLimit}&query=${encodeURIComponent(debouncedSearch)}&refresh=true`), { revalidate: false }).catch(() => undefined); }}>
+            <RefreshCw className="size-3.5" />
+          </button>
           {selectedChatId && (
             <button
               onClick={() => handleChatSelect("")}
@@ -317,6 +329,9 @@ export default function FilesSidebar({
       {/* Channel Tree List */}
       <div className="no-scrollbar flex-1 overflow-y-auto pr-1.5">
         <div className="flex flex-col gap-1 py-1">
+          {channelError ? <div role="alert" className="p-3 text-xs text-destructive">频道加载失败，请刷新重试。</div> : null}
+          {!chatContext && channelMode === "online" && onlineChats?.length === channelLimit && channelLimit < 5000 ?
+            <button type="button" onClick={() => setChannelLimit((value) => value + 200)} className="p-2 text-xs text-primary">加载更多频道</button> : null}
           {isLoading ? (
             <div className="py-6 text-center text-xs text-muted-foreground">
               {t("Loading channels...")}

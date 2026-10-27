@@ -4,9 +4,13 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.log.Log;
 import cn.hutool.log.LogFactory;
 import org.drinkless.tdlib.TdApi;
-import org.jooq.lambda.tuple.Tuple;
 
 import java.util.List;
+import io.vertx.core.Future;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.TreeSet;
@@ -29,6 +33,8 @@ public class TelegramChats {
 
     private boolean haveFullMainChatList = false;
 
+    private Future<Void> loading;
+
     private boolean haveFullArchivedChatList = false;
 
     public TelegramChats(TelegramGateway client) {
@@ -36,11 +42,11 @@ public class TelegramChats {
     }
 
     public List<TdApi.Chat> getChatList(Long activatedChatId, String query, int limit, boolean archived) {
-        List<TdApi.Chat> chatList = (archived ? archivedChatList : mainChatList).stream()
+        List<TdApi.Chat> chatList = snapshot(archived).stream()
                 .map(OrderedChat::chatId)
                 .map(chats::get)
                 .filter(Objects::nonNull)
-                .filter(chat -> StrUtil.isBlank(query) || chat.title.contains(query))
+                .filter(chat -> matches(chat, query))
                 .limit(limit)
                 .collect(Collectors.toList());
 
@@ -52,6 +58,67 @@ public class TelegramChats {
         }
 
         return chatList;
+    }
+
+    private List<OrderedChat> snapshot(boolean archived) {
+        synchronized (chats) { return new ArrayList<>(archived ? archivedChatList : mainChatList); }
+    }
+
+    private static boolean matches(TdApi.Chat chat, String query) {
+        if (StrUtil.isBlank(query)) return true;
+        String q = query.strip().toLowerCase(Locale.ROOT);
+        return String.valueOf(chat.id).contains(q) || java.util.Objects.toString(chat.title, "").toLowerCase(Locale.ROOT).contains(q);
+    }
+
+    public Future<Void> ensureLoaded(boolean refresh) {
+        synchronized (chats) {
+            if (loading != null && !loading.isComplete()) return loading;
+            if (!refresh && haveFullMainChatList && haveFullArchivedChatList) return Future.succeededFuture();
+            loading = loadList(false, 0).compose(_ -> loadList(true, 0));
+            return loading;
+        }
+    }
+
+    private Future<Void> loadList(boolean archived, int page) {
+        if (page > 500) return Future.failedFuture("Channel list load exceeded its page budget");
+        return client.execute(new TdApi.LoadChats(archived ? new TdApi.ChatListArchive() : new TdApi.ChatListMain(), 100))
+            .timeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .compose(_ -> loadList(archived, page + 1))
+            .recover(error -> {
+                if (error instanceof TelegramRunException telegram && telegram.getError().code == 404) {
+                    synchronized (chats) {
+                        if (archived) haveFullArchivedChatList = true;
+                        else haveFullMainChatList = true;
+                    }
+                    return Future.succeededFuture();
+                }
+                return Future.failedFuture(error);
+            });
+    }
+
+    public Future<List<TdApi.Chat>> search(Long selected, String query, String scope, int limit, int offset, boolean refresh) {
+        return ensureLoaded(refresh).compose(_ -> {
+            Map<Long,TdApi.Chat> found = new LinkedHashMap<>();
+            if (!"archive".equals(scope)) getChatList(null, query, Integer.MAX_VALUE, false).forEach(chat -> found.put(chat.id, chat));
+            if (!"main".equals(scope)) getChatList(null, query, Integer.MAX_VALUE, true).forEach(chat -> found.put(chat.id, chat));
+            Future<Void> lookup = Future.succeededFuture();
+            if (StrUtil.isNotBlank(query)) lookup = client.execute(new TdApi.SearchChatsOnServer(query.strip(), null, 100))
+                .compose(result -> {
+                    List<Future<?>> details = new ArrayList<>();
+                    for (long id : result.chatIds) details.add(client.execute(new TdApi.GetChat(id)).onSuccess(chat -> {
+                        boolean include = "all".equals(scope) || java.util.Arrays.stream(chat.positions).anyMatch(position ->
+                            "archive".equals(scope) ? position.list instanceof TdApi.ChatListArchive : position.list instanceof TdApi.ChatListMain);
+                        if (include) synchronized (found) { found.put(id, chat); }
+                    }));
+                    return Future.all(details).<Void>mapEmpty();
+                }).recover(error -> found.isEmpty() ? Future.failedFuture(error) : Future.succeededFuture());
+            return lookup.map(_ -> {
+                List<TdApi.Chat> result = new ArrayList<>(found.values());
+                TdApi.Chat active = selected == null ? null : chats.get(selected);
+                if (offset == 0 && active != null && !found.containsKey(selected)) result.addFirst(active);
+                return result.stream().skip(Math.max(0, offset)).limit(Math.max(1, Math.min(5000,limit))).toList();
+            });
+        });
     }
 
     public TdApi.Chat getChat(long chatId) {
@@ -125,6 +192,7 @@ public class TelegramChats {
             case TdApi.UpdateChatTitle.CONSTRUCTOR: {
                 TdApi.UpdateChatTitle updateChat = (TdApi.UpdateChatTitle) object;
                 TdApi.Chat chat = chats.get(updateChat.chatId);
+                if (chat == null) break;
                 synchronized (chat) {
                     chat.title = updateChat.title;
                 }
@@ -133,6 +201,7 @@ public class TelegramChats {
             case TdApi.UpdateChatPhoto.CONSTRUCTOR: {
                 TdApi.UpdateChatPhoto updateChat = (TdApi.UpdateChatPhoto) object;
                 TdApi.Chat chat = chats.get(updateChat.chatId);
+                if (chat == null) break;
                 synchronized (chat) {
                     chat.photo = updateChat.photo;
                 }
@@ -141,6 +210,7 @@ public class TelegramChats {
             case TdApi.UpdateChatReadInbox.CONSTRUCTOR: {
                 TdApi.UpdateChatReadInbox updateChat = (TdApi.UpdateChatReadInbox) object;
                 TdApi.Chat chat = chats.get(updateChat.chatId);
+                if (chat == null) break;
                 synchronized (chat) {
                     chat.lastReadInboxMessageId = updateChat.lastReadInboxMessageId;
                     chat.unreadCount = updateChat.unreadCount;
@@ -150,6 +220,7 @@ public class TelegramChats {
             case TdApi.UpdateChatLastMessage.CONSTRUCTOR: {
                 TdApi.UpdateChatLastMessage updateChat = (TdApi.UpdateChatLastMessage) object;
                 TdApi.Chat chat = chats.get(updateChat.chatId);
+                if (chat == null) break;
                 synchronized (chat) {
                     chat.lastMessage = updateChat.lastMessage;
                     setChatPositions(chat, updateChat.positions);
@@ -164,6 +235,7 @@ public class TelegramChats {
                 }
 
                 TdApi.Chat chat = chats.get(updateChat.chatId);
+                if (chat == null) break;
                 synchronized (chat) {
                     int i;
                     for (i = 0; i < chat.positions.length; i++) {
@@ -198,8 +270,8 @@ public class TelegramChats {
     }
 
     private void setChatPositions(TdApi.Chat chat, TdApi.ChatPosition[] positions) {
-        synchronized (Tuple.tuple(mainChatList, archivedChatList)) {
-            synchronized (chat) {
+        synchronized (chat) {
+            synchronized (chats) {
                 for (TdApi.ChatPosition position : chat.positions) {
                     if (position.list.getConstructor() == TdApi.ChatListMain.CONSTRUCTOR) {
                         if (!mainChatList.remove(new OrderedChat(chat.id, position))) {
