@@ -172,7 +172,7 @@ export function ChannelDownloadManager() {
     failureSource ? `/channel-downloads/${encodeURIComponent(failureSource)}/files` : null,
   );
   const { data: chats, isLoading, error: chatError, mutate: reloadChats } = useSWR<TelegramChat[]>(
-    open && accountId
+    accountId
       ? `/telegram/${accountId}/chats?scope=all&limit=${limit}&query=${encodeURIComponent(debouncedSearch)}`
       : null,
     { refreshInterval: 30_000, refreshWhenHidden: false },

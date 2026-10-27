@@ -7,6 +7,7 @@ import org.drinkless.tdlib.TdApi;
 
 import java.util.List;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -36,6 +37,8 @@ public class TelegramChats {
     private Future<Void> loading;
 
     private boolean haveFullArchivedChatList = false;
+
+    private Promise<Void> firstBatchPromise;
 
     public TelegramChats(TelegramGateway client) {
         this.client = client;
@@ -74,8 +77,25 @@ public class TelegramChats {
         synchronized (chats) {
             if (loading != null && !loading.isComplete()) return loading;
             if (!refresh && haveFullMainChatList && haveFullArchivedChatList) return Future.succeededFuture();
+            firstBatchPromise = Promise.promise();
             loading = loadList(false, 0).compose(_ -> loadList(true, 0));
             return loading;
+        }
+    }
+
+    private Future<Void> readyForSearch(String scope, int limit, int offset, String query, boolean refresh) {
+        synchronized (chats) {
+            Future<Void> fullLoad = ensureLoaded(refresh);
+            boolean isInitialBrowse = StrUtil.isBlank(query) && offset == 0 && limit <= 100 && !"archive".equals(scope);
+            if (isInitialBrowse) {
+                if (haveFullMainChatList || !snapshot(false).isEmpty()) {
+                    return Future.succeededFuture();
+                }
+                if (firstBatchPromise != null) {
+                    return firstBatchPromise.future().recover(_ -> fullLoad);
+                }
+            }
+            return fullLoad;
         }
     }
 
@@ -83,21 +103,34 @@ public class TelegramChats {
         if (page > 500) return Future.failedFuture("Channel list load exceeded its page budget");
         return client.execute(new TdApi.LoadChats(archived ? new TdApi.ChatListArchive() : new TdApi.ChatListMain(), 100))
             .timeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .onSuccess(_ -> {
+                if (!archived && page == 0 && firstBatchPromise != null && !firstBatchPromise.future().isComplete()) {
+                    firstBatchPromise.tryComplete();
+                }
+            })
             .compose(_ -> loadList(archived, page + 1))
             .recover(error -> {
                 if (error instanceof TelegramRunException telegram && telegram.getError().code == 404) {
                     synchronized (chats) {
                         if (archived) haveFullArchivedChatList = true;
-                        else haveFullMainChatList = true;
+                        else {
+                            haveFullMainChatList = true;
+                            if (firstBatchPromise != null && !firstBatchPromise.future().isComplete()) {
+                                firstBatchPromise.tryComplete();
+                            }
+                        }
                     }
                     return Future.succeededFuture();
+                }
+                if (!archived && page == 0 && firstBatchPromise != null && !firstBatchPromise.future().isComplete()) {
+                    firstBatchPromise.tryFail(error);
                 }
                 return Future.failedFuture(error);
             });
     }
 
     public Future<List<TdApi.Chat>> search(Long selected, String query, String scope, int limit, int offset, boolean refresh) {
-        return ensureLoaded(refresh).compose(_ -> {
+        return readyForSearch(scope, limit, offset, query, refresh).compose(_ -> {
             Map<Long,TdApi.Chat> found = new LinkedHashMap<>();
             if (!"archive".equals(scope)) getChatList(null, query, Integer.MAX_VALUE, false).forEach(chat -> found.put(chat.id, chat));
             if (!"main".equals(scope)) getChatList(null, query, Integer.MAX_VALUE, true).forEach(chat -> found.put(chat.id, chat));
