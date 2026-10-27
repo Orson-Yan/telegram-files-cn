@@ -75,6 +75,11 @@ public class TelegramChats {
 
     public Future<Void> ensureLoaded(boolean refresh) {
         synchronized (chats) {
+            if (refresh) {
+                haveFullMainChatList = false;
+                haveFullArchivedChatList = false;
+                loading = null;
+            }
             if (loading != null && !loading.isComplete()) return loading;
             if (!refresh && haveFullMainChatList && haveFullArchivedChatList) return Future.succeededFuture();
             firstBatchPromise = Promise.promise();
@@ -85,17 +90,16 @@ public class TelegramChats {
 
     private Future<Void> readyForSearch(String scope, int limit, int offset, String query, boolean refresh) {
         synchronized (chats) {
-            Future<Void> fullLoad = ensureLoaded(refresh);
-            boolean isInitialBrowse = StrUtil.isBlank(query) && offset == 0 && limit <= 100 && !"archive".equals(scope);
-            if (isInitialBrowse) {
-                if (haveFullMainChatList || !snapshot(false).isEmpty()) {
-                    return Future.succeededFuture();
-                }
-                if (firstBatchPromise != null) {
-                    return firstBatchPromise.future().recover(_ -> fullLoad);
-                }
+            ensureLoaded(refresh);
+            if (!snapshot(false).isEmpty() || !snapshot(true).isEmpty() || haveFullMainChatList) {
+                return Future.succeededFuture();
             }
-            return fullLoad;
+            if (firstBatchPromise != null && !firstBatchPromise.future().isComplete()) {
+                return firstBatchPromise.future()
+                    .timeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .recover(_ -> Future.succeededFuture());
+            }
+            return Future.succeededFuture();
         }
     }
 
@@ -136,15 +140,18 @@ public class TelegramChats {
             if (!"main".equals(scope)) getChatList(null, query, Integer.MAX_VALUE, true).forEach(chat -> found.put(chat.id, chat));
             Future<Void> lookup = Future.succeededFuture();
             if (StrUtil.isNotBlank(query)) lookup = client.execute(new TdApi.SearchChatsOnServer(query.strip(), null, 100))
+                .timeout(10, java.util.concurrent.TimeUnit.SECONDS)
                 .compose(result -> {
                     List<Future<?>> details = new ArrayList<>();
-                    for (long id : result.chatIds) details.add(client.execute(new TdApi.GetChat(id)).onSuccess(chat -> {
-                        boolean include = "all".equals(scope) || java.util.Arrays.stream(chat.positions).anyMatch(position ->
-                            "archive".equals(scope) ? position.list instanceof TdApi.ChatListArchive : position.list instanceof TdApi.ChatListMain);
-                        if (include) synchronized (found) { found.put(id, chat); }
-                    }));
+                    for (long id : result.chatIds) details.add(client.execute(new TdApi.GetChat(id))
+                        .timeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .onSuccess(chat -> {
+                            boolean include = "all".equals(scope) || java.util.Arrays.stream(chat.positions).anyMatch(position ->
+                                "archive".equals(scope) ? position.list instanceof TdApi.ChatListArchive : position.list instanceof TdApi.ChatListMain);
+                            if (include) synchronized (found) { found.put(id, chat); }
+                        }));
                     return Future.all(details).<Void>mapEmpty();
-                }).recover(error -> found.isEmpty() ? Future.failedFuture(error) : Future.succeededFuture());
+                }).recover(error -> Future.succeededFuture());
             return lookup.map(_ -> {
                 List<TdApi.Chat> result = new ArrayList<>(found.values());
                 TdApi.Chat active = selected == null ? null : chats.get(selected);
