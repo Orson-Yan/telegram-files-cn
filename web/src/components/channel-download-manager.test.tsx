@@ -12,13 +12,14 @@ describe("channel downloads", () => {
   it("video templates configure Telegram native video message type", () => {
     const rule = downloadTemplate("video");
     expect(rule.fileTypes).toEqual(["video"]);
-    expect(rule.contentTypes).toEqual([]);
+    expect(rule.contentTypes).toEqual(["video"]);
     expect(rule.downloadHistory).toBe(true);
     expect(downloadTemplate("all").fileTypes).toEqual([]);
   });
-  it("media templates configure photo, video, and audio message types", () => {
+  it("media templates configure photo and video message types", () => {
     const rule = downloadTemplate("media");
-    expect(rule.fileTypes).toEqual(["photo", "video", "audio"]);
+    expect(rule.fileTypes).toEqual(["photo", "video"]);
+    expect(rule.contentTypes).toEqual(["photo", "video"]);
     expect(rule.downloadHistory).toBe(true);
   });
 });

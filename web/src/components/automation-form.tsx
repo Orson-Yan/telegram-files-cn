@@ -328,9 +328,9 @@ function DownloadRule({ value, onChange }: DownloadRuleProps) {
                   <SelectValue placeholder="Select File Types" />
                 </SelectTrigger>
                 <SelectContent>
-                  {["photo", "video", "audio", "file", "voice", "video_note", "animation", "sticker"].map((type) => (
+                  {["photo", "video", "audio", "file"].map((type) => (
                     <SelectItem key={type} value={type}>
-                      {type}
+                      {type === "photo" ? "Photo (照片)" : type === "video" ? "Video (视频)" : type === "audio" ? "Audio (音频)" : "File (文件)"}
                     </SelectItem>
                   ))}
                 </SelectContent>

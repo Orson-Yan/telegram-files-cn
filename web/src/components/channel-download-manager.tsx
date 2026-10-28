@@ -74,25 +74,21 @@ interface FileFailure {
   last_error?: string;
 }
 
-// Telegram 原生消息类型定义
+// 标准下载类型定义（对齐图 2）
 export const telegramFileTypes = [
-  { key: "video", label: "视频", desc: "视频消息 (MessageVideo)" },
-  { key: "photo", label: "照片", desc: "照片图片 (MessagePhoto)" },
-  { key: "file", label: "文档 / 文件", desc: "文档文件 (MessageDocument)" },
-  { key: "audio", label: "音乐 / 音频", desc: "音乐音频 (MessageAudio)" },
-  { key: "voice", label: "语音", desc: "语音留言 (MessageVoiceNote)" },
-  { key: "video_note", label: "视频便签", desc: "圆形视频 (MessageVideoNote)" },
-  { key: "animation", label: "GIF / 动图", desc: "动图 (MessageAnimation)" },
-  { key: "sticker", label: "贴纸", desc: "贴纸表情 (MessageSticker)" },
+  { key: "photo", label: "照片", desc: "照片 / 图片" },
+  { key: "video", label: "视频", desc: "视频（含文件形式）" },
+  { key: "audio", label: "音频", desc: "音乐 / 音频" },
+  { key: "file", label: "文件", desc: "文档 / 压缩包等全部文件" },
 ] as const;
 
 export const rulePresets = [
   { key: "all", label: "所有文件（默认）", types: [] },
-  { key: "media", label: "常用媒体（照片 / 视频 / 音乐）", types: ["photo", "video", "audio"] },
-  { key: "video", label: "仅视频消息", types: ["video"] },
-  { key: "photo", label: "仅照片消息", types: ["photo"] },
-  { key: "file", label: "仅文档消息", types: ["file"] },
-  { key: "video_doc", label: "视频与文档（含文档视频）", types: ["video", "file"] },
+  { key: "media", label: "媒体（照片 + 视频）", types: ["photo", "video"] },
+  { key: "photo", label: "仅照片", types: ["photo"] },
+  { key: "video", label: "仅视频", types: ["video"] },
+  { key: "audio", label: "仅音频", types: ["audio"] },
+  { key: "file", label: "仅文件", types: ["file"] },
 ] as const;
 
 const fieldClass = "rounded-md border bg-background px-3 py-2 text-sm";
@@ -133,7 +129,7 @@ export function downloadTemplate(preset: string): AutoDownloadRule {
   return {
     ...createDefaultAuto().download.rule,
     fileTypes: types as Array<Exclude<FileType, "media">>,
-    contentTypes: [],
+    contentTypes: types,
     downloadHistory: true,
   };
 }
@@ -904,11 +900,11 @@ export function ChannelDownloadManager() {
               </p>
             </div>
 
-            {/* 5. Telegram 消息类型（原生分类） */}
+            {/* 5. 下载类型（对齐图 2 分类） */}
             <fieldset className="rounded-lg border p-3">
               <div className="mb-2 flex items-center justify-between">
                 <legend className="px-1 text-sm font-semibold">
-                  Telegram 消息类型（留空默认下载全部）
+                  下载分类（留空默认下载全部）
                 </legend>
                 <div className="flex gap-2 text-xs">
                   <button
@@ -917,11 +913,12 @@ export function ChannelDownloadManager() {
                     onClick={() =>
                       setRule({
                         ...rule,
-                        fileTypes: telegramFileTypes.map((t) => t.key) as typeof rule.fileTypes,
+                        fileTypes: [],
+                        contentTypes: [],
                       })
                     }
                   >
-                    全选
+                    所有文件
                   </button>
                   <span className="text-muted-foreground">|</span>
                   <button
@@ -930,17 +927,18 @@ export function ChannelDownloadManager() {
                     onClick={() =>
                       setRule({
                         ...rule,
-                        fileTypes: ["photo", "video", "audio"] as typeof rule.fileTypes,
+                        fileTypes: ["photo", "video"] as typeof rule.fileTypes,
+                        contentTypes: ["photo", "video"],
                       })
                     }
                   >
-                    常用媒体
+                    仅媒体
                   </button>
                   <span className="text-muted-foreground">|</span>
                   <button
                     type="button"
                     className="text-muted-foreground hover:underline"
-                    onClick={() => setRule({ ...rule, fileTypes: [] })}
+                    onClick={() => setRule({ ...rule, fileTypes: [], contentTypes: [] })}
                   >
                     清空
                   </button>
@@ -949,9 +947,9 @@ export function ChannelDownloadManager() {
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {telegramFileTypes.map((item) => {
-                  const isChecked = rule.fileTypes?.includes(
+                  const isChecked = (rule.fileTypes?.includes(
                     item.key as (typeof rule.fileTypes)[number],
-                  );
+                  ) || rule.contentTypes?.includes(item.key)) ?? false;
                   return (
                     <label
                       key={item.key}
@@ -963,27 +961,31 @@ export function ChannelDownloadManager() {
                     >
                       <input
                         type="checkbox"
-                        checked={isChecked ?? false}
-                        onChange={() =>
+                        checked={isChecked}
+                        aria-label={item.label}
+                        onChange={() => {
+                          const nextTypes = toggle(
+                            rule.fileTypes?.filter((type) => String(type) !== "all") ?? [],
+                            item.key,
+                          ) as typeof rule.fileTypes;
                           setRule({
                             ...rule,
-                            fileTypes: toggle(
-                              rule.fileTypes?.filter((type) => String(type) !== "all") ?? [],
-                              item.key,
-                            ) as typeof rule.fileTypes,
-                          })
-                        }
+                            fileTypes: nextTypes,
+                            contentTypes: nextTypes,
+                          });
+                        }}
                         className="size-4 rounded border-gray-300 accent-primary"
                       />
                       <div className="min-w-0">
-                        <p className="truncate text-xs">{item.label}</p>
+                        <p className="text-sm font-medium">{item.label}</p>
+                        <p className="truncate text-xs text-muted-foreground">{item.desc}</p>
                       </div>
                     </label>
                   );
                 })}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                提示：若频道中将视频作为文档发送，请勾选【文档 / 文件】并在高级筛选中指定允许扩展名（如 mp4, mkv）。
+                标准分类：照片、视频、音频、文件。可一键切换“所有文件”或“仅媒体”，留空默认下载全部。
               </p>
             </fieldset>
 

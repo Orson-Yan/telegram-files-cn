@@ -22,7 +22,17 @@ public final class DownloadRules {
             && !Set.of("photo","video","audio","file").contains(type(message))) return false;
         if(rule.fileTypes!=null && !rule.fileTypes.isEmpty() && !rule.fileTypes.contains("all")
             && !rule.fileTypes.contains(type(message))) return false;
-        if(rule.contentTypes!=null && !rule.contentTypes.isEmpty() && !rule.contentTypes.contains(category(file))) return false;
+        if(rule.contentTypes!=null && !rule.contentTypes.isEmpty()) {
+            String cat=category(file);
+            boolean matched = rule.contentTypes.contains(cat);
+            if(!matched && rule.contentTypes.contains("file") && Set.of("ebook","archive","file").contains(cat)) {
+                matched = true;
+            }
+            if(!matched && rule.contentTypes.contains("media") && Set.of("photo","video").contains(cat)) {
+                matched = true;
+            }
+            if(!matched) return false;
+        }
         if(rule.query!=null && !rule.query.isBlank()) {
             String text=(Objects.toString(file.fileName(),"")+" "+Objects.toString(file.caption(),"")).toLowerCase(Locale.ROOT);
             if(!text.contains(rule.query.strip().toLowerCase(Locale.ROOT))) return false;
@@ -61,9 +71,9 @@ public final class DownloadRules {
             throw new IllegalArgumentException("Invalid size range");
         if(rule.fromDate<0 || rule.toDate<0 || rule.toDate>0 && rule.fromDate>rule.toDate)
             throw new IllegalArgumentException("Invalid date range");
-        Set<String> types=Set.of("photo","video","audio","file","voice","video_note","animation","sticker","all");
+        Set<String> types=Set.of("photo","video","audio","file","voice","video_note","animation","sticker","all","media");
         if(rule.fileTypes!=null && !types.containsAll(rule.fileTypes)) throw new IllegalArgumentException("Unsupported message type");
-        if(rule.contentTypes!=null && !Set.of("photo","video","audio","ebook","archive","file").containsAll(rule.contentTypes))
+        if(rule.contentTypes!=null && !Set.of("photo","video","audio","ebook","archive","file","media").containsAll(rule.contentTypes))
             throw new IllegalArgumentException("Unsupported content type");
         if(rule.filterExpr!=null && !rule.filterExpr.isBlank()) MessageFilter.getExpression(rule.filterExpr);
     }
