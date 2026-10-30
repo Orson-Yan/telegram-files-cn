@@ -125,8 +125,16 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
     Future<Void> enqueue(JsonObject source, FileRecord file, boolean live) {
         String id = jobId(n(source,"account_id"), file.chatId(), file.messageId(), file.uniqueId());
         return query("SELECT status FROM channel_download_job WHERE id=?", id).compose(found -> {
-            if (found.size() > 0) return query("UPDATE channel_download_job SET rule_version=? WHERE id=?",
-                    n(source,"rule_version"), id).mapEmpty();
+            if (found.size() > 0) {
+                String prevStatus = found.iterator().next().getString("status");
+                if ("SKIPPED".equals(prevStatus) || "FAILED".equals(prevStatus) || "RETRY".equals(prevStatus)) {
+                    return query("""
+                        UPDATE channel_download_job SET rule_version=?, status='WAITING', attempts=0, next_attempt=0, last_error=NULL, updated_at=? WHERE id=?
+                        """, n(source,"rule_version"), System.currentTimeMillis(), id).mapEmpty();
+                }
+                return query("UPDATE channel_download_job SET rule_version=? WHERE id=?",
+                        n(source,"rule_version"), id).mapEmpty();
+            }
             return query("""
                 INSERT INTO channel_download_job(id,source_id,account_id,chat_id,message_id,unique_id,rule_version,
                   status,priority,file_type,file_name,file_size,sent_at,caption,updated_at)

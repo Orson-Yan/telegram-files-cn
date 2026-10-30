@@ -24,7 +24,7 @@ public final class ChannelDownloadRoutes {
                     JsonObject task=(JsonObject)value;
                     TelegramVerticle telegram=TelegramVerticles.get(task.getString("account_id")).orElse(null);
                     String blocked=telegram==null || !telegram.authorized ? "账号离线，等待重新连接" :
-                        !ChannelDownloadVerticle.diskAvailable() ? "磁盘可用空间不足 5 GiB，等待释放空间" :
+                        !ChannelDownloadVerticle.diskAvailable() ? "磁盘可用空间不足 1 GiB，等待释放空间" :
                         !ChannelDownloadVerticle.allowedTime(time) ? "不在下载时段，等待下一个时段" : null;
                     task.put("blocked_reason",blocked);
                 });

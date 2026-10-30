@@ -345,10 +345,10 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     static boolean diskAvailable() {
         if(Config.APP_ROOT==null) return true;
         long bytes=new java.io.File(Config.APP_ROOT).getUsableSpace();
-        return bytes>=5L*1024*1024*1024;
+        return bytes>=1024L*1024*1024;
     }
     static boolean storageAvailable(JsonObject source,long required) {
-        long reserve=5L*1024*1024*1024+Math.max(0,required);
+        long reserve=1024L*1024*1024+Math.max(0,required);
         if(Config.APP_ROOT!=null && new java.io.File(Config.APP_ROOT).getUsableSpace()<reserve) return false;
         var auto=AutomationsHolder.INSTANCE.autoRecords().getItem(n(source,"account_id"),n(source,"chat_id"));
         if(auto!=null && auto.transfer!=null && auto.transfer.enabled && auto.transfer.rule.destination!=null

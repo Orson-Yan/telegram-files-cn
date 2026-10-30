@@ -28,32 +28,34 @@ export default function DownloadsPage() {
 
   return (
     <div className="container mx-auto px-4 py-6">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <PageHeader
-          title="下载任务"
-          icon={<Download className="size-5 text-blue-500" />}
-        />
-        {data ? (
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            {downloadingCount > 0 ? (
-              <Badge variant="default" className="gap-1 bg-blue-600 hover:bg-blue-600">
-                <span className="size-1.5 animate-pulse rounded-full bg-white" />
-                正在下载 {downloadingCount} 项
-              </Badge>
-            ) : null}
-            {queuedCount > 0 ? (
-              <Badge variant="secondary">
-                排队中 {queuedCount} 项
-              </Badge>
-            ) : null}
-            {data.completed ? (
-              <Badge variant="outline">
-                累计完成 {data.completed} 项
-              </Badge>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+      <PageHeader
+        title="下载任务与监控"
+        icon={<Download className="size-5 text-blue-500" />}
+        backHref="/files"
+        backLabel="返回文件"
+        badge={
+          data ? (
+            <div className="hidden sm:flex flex-wrap items-center gap-2 text-xs">
+              {downloadingCount > 0 ? (
+                <Badge variant="default" className="gap-1 bg-blue-600 hover:bg-blue-600">
+                  <span className="size-1.5 animate-pulse rounded-full bg-white" />
+                  正在下载 {downloadingCount} 项
+                </Badge>
+              ) : null}
+              {queuedCount > 0 ? (
+                <Badge variant="secondary">
+                  排队中 {queuedCount} 项
+                </Badge>
+              ) : null}
+              {data.completed ? (
+                <Badge variant="outline">
+                  累计完成 {data.completed} 项
+                </Badge>
+              ) : null}
+            </div>
+          ) : null
+        }
+      />
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="grid h-10 w-full max-w-md grid-cols-2">

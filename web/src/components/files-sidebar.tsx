@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Download,
   Film,
   Folder,
   Globe,
@@ -27,6 +28,8 @@ import {
 import { cn } from "@/lib/utils";
 import { type FileFilter, type TelegramChat } from "@/lib/types";
 import { TooltipWrapper } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
+import { type DownloadOverviewStatistics } from "@/lib/download-activity";
 
 interface FilesSidebarProps {
   filters: FileFilter;
@@ -73,6 +76,12 @@ export default function FilesSidebar({
     !chatContext && channelMode === "cached"
       ? `/files/chats`
       : null,
+  );
+
+  // Fetch overall download statistics
+  const { data: downloadStats } = useSWR<DownloadOverviewStatistics>(
+    "/files/count",
+    { refreshInterval: 15_000, refreshWhenHidden: false },
   );
 
   const chats = useMemo(() => {
@@ -186,6 +195,23 @@ export default function FilesSidebar({
           <ChevronRight className="size-4" />
         </Button>
         <div className="flex flex-col gap-1.5">
+          <TooltipWrapper content={t("Download Tasks & Monitor") || "下载任务与监控"}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative size-9 text-blue-500 hover:bg-blue-500/10 hover:text-blue-600"
+              onClick={() => router.push("/downloads")}
+            >
+              <Download className="size-4" />
+              {downloadStats && (downloadStats.downloading ?? 0) > 0 && (
+                <span className="absolute top-1 right-1 flex size-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
+                </span>
+              )}
+            </Button>
+          </TooltipWrapper>
+          <div className="my-0.5 w-6 border-t border-border/60" />
           {quickNavItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -229,6 +255,30 @@ export default function FilesSidebar({
           </Button>
         )}
       </div>
+
+      {/* Download Tasks Entry Button */}
+      <Button
+        variant="outline"
+        className="h-8.5 w-full justify-between gap-2 px-2.5 text-xs font-medium border-border/80 hover:border-blue-500/50 hover:bg-blue-500/5 transition"
+        onClick={() => router.push("/downloads")}
+      >
+        <div className="flex items-center gap-2 truncate">
+          <Download className="size-3.5 shrink-0 text-blue-500" />
+          <span className="truncate">{t("Download Tasks & Monitor") || "下载任务与监控"}</span>
+        </div>
+        {downloadStats && (downloadStats.downloading ?? 0) > 0 ? (
+          <Badge variant="default" className="h-4.5 px-1.5 text-[10px] bg-blue-600 hover:bg-blue-600">
+            <span className="mr-1 size-1.5 animate-pulse rounded-full bg-white" />
+            {downloadStats.downloading} 下载中
+          </Badge>
+        ) : downloadStats && (downloadStats.queued ?? 0) > 0 ? (
+          <Badge variant="secondary" className="h-4.5 px-1.5 text-[10px]">
+            {downloadStats.queued} 排队
+          </Badge>
+        ) : (
+          <ChevronRight className="size-3 text-muted-foreground" />
+        )}
+      </Button>
 
       {/* Quick Nav Categories */}
       <div className="flex flex-col gap-1">

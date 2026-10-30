@@ -27,8 +27,11 @@ import { useSearchParams } from "next/navigation";
 import { useSettings } from "@/hooks/use-settings";
 import { PlatformBindingShortcut } from "@/components/platform-binding-shortcut";
 import { LanguageToggleButton } from "@/i18n/language-toggle-button";
+import { useLanguage } from "@/i18n/language-provider";
+import { cn } from "@/lib/utils";
 
 export function Header() {
+  const { t } = useLanguage();
   const useTelegramAccountProps = useTelegramAccount();
   const {
     connectionStatus,
@@ -65,16 +68,43 @@ export function Header() {
           </div>
 
           <div className="flex items-center gap-2">
-            {accountDownloadSpeed !== 0 && (
-              <TooltipWrapper content="Current account download speed">
-                <div className="flex items-center gap-2 overflow-hidden text-sm text-muted-foreground">
-                  <span className="flex-1 text-nowrap">
-                    {`${prettyBytes(accountDownloadSpeed, { bits: settings?.speedUnits === "bits" })}/s`}
-                  </span>
-                  <Download className="h-4 w-4 flex-shrink-0" />
-                </div>
-              </TooltipWrapper>
-            )}
+            <TooltipWrapper
+              content={
+                accountDownloadSpeed > 0
+                  ? `${t("Download tasks & monitor") || "下载任务与监控"} (${t("Download speed") || "速度"}: ${prettyBytes(accountDownloadSpeed, { bits: settings?.speedUnits === "bits" })}/s)`
+                  : (t("Download tasks & monitor") || "下载任务与监控")
+              }
+            >
+              <Link href="/downloads">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-8 gap-1.5 px-2.5 text-xs font-medium transition",
+                    accountDownloadSpeed > 0
+                      ? "border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Download
+                    className={cn(
+                      "size-3.5",
+                      accountDownloadSpeed > 0 && "animate-bounce text-blue-500",
+                    )}
+                  />
+                  {accountDownloadSpeed > 0 ? (
+                    <span className="font-mono">
+                      {prettyBytes(accountDownloadSpeed, {
+                        bits: settings?.speedUnits === "bits",
+                      })}
+                      /s
+                    </span>
+                  ) : (
+                    <span>{t("Download Tasks") || "下载任务"}</span>
+                  )}
+                </Button>
+              </Link>
+            </TooltipWrapper>
 
             {connectionStatus && (
               <TooltipWrapper

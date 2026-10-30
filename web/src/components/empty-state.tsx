@@ -206,8 +206,12 @@ function DashboardMetricsAndFeatures() {
         <div className="mt-2 border-t pt-2">
         {error ? <p className="flex items-center gap-1.5 text-xs text-destructive"><AlertTriangle className="size-3.5" />Failed to load system metrics</p>
           : isLoading || !data ? <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Loading statistics...</p>
-          : <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <strong className="text-xs">Download</strong>
+          : <div
+              className="flex flex-wrap items-center gap-x-5 gap-y-2 cursor-pointer rounded-md p-1 -m-1 transition hover:bg-muted/50"
+              onClick={() => router.push("/downloads")}
+              title="查看下载任务与监控"
+            >
+          <strong className="text-xs text-blue-600 dark:text-blue-400">Download</strong>
           <OverviewMetric
             icon={<Check className="size-4 text-emerald-500" />}
             label="Downloaded"
