@@ -86,11 +86,16 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
                 INSERT INTO channel_download_source(id,account_id,chat_id,title,rule_json,enabled,created_at,updated_at)
                 VALUES(?,?,?,?,?,?,?,?)
                 """, id, account, chat, title, rule, enabled ? 1 : 0, now, now).mapEmpty();
-            if (!rule.equals(old.getString("rule_json"))) return query("""
-                UPDATE channel_download_source SET rule_json=?,rule_version=rule_version+1,
-                  history_cursor=0,history_done=?,live_cursor=0,live_target=0,
-                  live_watermark=boundary_id,scanned_count=0,enabled=?,title=?,last_error=NULL,updated_at=? WHERE id=?
-                """, rule, new JsonObject(rule).getBoolean("downloadHistory",false)?0:1, enabled ? 1 : 0, title, now, id).mapEmpty();
+            if (!rule.equals(old.getString("rule_json"))) {
+                long nextVersion = n(old, "rule_version") + 1;
+                return query("""
+                    UPDATE channel_download_source SET rule_json=?,rule_version=?,
+                      history_cursor=0,history_done=?,live_cursor=0,live_target=0,
+                      live_watermark=boundary_id,scanned_count=0,enabled=?,title=?,last_error=NULL,updated_at=? WHERE id=?
+                    """, rule, nextVersion, new JsonObject(rule).getBoolean("downloadHistory",false)?0:1, enabled ? 1 : 0, title, now, id)
+                    .compose(_ -> query("UPDATE channel_download_job SET rule_version=? WHERE source_id=? AND status IN ('WAITING','RETRY')", nextVersion, id))
+                    .mapEmpty();
+            }
             return query("UPDATE channel_download_source SET enabled=?,title=? WHERE id=?", enabled ? 1 : 0, title, id).mapEmpty();
         });
     }
@@ -225,8 +230,9 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
                 .map(ChannelDownloadStore::rows);
     }
     public Future<Void> error(String source,long version, String error, long retryAt) {
+        String safe = error == null ? "Unknown error" : error.substring(0, Math.min(error.length(), 1000));
         return query("UPDATE channel_download_source SET last_error=?,next_scan_at=?,last_check=? WHERE id=? AND rule_version=?",
-                error.substring(0,Math.min(error.length(),1000)), retryAt, System.currentTimeMillis(), source,version).mapEmpty();
+                safe, retryAt, System.currentTimeMillis(), source, version).mapEmpty();
     }
     public Future<Void> action(String id, String action) {
         return switch (action) {

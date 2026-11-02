@@ -18,14 +18,21 @@ public final class DownloadRules {
         if(optional.isEmpty()) return false;
         if(rule==null) return true;
         FileRecord file=optional.get().convertFileRecord(0);
+        String msgType=type(message);
+        String cat=category(file);
         if(rule.schemaVersion==0 && (rule.fileTypes==null || rule.fileTypes.isEmpty())
-            && !Set.of("photo","video","audio","file").contains(type(message))) return false;
-        if(rule.fileTypes!=null && !rule.fileTypes.isEmpty() && !rule.fileTypes.contains("all")
-            && !rule.fileTypes.contains(type(message))) return false;
+            && !Set.of("photo","video","audio","file").contains(msgType)) return false;
+        if(rule.fileTypes!=null && !rule.fileTypes.isEmpty() && !rule.fileTypes.contains("all")) {
+            boolean matched = rule.fileTypes.contains(msgType)
+                || ("video".equals(cat) && (rule.fileTypes.contains("video") || rule.fileTypes.contains("media")))
+                || ("photo".equals(cat) && (rule.fileTypes.contains("photo") || rule.fileTypes.contains("media")))
+                || ("audio".equals(cat) && rule.fileTypes.contains("audio"))
+                || ("file".equals(msgType) && rule.fileTypes.contains("file"));
+            if(!matched) return false;
+        }
         if(rule.contentTypes!=null && !rule.contentTypes.isEmpty()) {
-            String cat=category(file);
             boolean matched = rule.contentTypes.contains(cat);
-            if(!matched && rule.contentTypes.contains("file") && Set.of("ebook","archive","file").contains(cat)) {
+            if(!matched && rule.contentTypes.contains("file") && (Set.of("ebook","archive","file").contains(cat) || "file".equals(msgType))) {
                 matched = true;
             }
             if(!matched && rule.contentTypes.contains("media") && Set.of("photo","video").contains(cat)) {

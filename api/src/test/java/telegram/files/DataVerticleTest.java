@@ -115,6 +115,38 @@ public class DataVerticleTest {
     }
 
     @Test
+    @DisplayName("Download start claim supports error and paused recovery")
+    void claimDownloadStartSupportsErrorAndPaused(Vertx vertx, VertxTestContext testContext) {
+        FileRecord fileRecord = new FileRecord(
+                1, "claim_error_unique_id", 1, 1, 1, 1, 1, false, 1, 0, "type", "mime_type", "file_name", "thumbnail", "thumbnailUniqueId", "caption", "extra", null, FileRecord.DownloadStatus.error.name(), FileRecord.TransferStatus.idle.name(), 0, null, null, 0, 0, 0
+        );
+        long startDate = 456L;
+        DataVerticle.fileRepository.create(fileRecord)
+                .compose(_ -> DataVerticle.fileRepository.claimDownloadStart(10, fileRecord.uniqueId(), startDate))
+                .compose(claimed -> {
+                    testContext.verify(() -> Assertions.assertTrue(claimed));
+                    return DataVerticle.fileRepository.getByUniqueId(fileRecord.uniqueId());
+                })
+                .compose(record -> {
+                    testContext.verify(() -> {
+                        Assertions.assertEquals(10, record.id());
+                        Assertions.assertEquals(FileRecord.DownloadStatus.downloading.name(), record.downloadStatus());
+                    });
+                    return DataVerticle.fileRepository.updateDownloadStatus(10, fileRecord.uniqueId(), null, FileRecord.DownloadStatus.paused, null);
+                })
+                .compose(_ -> DataVerticle.fileRepository.claimDownloadStart(11, fileRecord.uniqueId(), startDate + 10))
+                .compose(secondClaim -> {
+                    testContext.verify(() -> Assertions.assertTrue(secondClaim));
+                    return DataVerticle.fileRepository.getByUniqueId(fileRecord.uniqueId());
+                })
+                .onComplete(testContext.succeeding(record -> testContext.verify(() -> {
+                    Assertions.assertEquals(11, record.id());
+                    Assertions.assertEquals(FileRecord.DownloadStatus.downloading.name(), record.downloadStatus());
+                    testContext.completeNow();
+                })));
+    }
+
+    @Test
     @DisplayName("Missing thumbnail auto load setting defaults to enabled")
     void missingThumbnailAutoLoadSettingDefaultsToEnabled(Vertx vertx, VertxTestContext testContext) {
         DataVerticle.pool.query("DELETE FROM setting_record WHERE key = 'thumbnailAutoLoad'")

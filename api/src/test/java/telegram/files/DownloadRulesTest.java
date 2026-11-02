@@ -20,6 +20,8 @@ class DownloadRulesTest {
         assertTrue(DownloadRules.matches(document("movie.MKV",""),rule));
         assertFalse(DownloadRules.matches(document("book.pdf",""),rule));
         rule.fileTypes=List.of("video");
+        assertTrue(DownloadRules.matches(document("movie.MKV",""),rule));
+        rule.fileTypes=List.of("photo");
         assertFalse(DownloadRules.matches(document("movie.MKV",""),rule));
         rule.fileTypes=List.of("file");
         assertTrue(DownloadRules.matches(document("movie.MKV",""),rule));

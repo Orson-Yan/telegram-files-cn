@@ -752,12 +752,13 @@ public class TelegramVerticle extends AbstractVerticle {
                                     .compose(_ -> DataVerticle.fileRepository.getByUniqueId(file.remote.uniqueId));
                         }
                         if (file.local.isDownloadingActive) {
-                            return Future.failedFuture("File is downloading");
+                            return dbFileRecord != null
+                                    ? Future.succeededFuture(dbFileRecord)
+                                    : DataVerticle.fileRepository.getByUniqueId(file.remote.uniqueId);
                         }
-//                        return Future.failedFuture("Unknown file download status");
                     }
-                    if (dbFileRecord != null && !dbFileRecord.isDownloadStatus(FileRecord.DownloadStatus.idle)) {
-                        return Future.failedFuture("File is already downloading or completed");
+                    if (shouldPreserveCompletedDownload(dbFileRecord)) {
+                        return Future.succeededFuture(dbFileRecord);
                     }
 
                     TdApiHelp.FileHandler<? extends TdApi.MessageContent> fileHandler = TdApiHelp.getFileHandler(message)
@@ -771,9 +772,14 @@ public class TelegramVerticle extends AbstractVerticle {
                                 return Future.succeededFuture();
                             })
                             .compose(ignore -> {
-                                long downloadStartDate = System.currentTimeMillis();
-                                return DataVerticle.fileRepository
-                                        .claimDownloadStart(fileId, fileRecord.uniqueId(), downloadStartDate)
+                                Future<Void> prepare = (dbFileRecord != null && dbFileRecord.isDownloadStatus(FileRecord.DownloadStatus.downloading))
+                                        ? DataVerticle.fileRepository.updateDownloadStatus(
+                                                fileId, fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null).mapEmpty()
+                                        : Future.succeededFuture();
+                                return prepare.compose(ignore2 -> {
+                                    long downloadStartDate = System.currentTimeMillis();
+                                    return DataVerticle.fileRepository
+                                            .claimDownloadStart(fileId, fileRecord.uniqueId(), downloadStartDate)
                                         .compose(claimed -> {
                                             if (!claimed) {
                                                 return Future.failedFuture("File was claimed by another download");
@@ -1801,9 +1807,51 @@ public class TelegramVerticle extends AbstractVerticle {
                             });
                 })
                 .recover(error -> {
-                    log.trace("[%s] Failed to get file during reconciliation: %s - %s"
-                            .formatted(getRootId(), fileRecord.uniqueId(), error.getMessage()));
-                    return Future.<Void>succeededFuture();
+                    log.debug("[%s] Failed to get file during reconciliation for {}: {}",
+                            getRootId(), fileRecord.uniqueId(), error.getMessage());
+                    long now = System.currentTimeMillis();
+                    if (fileRecord.startDate() > 0 && now - fileRecord.startDate() < STALE_DOWNLOAD_RETRY_AFTER_MILLIS) {
+                        return Future.succeededFuture();
+                    }
+                    if (fileRecord.chatId() != 0 && fileRecord.messageId() != 0) {
+                        return client.execute(new TdApi.GetMessage(fileRecord.chatId(), fileRecord.messageId()))
+                                .compose(message -> {
+                                    var handler = TdApiHelp.getFileHandler(message);
+                                    if (handler.isEmpty()) {
+                                        return DataVerticle.fileRepository.updateDownloadStatus(
+                                                fileRecord.id(), fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null)
+                                                .onSuccess(_ -> releasedCount.incrementAndGet()).mapEmpty();
+                                    }
+                                    int newFileId = handler.get().getFileId();
+                                    return DataVerticle.fileRepository.updateFileId(newFileId, fileRecord.uniqueId())
+                                            .compose(_ -> client.execute(new TdApi.GetFile(newFileId)))
+                                            .compose(file -> {
+                                                if (file.local != null && file.local.isDownloadingCompleted) {
+                                                    return DataVerticle.fileRepository.updateDownloadStatus(
+                                                            file.id, fileRecord.uniqueId(), file.local.path,
+                                                            FileRecord.DownloadStatus.completed, System.currentTimeMillis())
+                                                            .compose(result -> applyTelegramMessageTimestamp(fileRecord, file.local.path).map(result))
+                                                            .onSuccess(result -> {
+                                                                completedCount.incrementAndGet();
+                                                                sendFileStatusHttpEvent(file, result);
+                                                            }).mapEmpty();
+                                                }
+                                                if (file.local != null && file.local.isDownloadingActive) {
+                                                    return Future.<Void>succeededFuture();
+                                                }
+                                                return DataVerticle.fileRepository
+                                                        .claimStaleDownloadRetry(fileRecord.uniqueId(), fileRecord.startDate(), now)
+                                                        .compose(_ -> client.execute(new TdApi.AddFileToDownloads(file.id, fileRecord.chatId(), fileRecord.messageId(), 32)))
+                                                        .onSuccess(_ -> requeuedCount.incrementAndGet()).mapEmpty();
+                                            });
+                                })
+                                .recover(refreshErr -> DataVerticle.fileRepository.updateDownloadStatus(
+                                        fileRecord.id(), fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null)
+                                        .onSuccess(_ -> releasedCount.incrementAndGet()).mapEmpty());
+                    }
+                    return DataVerticle.fileRepository.updateDownloadStatus(
+                            fileRecord.id(), fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null)
+                            .onSuccess(_ -> releasedCount.incrementAndGet()).mapEmpty();
                 });
     }
 

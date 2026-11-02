@@ -166,12 +166,12 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                     List<JsonObject> picks=new ArrayList<>(selected.values());
                     for(JsonObject job:jobs) if(picks.size()<available && !picks.contains(job)) picks.add(job);
                     Future<Void> starts=Future.succeededFuture();
-                    long reserved=jobsInFlight.stream().filter(job -> n(job,"account_id")==account && !"PAUSED".equals(job.getString("status")))
-                        .mapToLong(job -> n(job,"file_size")).sum();
+                    long batchReserved = 0;
                     for(JsonObject job:picks.subList(0,Math.min(available,picks.size()))) {
-                        reserved+=n(job,"file_size");
-                        long required=reserved;
-                        starts=starts.compose(_ -> start(telegram,job,required));
+                        long fileSize = Math.max(0, n(job, "file_size"));
+                        batchReserved += fileSize;
+                        long required = batchReserved;
+                        starts = starts.compose(_ -> start(telegram, job, required));
                     }
                     return starts;
                 });
@@ -209,13 +209,14 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     }
     private Future<Void> fail(JsonObject job,Throwable error) {
         int attempt=(int)n(job,"attempts")+1;
-        boolean storage=Objects.toString(error.getMessage(),"").startsWith("STORAGE_LOW:");
+        String errMsg = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+        boolean storage = errMsg.startsWith("STORAGE_LOW:");
         boolean terminal=!storage && (permanent(error) || attempt>=8);
         long retryAt=System.currentTimeMillis()+retryDelay(error,attempt);
-        if(isFloodWait(Objects.toString(error.getMessage(),""))) accountCooldowns.put(n(job,"account_id"),retryAt);
-        Future<Void> wait=storage || isFloodWait(Objects.toString(error.getMessage(),""))
-            ?store.error(job.getString("source_id"),n(job,"rule_version"),error.getMessage(),retryAt):Future.succeededFuture();
-        return wait.compose(_ -> store.finish(job.getString("id"),terminal?"FAILED":"RETRY",Objects.toString(error.getMessage(),"Download failed"),retryAt,null));
+        if(isFloodWait(errMsg)) accountCooldowns.put(n(job,"account_id"),retryAt);
+        Future<Void> wait=storage || isFloodWait(errMsg)
+            ?store.error(job.getString("source_id"),n(job,"rule_version"),errMsg,retryAt):Future.succeededFuture();
+        return wait.compose(_ -> store.finish(job.getString("id"),terminal?"FAILED":"RETRY",errMsg,retryAt,null));
     }
     private Future<Void> registerComments(TelegramVerticle telegram,JsonObject source,TdApi.Message message) {
         if(!rule(source).downloadCommentFiles || message.chatId!=n(source,"chat_id")) return Future.succeededFuture();
@@ -264,6 +265,12 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                 .compose(file -> {
                     if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.completed))
                         return store.finish(job.getString("id"),"COMPLETED",null,0,file.localPath());
+                    if("STARTING".equals(job.getString("status"))) {
+                        if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading))
+                            return store.finish(job.getString("id"),"RUNNING",null,0,null);
+                        if(System.currentTimeMillis()-n(job,"updated_at")>60_000)
+                            return fail(job,new IllegalStateException("Start download timed out; queued for recovery"));
+                    }
                     if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading)
                         && System.currentTimeMillis()-n(job,"updated_at")>180_000) return refreshStale(job,file);
                     return DataVerticle.torrentRepository.listByTelegramFileUniqueIds(List.of(job.getString("unique_id")))
@@ -355,7 +362,7 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
             && !auto.transfer.rule.destination.isBlank()) {
             java.io.File target=new java.io.File(auto.transfer.rule.destination);
             while(target!=null && !target.exists()) target=target.getParentFile();
-            if(target==null || target.getUsableSpace()<reserve) return false;
+            if(target!=null && target.exists() && target.getUsableSpace()<reserve) return false;
         }
         return true;
     }

@@ -611,7 +611,7 @@ public class FileRepositoryImpl extends AbstractSqlRepository implements FileRep
                             start_date = #{startDate},
                             completion_date = NULL
                         WHERE unique_id = #{uniqueId}
-                          AND download_status = 'idle'
+                          AND download_status IN ('idle', 'error', 'paused')
                         """)
                 .execute(Map.of(
                         "fileId", fileId,
