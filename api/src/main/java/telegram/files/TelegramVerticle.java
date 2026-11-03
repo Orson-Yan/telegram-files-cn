@@ -772,14 +772,16 @@ public class TelegramVerticle extends AbstractVerticle {
                                 return Future.succeededFuture();
                             })
                             .compose(ignore -> {
-                                Future<Void> prepare = (dbFileRecord != null && dbFileRecord.isDownloadStatus(FileRecord.DownloadStatus.downloading))
-                                        ? DataVerticle.fileRepository.updateDownloadStatus(
-                                                fileId, fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null).mapEmpty()
-                                        : Future.succeededFuture();
-                                return prepare.compose(ignore2 -> {
-                                    long downloadStartDate = System.currentTimeMillis();
-                                    return DataVerticle.fileRepository
-                                            .claimDownloadStart(fileId, fileRecord.uniqueId(), downloadStartDate)
+                                if (dbFileRecord != null && dbFileRecord.isDownloadStatus(FileRecord.DownloadStatus.downloading)) {
+                                    return DataVerticle.fileRepository.updateDownloadStatus(
+                                            fileId, fileRecord.uniqueId(), null, FileRecord.DownloadStatus.idle, null).mapEmpty();
+                                }
+                                return Future.succeededFuture();
+                            })
+                            .compose(ignore -> {
+                                long downloadStartDate = System.currentTimeMillis();
+                                return DataVerticle.fileRepository
+                                        .claimDownloadStart(fileId, fileRecord.uniqueId(), downloadStartDate)
                                         .compose(claimed -> {
                                             if (!claimed) {
                                                 return Future.failedFuture("File was claimed by another download");
