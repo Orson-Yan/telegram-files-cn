@@ -82,6 +82,11 @@ test {
             "-javaagent:${configurations.testRuntimeClasspath.find { it.name.contains('mockito-core') }}"
     environment "APP_ROOT", layout.buildDirectory.dir("test-app-root").get().asFile.absolutePath
     useJUnitPlatform()
+    testLogging {
+        events "failed"
+        exceptionFormat "full"
+        showStackTraces true
+    }
     finalizedBy jacocoTestReport
 }
 

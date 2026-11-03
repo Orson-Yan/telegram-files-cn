@@ -31,10 +31,15 @@ class DownloadRecoveryTest {
         FileRecord releasedRecord = downloadingRecord(78, "stale-release", staleStart);
         FileRecord activeRecord = downloadingRecord(79, "active-download", staleStart);
 
-        ScriptedTelegramGateway requeueGateway = new ScriptedTelegramGateway(request ->
-                request instanceof TdApi.GetFile getFile
-                        ? inactiveFile(requeuedRecord, getFile.fileId)
-                        : new TdApi.Ok());
+        ScriptedTelegramGateway requeueGateway = new ScriptedTelegramGateway(request -> {
+            if (request instanceof TdApi.GetFile getFile) {
+                return inactiveFile(requeuedRecord, getFile.fileId);
+            }
+            if (request instanceof TdApi.AddFileToDownloads addFile) {
+                return inactiveFile(requeuedRecord, addFile.fileId);
+            }
+            return new TdApi.Ok();
+        });
         TelegramVerticle requeueReconciler = reconciler(requeueGateway);
 
         ScriptedTelegramGateway releaseGateway = new ScriptedTelegramGateway(request -> {
@@ -50,11 +55,13 @@ class DownloadRecoveryTest {
         TelegramVerticle releaseReconciler = reconciler(releaseGateway);
 
         ScriptedTelegramGateway activeGateway = new ScriptedTelegramGateway(request -> {
-            TdApi.GetFile getFile = (TdApi.GetFile) request;
-            FileRecord record = getFile.fileId == activeRecord.id() ? activeRecord : requeuedRecord;
-            TdApi.File file = inactiveFile(record, getFile.fileId);
-            file.local.isDownloadingActive = true;
-            return file;
+            if (request instanceof TdApi.GetFile getFile) {
+                FileRecord record = getFile.fileId == activeRecord.id() ? activeRecord : requeuedRecord;
+                TdApi.File file = inactiveFile(record, getFile.fileId);
+                file.local.isDownloadingActive = true;
+                return file;
+            }
+            return new TdApi.Ok();
         });
         TelegramVerticle activeReconciler = reconciler(activeGateway);
 
