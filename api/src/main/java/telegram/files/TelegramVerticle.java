@@ -1692,7 +1692,8 @@ public class TelegramVerticle extends AbstractVerticle {
 
     public boolean isSleepingOrWaking() {
         synchronized (lifecycleLock) {
-            return telegramRecord != null
+            return !authorized
+                   && telegramRecord != null
                    && (clientLifecycle == ClientLifecycle.SLEEPING
                        || (clientLifecycle == ClientLifecycle.STARTING && !permanentClose)
                        || (clientLifecycle == ClientLifecycle.STOPPING && idleClose));

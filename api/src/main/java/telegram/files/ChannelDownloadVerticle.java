@@ -75,11 +75,12 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                 long accountId=account.getKey();
                 TelegramVerticle telegram=TelegramVerticles.get(accountId).orElse(null);
                 if(telegram==null) continue;
-                if(telegram.isSleepingOrWaking()) {
-                    telegram.wake().onFailure(error -> log("Failed to wake account for channel download", error));
+                if(!telegram.authorized) {
+                    if(telegram.isSleepingOrWaking()) {
+                        telegram.wake().onFailure(error -> log("Failed to wake account for channel download", error));
+                    }
                     continue;
                 }
-                if(!telegram.authorized) continue;
                 if(!diskAvailable()) continue;
                 if(accountCooldowns.getOrDefault(accountId,0L)>System.currentTimeMillis()) continue;
                 List<JsonObject> candidates=account.getValue();
