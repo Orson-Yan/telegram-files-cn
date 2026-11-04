@@ -12,6 +12,7 @@ import {
   StepForward,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
+import { mutate } from "swr";
 import useSWRMutation from "swr/mutation";
 import { POST, request } from "@/lib/api";
 import { type TelegramFile } from "@/lib/types";
@@ -346,6 +347,7 @@ function ControlButton({
     {
       onSuccess: () => {
         setSelectedFiles(new Set());
+        void mutate("/files?type=all&downloadStatus=downloading&limit=100");
         toast({
           title: `${label} action completed`,
           description: `Successfully processed ${validFiles.length} files.`,

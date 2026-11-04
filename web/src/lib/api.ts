@@ -77,8 +77,10 @@ export async function request<T = any>(
     "Content-Type": "application/json",
   };
 
+  const signal = requestInit?.signal ?? (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(20_000) : undefined);
   const response = await fetch(`${getApiUrl()}${api}`, {
     ...requestInit,
+    signal,
     credentials: "include",
     headers: {
       ...defaultHeaders,

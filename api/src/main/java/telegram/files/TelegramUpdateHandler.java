@@ -43,6 +43,7 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
             case TdApi.UpdateFile.CONSTRUCTOR:
                 if (onFileUpdated != null)
                     onFileUpdated.accept((TdApi.UpdateFile) object);
+                break;
             case TdApi.UpdateFileDownload.CONSTRUCTOR:
                 log.trace("File download update: %s".formatted(object));
                 break;
@@ -54,6 +55,7 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
                 if (onMessageReceived != null) {
                     onMessageReceived.accept(((TdApi.UpdateNewMessage) object).message);
                 }
+                break;
             case TdApi.UpdateNewChat.CONSTRUCTOR:
             case TdApi.UpdateChatTitle.CONSTRUCTOR:
             case TdApi.UpdateChatPhoto.CONSTRUCTOR:
@@ -64,6 +66,7 @@ public class TelegramUpdateHandler implements Client.ResultHandler {
                 if (onChatUpdated != null) {
                     onChatUpdated.accept(object);
                 }
+                break;
             default:
                 log.trace("Unsupported telegram update: %s".formatted(object));
         }

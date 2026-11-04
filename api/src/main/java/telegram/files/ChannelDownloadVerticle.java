@@ -27,6 +27,8 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     private final Map<String,Integer> scanTurns = new HashMap<>();
     private final Map<Long,Long> accountCooldowns = new HashMap<>();
     private final Map<Long,Integer> dispatchTurns = new HashMap<>();
+    private String lastAutoFingerprint;
+    private long lastSyncTimestamp;
 
     @Override public void start(Promise<Void> promise) {
         store = new ChannelDownloadStore(DataVerticle.pool);
@@ -83,8 +85,20 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         }).onFailure(error -> log("Channel download tick failed",error)).onComplete(_ -> ticking=false);
     }
     private Future<Void> sync() {
+        var autos=AutomationsHolder.INSTANCE.autoRecords().getDownloadEnabledItems();
+        StringBuilder fp = new StringBuilder();
+        for (var auto : autos) {
+            fp.append(auto.uniqueKey()).append(':').append(auto.download.rule == null ? 0 : auto.download.rule.hashCode()).append(';');
+        }
+        String currentFingerprint = fp.toString();
+        long now = System.currentTimeMillis();
+        if (Objects.equals(currentFingerprint, lastAutoFingerprint) && now - lastSyncTimestamp < 30_000L) {
+            return Future.succeededFuture();
+        }
+        lastAutoFingerprint = currentFingerprint;
+        lastSyncTimestamp = now;
+
         return store.sources().compose(existing -> {
-            var autos=AutomationsHolder.INSTANCE.autoRecords().getDownloadEnabledItems();
             Set<String> enabled=new HashSet<>();
             Future<Void> work=Future.succeededFuture();
             for(var auto:autos) {
@@ -260,6 +274,7 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     }
     private Future<Void> reconcile() {
         return store.running().compose(jobs -> {
+            if (jobs.isEmpty()) return Future.succeededFuture();
             Future<Void> work=Future.succeededFuture();
             for(JsonObject job:jobs) work=work.compose(_ -> DataVerticle.fileRepository.getByUniqueId(job.getString("unique_id"))
                 .compose(file -> {

@@ -194,7 +194,7 @@ public class DataVerticle extends AbstractVerticle {
                 .setShared(true)
                 .setMaxSize(Config.isSqlite() ? 1 : 8)
                 .setName("pool-tf")
-                .setConnectionTimeout(60000)
+                .setConnectionTimeout(15000)
                 .setIdleTimeout(300000)
                 .setPoolCleanerPeriod(300000);
 

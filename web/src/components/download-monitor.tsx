@@ -83,6 +83,7 @@ export function DownloadMonitor({
   const [operatingId, setOperatingId] = useState<string | null>(null);
   const downloadsRef = useRef<TrackedDownload[]>([]);
   const samples = useRef(new Map<string, FileSample>());
+  const mutatingRef = useRef(false);
 
   const handleTogglePause = async (file: TrackedDownload) => {
     try {
@@ -293,6 +294,8 @@ export function DownloadMonitor({
         downloadsRef.current = next;
         samples.current.delete(status.uniqueId);
         setDownloads(next);
+      } else if (status.uniqueId && status.downloadStatus === "downloading") {
+        void mutate();
       }
       return;
     }
@@ -316,6 +319,14 @@ export function DownloadMonitor({
       (download) => download.uniqueId === uniqueId,
     );
     if (!existing) {
+      if (file.local.isDownloadingActive && !mutatingRef.current) {
+        mutatingRef.current = true;
+        void mutate().finally(() => {
+          setTimeout(() => {
+            mutatingRef.current = false;
+          }, 1000);
+        });
+      }
       return;
     }
 
@@ -351,7 +362,7 @@ export function DownloadMonitor({
     );
     downloadsRef.current = next;
     setDownloads(next);
-  }, [lastJsonMessage]);
+  }, [lastJsonMessage, mutate]);
 
   const estimatedSeconds = useMemo(() => {
     if (downloadActivity.speed <= 0) return 0;

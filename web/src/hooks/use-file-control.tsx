@@ -1,4 +1,5 @@
 import { type TelegramFile } from "@/lib/types";
+import { mutate } from "swr";
 import useSWRMutation from "swr/mutation";
 import { POST } from "@/lib/api";
 import { toast } from "@/hooks/use-toast";
@@ -70,7 +71,9 @@ export function useFileControl(
           file.source === "SEED"
             ? { files: [batchDescriptor(file)] }
             : { chatId: file.chatId, messageId: file.messageId, fileId },
-        );
+        ).then(() => {
+          void mutate("/files?type=all&downloadStatus=downloading&limit=100");
+        });
       }
     },
     togglePause: (fileId: number) => {
