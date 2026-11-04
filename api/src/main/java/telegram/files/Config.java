@@ -90,7 +90,7 @@ public class Config {
     );
 
     public static final int FILE_READS_PER_MINUTE = Convert.toInt(
-            System.getenv("FILE_READS_PER_MINUTE"), 120
+            System.getenv("FILE_READS_PER_MINUTE"), 600
     );
 
     public static final int SHARE_HEARTBEAT_INTERVAL_SECONDS = Convert.toInt(

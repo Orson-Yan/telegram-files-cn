@@ -13,7 +13,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class SettingAutoRecords {
-    public List<Automation> automations;
+    public volatile List<Automation> automations;
 
     public static final int HISTORY_PRELOAD_STATE = 1;
 
@@ -310,9 +310,9 @@ public class SettingAutoRecords {
     }
 
     public void setAutomations(List<Automation> automations) {
-        List<Automation> target = this.automations;
-        target.clear();
-        if (automations != null) target.addAll(automations);
+        // Replace the whole snapshot atomically; readers on other verticle threads may still hold
+        // the previous list, which stays valid and immutable-by-convention.
+        this.automations = new CopyOnWriteArrayList<>(automations == null ? List.of() : automations);
     }
 
     public boolean exists(long telegramId, long chatId) {

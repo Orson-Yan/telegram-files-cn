@@ -1950,9 +1950,6 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleFilePreview(RoutingContext ctx) {
-        if (!acquire(fileReadRateLimiter, "file:" + remoteHost(ctx), ctx)) {
-            return;
-        }
         TelegramVerticle telegramVerticle = getTelegramVerticleByPath(ctx);
         if (telegramVerticle == null) {
             return;
@@ -1965,6 +1962,10 @@ public class HttpVerticle extends AbstractVerticle {
 
         telegramVerticle.resolveMediaTarget(uniqueId)
                 .onSuccess(target -> {
+                    if (shouldRateLimitPreview(target.type(), ctx.request().getHeader("Range"))
+                        && !acquire(fileReadRateLimiter, previewRateLimitKey(remoteHost(ctx), uniqueId), ctx)) {
+                        return;
+                    }
                     String mimeType = target.mimeType();
                     if (StrUtil.isBlank(mimeType)) {
                         mimeType = "video".equals(target.type()) ? "video/mp4" : "application/octet-stream";
@@ -1999,6 +2000,17 @@ public class HttpVerticle extends AbstractVerticle {
                     handleMediaStream(ctx, telegramVerticle, target, mimeType);
                 })
                 .onFailure(ctx::fail);
+    }
+
+    static boolean shouldRateLimitPreview(String type, String rangeHeader) {
+        // Thumbnails are paginated by the file list itself, and chunked Range reads belong to a
+        // single playback session. Counting either per HTTP request would break normal browsing
+        // and video streaming (the streamer returns 1 MiB per request).
+        return !"thumbnail".equals(type) && StrUtil.isBlank(rangeHeader);
+    }
+
+    static String previewRateLimitKey(String host, String uniqueId) {
+        return "file:" + (StrUtil.isBlank(host) ? "unknown" : host) + ":" + uniqueId;
     }
 
     private void handleMediaStream(RoutingContext ctx, TelegramVerticle tv, TelegramVerticle.MediaTarget target, String mimeType) {
@@ -2077,10 +2089,11 @@ public class HttpVerticle extends AbstractVerticle {
         if (Files.isDirectory(sharedRoot)) {
             roots.add(sharedRoot);
         }
-        // Files archived/moved to a configured transfer destination stay streamable from the UI.
-        AutomationsHolder.INSTANCE.autoRecords().getTransferEnabledItems().forEach(auto -> {
-            String destination = auto.transfer == null || auto.transfer.rule == null
-                    ? null : auto.transfer.rule.destination;
+        // Files archived/moved to a configured transfer destination stay streamable from the UI,
+        // even after the transfer automation itself is disabled or removed later.
+        AutomationsHolder.INSTANCE.autoRecords().automations.forEach(auto -> {
+            if (auto.transfer == null || auto.transfer.rule == null) return;
+            String destination = auto.transfer.rule.destination;
             if (StrUtil.isBlank(destination)) return;
             try {
                 Path root = Path.of(destination);

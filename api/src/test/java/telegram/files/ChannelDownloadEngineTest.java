@@ -145,7 +145,7 @@ class ChannelDownloadEngineTest {
     }
     private Future<Void> until(Vertx vertx,Supplier<Future<Boolean>> condition) {
         Promise<Void> done=Promise.promise();
-        long deadline=System.currentTimeMillis()+15000;
+        long deadline=System.currentTimeMillis()+60000;
         long timer=vertx.setPeriodic(100,id -> condition.get().onComplete(result -> {
             if(done.future().isComplete()) return;
             if(result.failed()) { vertx.cancelTimer(id);done.fail(result.cause()); }

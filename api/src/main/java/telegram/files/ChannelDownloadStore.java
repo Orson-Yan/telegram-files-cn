@@ -294,9 +294,6 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
         return false;
     }
 
-    Future<Void> enqueue(JsonObject source, FileRecord file, boolean live) {
-        return batchEnqueue(source, List.of(file), live);
-    }
     public Future<List<JsonObject>> due(long account, int limit) {
         return due(account,limit,false);
     }

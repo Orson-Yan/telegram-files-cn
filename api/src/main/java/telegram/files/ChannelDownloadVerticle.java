@@ -70,7 +70,8 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         if (ticking) return;
         ticking=true;
         sync().compose(_ -> store.running()).compose(active ->
-                reconcile(active).compose(_ -> store.sources()).compose(sources -> scanSources(sources, active)))
+                reconcile(active).compose(_ -> ensureSettings()).compose(_ -> store.sources())
+                    .compose(sources -> scanSources(sources, active)))
             .onFailure(error -> log("Channel download tick failed",error))
             .onComplete(_ -> ticking=false);
     }
@@ -198,32 +199,32 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     }
     private void dispatch(TelegramVerticle telegram,long account,List<JsonObject> jobsInFlight) {
         if(!dispatching.add(account)) return;
-        ensureSettings().compose(_ -> {
-                if(!allowedTime(cachedTime) || !diskAvailable()) return Future.succeededFuture();
-                return store.due(account,100,dispatchTurns.merge(account,1,Integer::sum)%4==0).compose(jobs -> {
-                    if(jobs.isEmpty()) return Future.succeededFuture();
-                    int limit=Math.max(1,Math.min(10,cachedLimit==null?5:cachedLimit));
-                    return DataVerticle.fileRepository.getByDownloadStatus(account,FileRecord.DownloadStatus.downloading)
-                        .compose(nativeDownloads -> {
-                            int available=Math.max(0,limit-occupiedSlots(account,nativeDownloads,jobsInFlight));
-                            if(available==0) return Future.succeededFuture();
-                            // Round-robin channels within the account; prioritize live files within each turn.
-                            LinkedHashMap<String,JsonObject> selected=new LinkedHashMap<>();
-                            for(JsonObject job:jobs) selected.putIfAbsent(job.getString("source_id"),job);
-                            List<JsonObject> picks=new ArrayList<>(selected.values());
-                            for(JsonObject job:jobs) if(picks.size()<available && !picks.contains(job)) picks.add(job);
-                            Future<Void> starts=Future.succeededFuture();
-                            long batchReserved = 0;
-                            for(JsonObject job:picks.subList(0,Math.min(available,picks.size()))) {
-                                long fileSize = Math.max(0, n(job, "file_size"));
-                                batchReserved += fileSize;
-                                long required = batchReserved;
-                                starts = starts.compose(_ -> start(telegram, job, required));
-                            }
-                            return starts;
-                        });
-                });
-            }).onFailure(error -> log("Download dispatch failed",error)).onComplete(_ -> dispatching.remove(account));
+        Future<Void> work = !allowedTime(cachedTime) || !diskAvailable()
+            ? Future.succeededFuture()
+            : store.due(account,100,dispatchTurns.merge(account,1,Integer::sum)%4==0).compose(jobs -> {
+                if(jobs.isEmpty()) return Future.succeededFuture();
+                int limit=Math.max(1,Math.min(10,cachedLimit==null?5:cachedLimit));
+                return DataVerticle.fileRepository.getByDownloadStatus(account,FileRecord.DownloadStatus.downloading)
+                    .compose(nativeDownloads -> {
+                        int available=Math.max(0,limit-occupiedSlots(account,nativeDownloads,jobsInFlight));
+                        if(available==0) return Future.succeededFuture();
+                        // Round-robin channels within the account; prioritize live files within each turn.
+                        LinkedHashMap<String,JsonObject> selected=new LinkedHashMap<>();
+                        for(JsonObject job:jobs) selected.putIfAbsent(job.getString("source_id"),job);
+                        List<JsonObject> picks=new ArrayList<>(selected.values());
+                        for(JsonObject job:jobs) if(picks.size()<available && !picks.contains(job)) picks.add(job);
+                        Future<Void> starts=Future.succeededFuture();
+                        long batchReserved = 0;
+                        for(JsonObject job:picks.subList(0,Math.min(available,picks.size()))) {
+                            long fileSize = Math.max(0, n(job, "file_size"));
+                            batchReserved += fileSize;
+                            long required = batchReserved;
+                            starts = starts.compose(_ -> start(telegram, job, required));
+                        }
+                        return starts;
+                    });
+            });
+        work.onFailure(error -> log("Download dispatch failed",error)).onComplete(_ -> dispatching.remove(account));
     }
     private Future<Void> start(TelegramVerticle telegram,JsonObject job,long required) {
         if(accountCooldowns.getOrDefault(n(job,"account_id"),0L)>System.currentTimeMillis()) return Future.succeededFuture();
