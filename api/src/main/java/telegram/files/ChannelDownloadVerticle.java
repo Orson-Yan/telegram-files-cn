@@ -29,9 +29,20 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     private final Map<Long,Integer> dispatchTurns = new HashMap<>();
     private String lastAutoFingerprint;
     private long lastSyncTimestamp;
+    private long lastReconcileCompletedTime;
+    private static final Set<Long> activeAccounts = Collections.synchronizedSet(new HashSet<>());
+
+    public static boolean hasActiveWork(long accountId) {
+        return activeAccounts.contains(accountId);
+    }
 
     @Override public void start(Promise<Void> promise) {
         store = new ChannelDownloadStore(DataVerticle.pool);
+        store.reconcileCompletedJobs()
+            .onSuccess(count -> {
+                if (count > 0) cn.hutool.log.LogFactory.get().info("Channel download startup reconciled %d completed jobs".formatted(count));
+            })
+            .onFailure(error -> log("Channel download startup reconciliation failed", error));
         vertx.eventBus().consumer(EventEnum.MESSAGE_RECEIVED.address(), event -> {
             JsonObject body = (JsonObject)event.body();
             String id = body.getLong("telegramId")+":"+body.getLong("chatId");
@@ -58,10 +69,17 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                 if(isFloodWait(source.getString("last_error",""))) accountCooldowns.merge(n(source,"account_id"),n(source,"next_scan_at"),Math::max);
                 if(active(source)) byAccount.computeIfAbsent(n(source,"account_id"),_ -> new ArrayList<>()).add(source);
             }
+            activeAccounts.clear();
+            activeAccounts.addAll(byAccount.keySet());
             for (var account:byAccount.entrySet()) {
                 long accountId=account.getKey();
                 TelegramVerticle telegram=TelegramVerticles.get(accountId).orElse(null);
-                if(telegram==null || !telegram.authorized) continue;
+                if(telegram==null) continue;
+                if(telegram.isSleepingOrWaking()) {
+                    telegram.wake().onFailure(error -> log("Failed to wake account for channel download", error));
+                    continue;
+                }
+                if(!telegram.authorized) continue;
                 if(!diskAvailable()) continue;
                 if(accountCooldowns.getOrDefault(accountId,0L)>System.currentTimeMillis()) continue;
                 List<JsonObject> candidates=account.getValue();
@@ -211,12 +229,15 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                             && existing.localPath()!=null && new java.io.File(existing.localPath()).isFile()
                             && (existing.size()<=0 || new java.io.File(existing.localPath()).length()==existing.size()))
                             return Future.succeededFuture(existing);
+                        if(existing!=null && existing.isTransferStatus(FileRecord.TransferStatus.completed))
+                            return Future.succeededFuture(existing);
                         if(!storageAvailable(source,required)) return Future.failedFuture(new IllegalStateException("STORAGE_LOW: 存储空间不足，已为排队文件和安全水位预留空间"));
                         Future<Void> reset=existing!=null && existing.isDownloadStatus(FileRecord.DownloadStatus.completed)
                             ?DataVerticle.fileRepository.updateDownloadStatus(handler.getFileId(),existing.uniqueId(),existing.localPath(),FileRecord.DownloadStatus.idle,null).mapEmpty()
                             :Future.succeededFuture();
                         return reset.compose(_ -> telegram.startDownload(message.chatId,message.id,handler.getFileId()).timeout(60,TimeUnit.SECONDS));
-                    }).compose(file -> store.finish(job.getString("id"),file.isDownloadStatus(FileRecord.DownloadStatus.completed)
+                    }).compose(file -> store.finish(job.getString("id"),
+                            file.isDownloadStatus(FileRecord.DownloadStatus.completed) || file.isTransferStatus(FileRecord.TransferStatus.completed)
                             ?"COMPLETED":file.isDownloadStatus(FileRecord.DownloadStatus.paused)?"PAUSED":"RUNNING",null,0,file.localPath()));
                 })).recover(error -> fail(job,error));
         });
@@ -273,7 +294,11 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         });
     }
     private Future<Void> reconcile() {
-        return store.running().compose(jobs -> {
+        long now = System.currentTimeMillis();
+        Future<Void> batchReconcile = (now - lastReconcileCompletedTime > 60_000L)
+            ? store.reconcileCompletedJobs().onSuccess(_ -> lastReconcileCompletedTime = now).mapEmpty()
+            : Future.succeededFuture();
+        return batchReconcile.compose(_ -> store.running()).compose(jobs -> {
             if (jobs.isEmpty()) return Future.succeededFuture();
             Future<Void> work=Future.succeededFuture();
             for(JsonObject job:jobs) work=work.compose(_ -> DataVerticle.fileRepository.getByUniqueId(job.getString("unique_id"))

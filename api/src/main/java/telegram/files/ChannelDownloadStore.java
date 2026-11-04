@@ -132,22 +132,73 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
         return query("SELECT status FROM channel_download_job WHERE id=?", id).compose(found -> {
             if (found.size() > 0) {
                 String prevStatus = found.iterator().next().getString("status");
+                if ("COMPLETED".equals(prevStatus)) {
+                    return Future.succeededFuture();
+                }
                 if ("SKIPPED".equals(prevStatus) || "FAILED".equals(prevStatus) || "RETRY".equals(prevStatus)) {
-                    return query("""
-                        UPDATE channel_download_job SET rule_version=?, status='WAITING', attempts=0, next_attempt=0, last_error=NULL, updated_at=? WHERE id=?
-                        """, n(source,"rule_version"), System.currentTimeMillis(), id).mapEmpty();
+                    return query("SELECT local_path, download_status, transfer_status, size FROM file_record WHERE unique_id=? LIMIT 1", file.uniqueId()).compose(fFound -> {
+                        boolean completed = false;
+                        String localPath = null;
+                        if (fFound.size() > 0) {
+                            Row r = fFound.iterator().next();
+                            String ds = r.getString("download_status");
+                            String ts = r.getString("transfer_status");
+                            String path = r.getString("local_path");
+                            long size = r.getValue("size") instanceof Number num ? num.longValue() : 0L;
+                            if ("completed".equalsIgnoreCase(ts)) {
+                                completed = true;
+                                localPath = path;
+                            } else if ("completed".equalsIgnoreCase(ds) && path != null && !path.isBlank()) {
+                                java.io.File diskFile = new java.io.File(path);
+                                if (diskFile.isFile() && (size <= 0 || diskFile.length() == size)) {
+                                    completed = true;
+                                    localPath = path;
+                                }
+                            }
+                        }
+                        if (completed) {
+                            return query("""
+                                UPDATE channel_download_job SET rule_version=?, status='COMPLETED', local_path=COALESCE(?,local_path), attempts=0, next_attempt=0, last_error=NULL, updated_at=? WHERE id=?
+                                """, n(source,"rule_version"), localPath, System.currentTimeMillis(), id).mapEmpty();
+                        }
+                        return query("""
+                            UPDATE channel_download_job SET rule_version=?, status='WAITING', attempts=0, next_attempt=0, last_error=NULL, updated_at=? WHERE id=?
+                            """, n(source,"rule_version"), System.currentTimeMillis(), id).mapEmpty();
+                    });
                 }
                 return query("UPDATE channel_download_job SET rule_version=? WHERE id=?",
                         n(source,"rule_version"), id).mapEmpty();
             }
-            return query("""
-                INSERT INTO channel_download_job(id,source_id,account_id,chat_id,message_id,unique_id,rule_version,
-                  status,priority,file_type,file_name,file_size,sent_at,caption,updated_at)
-                VALUES(?,?,?,?,?,?,?,'WAITING',?,?,?,?,?,?,?) %s
-                """.formatted(Config.isMysql()?"ON DUPLICATE KEY UPDATE rule_version=VALUES(rule_version)"
-                    :"ON CONFLICT(id) DO UPDATE SET rule_version=excluded.rule_version"), id, source.getString("id"), n(source,"account_id"), file.chatId(), file.messageId(), file.uniqueId(),
-                n(source,"rule_version"), live ? 100 : 10, file.type(), file.fileName(), file.size(), file.date(),
-                file.caption(), System.currentTimeMillis()).mapEmpty();
+            return query("SELECT local_path, download_status, transfer_status, size FROM file_record WHERE unique_id=? LIMIT 1", file.uniqueId()).compose(fFound -> {
+                boolean completed = false;
+                String localPath = null;
+                if (fFound.size() > 0) {
+                    Row r = fFound.iterator().next();
+                    String ds = r.getString("download_status");
+                    String ts = r.getString("transfer_status");
+                    String path = r.getString("local_path");
+                    long size = r.getValue("size") instanceof Number num ? num.longValue() : 0L;
+                    if ("completed".equalsIgnoreCase(ts)) {
+                        completed = true;
+                        localPath = path;
+                    } else if ("completed".equalsIgnoreCase(ds) && path != null && !path.isBlank()) {
+                        java.io.File diskFile = new java.io.File(path);
+                        if (diskFile.isFile() && (size <= 0 || diskFile.length() == size)) {
+                            completed = true;
+                            localPath = path;
+                        }
+                    }
+                }
+                String initialStatus = completed ? "COMPLETED" : "WAITING";
+                return query("""
+                    INSERT INTO channel_download_job(id,source_id,account_id,chat_id,message_id,unique_id,rule_version,
+                      status,priority,file_type,file_name,file_size,sent_at,caption,local_path,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) %s
+                    """.formatted(Config.isMysql()?"ON DUPLICATE KEY UPDATE rule_version=VALUES(rule_version)"
+                        :"ON CONFLICT(id) DO UPDATE SET rule_version=excluded.rule_version"), id, source.getString("id"), n(source,"account_id"), file.chatId(), file.messageId(), file.uniqueId(),
+                    n(source,"rule_version"), initialStatus, completed ? 0 : (live ? 100 : 10), file.type(), file.fileName(), file.size(), file.date(),
+                    file.caption(), localPath, System.currentTimeMillis()).mapEmpty();
+            });
         }).compose(_ -> new JsonObject(source.getString("rule_json")).getBoolean("downloadCommentFiles",false)
             && file.chatId()==n(source,"chat_id") ? thread(source,file.chatId(),file.messageId()) : Future.succeededFuture());
     }
@@ -295,6 +346,46 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
                     entry.put("last_success_at",Math.max(n(entry,"last_success_at"),((Number)row.getValue("last_success_at")).longValue()));
                 }
                 return new JsonArray(new ArrayList<>(items.values()));
+            });
+    }
+    public Future<Integer> reconcileCompletedJobs() {
+        return query("""
+            SELECT j.id, f.local_path, f.size, f.transfer_status, f.download_status
+            FROM channel_download_job j
+            JOIN file_record f ON f.unique_id=j.unique_id
+            WHERE j.status IN ('WAITING','RETRY')
+              AND (f.download_status='completed' OR f.transfer_status='completed')
+            """).compose(rows -> {
+                List<Tuple> completed = new ArrayList<>();
+                long now = System.currentTimeMillis();
+                for (Row r : rows) {
+                    String id = r.getString("id");
+                    String path = r.getString("local_path");
+                    String ds = r.getString("download_status");
+                    String ts = r.getString("transfer_status");
+                    long size = r.getValue("size") instanceof Number num ? num.longValue() : 0L;
+                    boolean isDone = false;
+                    if ("completed".equalsIgnoreCase(ts)) {
+                        isDone = true;
+                    } else if ("completed".equalsIgnoreCase(ds) && path != null && !path.isBlank()) {
+                        java.io.File diskFile = new java.io.File(path);
+                        if (diskFile.isFile() && (size <= 0 || diskFile.length() == size)) {
+                            isDone = true;
+                        }
+                    }
+                    if (isDone) {
+                        completed.add(Tuple.of(path, now, id));
+                    }
+                }
+                if (completed.isEmpty()) return Future.succeededFuture(0);
+                Future<Void> batchUpdates = Future.succeededFuture();
+                for (int i = 0; i < completed.size(); i += 500) {
+                    List<Tuple> chunk = completed.subList(i, Math.min(i + 500, completed.size()));
+                    batchUpdates = batchUpdates.compose(_ ->
+                        preparedQuery("UPDATE channel_download_job SET status='COMPLETED', local_path=COALESCE(?,local_path), updated_at=? WHERE id=?")
+                            .executeBatch(chunk).mapEmpty());
+                }
+                return batchUpdates.map(completed.size());
             });
     }
     public Future<JsonArray> manifest(String source) {

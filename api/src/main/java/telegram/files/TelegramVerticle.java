@@ -1634,11 +1634,13 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private boolean hasSleepBlockingAutomationEnabled() {
         if (telegramRecord == null) return false;
-        return AutomationsHolder.INSTANCE.autoRecords().automations.stream()
+        boolean autoEnabled = AutomationsHolder.INSTANCE.autoRecords().automations.stream()
                 .anyMatch(auto -> auto.telegramId == telegramRecord.id()
                                   && ((auto.download != null && auto.download.enabled)
                                       || (auto.preload != null && auto.preload.enabled)
                                       || auto.getArchiveConfigs().stream().anyMatch(config -> config.enabled)));
+        if (autoEnabled) return true;
+        return ChannelDownloadVerticle.hasActiveWork(telegramRecord.id());
     }
 
     private boolean canIdleSleepLocked() {
@@ -1688,7 +1690,7 @@ public class TelegramVerticle extends AbstractVerticle {
         scheduleIdleSleep();
     }
 
-    private boolean isSleepingOrWaking() {
+    public boolean isSleepingOrWaking() {
         synchronized (lifecycleLock) {
             return telegramRecord != null
                    && (clientLifecycle == ClientLifecycle.SLEEPING

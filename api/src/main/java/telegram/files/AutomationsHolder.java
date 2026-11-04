@@ -59,11 +59,10 @@ public class AutomationsHolder {
                 // new enabled
                 TelegramVerticles.get(automation.telegramId)
                         .ifPresentOrElse(telegramVerticle -> {
-                            if (telegramVerticle.authorized) {
-                                AUTO_RECORDS.add(automation);
-                                log.info("Add auto records success: %s".formatted(automation.uniqueKey()));
-                            } else {
-                                log.warn("Add auto records fail. Telegram verticle not authorized: %s".formatted(automation.telegramId));
+                            AUTO_RECORDS.add(automation);
+                            log.info("Add auto records success: %s".formatted(automation.uniqueKey()));
+                            if (telegramVerticle.isSleepingOrWaking()) {
+                                telegramVerticle.wake().onFailure(e -> log.warn("Wake telegram verticle on automation update failed: %s".formatted(e.getMessage())));
                             }
                         }, () -> log.warn("Add auto records fail. Telegram verticle not found: %s".formatted(automation.telegramId)));
             } else {
