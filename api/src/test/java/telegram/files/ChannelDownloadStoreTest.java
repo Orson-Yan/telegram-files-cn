@@ -82,4 +82,36 @@ class ChannelDownloadStoreTest {
                 .eventually(() -> vertx.undeploy(deployment).compose(_ -> DataVerticleTest.clear(vertx)));
         }).onComplete(context.succeeding(_ -> context.completeNow()));
     }
+    @Test void manualRetryJumpsAheadOfHistoryBacklog(Vertx vertx,VertxTestContext context) {
+        vertx.deployVerticle(new DataVerticle()).compose(deployment -> {
+            ChannelDownloadStore store=new ChannelDownloadStore(DataVerticle.pool);
+            String id="996:100";
+            var rule=new SettingAutoRecords.DownloadRule();rule.downloadHistory=true;
+            return store.query("DELETE FROM channel_download_job WHERE account_id=996")
+                .compose(_ -> store.query("DELETE FROM channel_download_source WHERE account_id=996"))
+                .compose(_ -> store.ensure(996,100,"retry-priority",Json.encode(rule),true))
+                .compose(_ -> store.source(id))
+                .compose(source -> store.page(source,List.of(file(100),file(200)),false,99,0,true,2))
+                .compose(_ -> store.query("SELECT id FROM channel_download_job WHERE account_id=996 AND message_id=100"))
+                .compose(rows -> store.finish(rows.iterator().next().getString("id"),"FAILED","fixture failure",0,null))
+                .compose(_ -> store.action(id,"retry"))
+                .compose(_ -> store.query("SELECT status,priority,attempts,next_attempt FROM channel_download_job WHERE account_id=996 AND message_id=100"))
+                .compose(rows -> {
+                    var job=rows.iterator().next();
+                    assertEquals("RETRY",job.getString("status"));
+                    assertEquals(ChannelDownloadStore.MANUAL_RETRY_PRIORITY,job.getInteger("priority").intValue());
+                    assertEquals(0L,job.getLong("next_attempt"));
+                    // Simulate a legacy RETRY row that still carries the old history priority.
+                    return store.query("UPDATE channel_download_job SET priority=10 WHERE account_id=996 AND message_id=100");
+                })
+                .compose(_ -> store.due(996,10))
+                .compose(jobs -> {
+                    assertEquals(2,jobs.size());
+                    assertEquals(100,ChannelDownloadStore.n(jobs.getFirst(),"message_id"),
+                        "RETRY must be scheduled before the WAITING history backlog");
+                    return Future.succeededFuture();
+                })
+                .eventually(() -> vertx.undeploy(deployment).compose(_ -> DataVerticleTest.clear(vertx)));
+        }).onComplete(context.succeeding(_ -> context.completeNow()));
+    }
 }

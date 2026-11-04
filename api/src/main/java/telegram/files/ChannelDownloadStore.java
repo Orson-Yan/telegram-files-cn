@@ -17,6 +17,9 @@ import java.util.*;
 
 /** Durable discovery checkpoints and per-message download receipts. */
 public final class ChannelDownloadStore extends AbstractSqlRepository {
+    /** Manual retries must run before the potentially huge WAITING history backlog. */
+    static final int MANUAL_RETRY_PRIORITY = 1000;
+
     public ChannelDownloadStore(SqlClient client) { super(client); }
 
     public static final class Sources implements Definition {
@@ -302,7 +305,8 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
             SELECT j.* FROM channel_download_job j JOIN channel_download_source s ON s.id=j.source_id
             WHERE j.account_id=? AND s.enabled=1 AND s.paused=0 AND j.rule_version=s.rule_version
               AND j.status IN ('WAITING','RETRY') AND j.next_attempt<=?
-            ORDER BY s.updated_at,j.priority %s,j.attempts,j.updated_at,j.id LIMIT ?
+            ORDER BY CASE WHEN j.status='RETRY' THEN 0 ELSE 1 END,
+                     s.updated_at,j.priority %s,j.attempts,j.updated_at,j.id LIMIT ?
             """.formatted(preferHistory?"ASC":"DESC"), account, System.currentTimeMillis(), limit).map(ChannelDownloadStore::rows);
     }
     public Future<Boolean> claim(JsonObject job) {
@@ -383,9 +387,9 @@ public final class ChannelDownloadStore extends AbstractSqlRepository {
             case "retry" -> source(id).compose(source -> {
                 if (source == null) return Future.failedFuture(new IllegalArgumentException("Download task not found"));
                 return query("""
-                    UPDATE channel_download_job SET status='RETRY',attempts=0,next_attempt=0,last_error=NULL
+                    UPDATE channel_download_job SET status='RETRY',attempts=0,next_attempt=0,last_error=NULL,priority=?
                     WHERE source_id=? AND rule_version=? AND status IN ('FAILED','RETRY')
-                    """, id, n(source,"rule_version")).mapEmpty();
+                    """, MANUAL_RETRY_PRIORITY, id, n(source,"rule_version")).mapEmpty();
             });
             default -> Future.failedFuture(new IllegalArgumentException("Unknown download action"));
         };
