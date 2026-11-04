@@ -17,11 +17,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class TelegramVerticles {
     private static final Log log = LogFactory.get();
 
-    private static final List<TelegramVerticle> telegramVerticles = new ArrayList<>();
+    private static final List<TelegramVerticle> telegramVerticles = new CopyOnWriteArrayList<>();
 
     private static UnifiedFileDownloadService unifiedFileDownloadService;
 
@@ -95,7 +96,7 @@ public class TelegramVerticles {
     }
 
     public static List<TelegramVerticle> getAll() {
-        return telegramVerticles;
+        return List.copyOf(telegramVerticles);
     }
 
     public static boolean hasAuthorized() {

@@ -8,6 +8,7 @@ import telegram.files.Transfer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -297,11 +298,21 @@ public class SettingAutoRecords {
     }
 
     public SettingAutoRecords() {
-        this.automations = new ArrayList<>();
+        this.automations = new CopyOnWriteArrayList<>();
     }
 
     public SettingAutoRecords(List<Automation> automations) {
-        this.automations = automations;
+        this.automations = new CopyOnWriteArrayList<>(automations == null ? List.of() : automations);
+    }
+
+    public List<Automation> getAutomations() {
+        return automations;
+    }
+
+    public void setAutomations(List<Automation> automations) {
+        List<Automation> target = this.automations;
+        target.clear();
+        if (automations != null) target.addAll(automations);
     }
 
     public boolean exists(long telegramId, long chatId) {

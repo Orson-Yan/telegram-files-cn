@@ -523,7 +523,13 @@ public class HttpVerticle extends AbstractVerticle {
             return;
         }
         Cookie cookie = ctx.request().getCookie(ADMIN_SESSION_COOKIE_NAME);
-        String token = cookie != null ? cookie.getValue() : ctx.request().getParam("token");
+        String token = cookie != null ? cookie.getValue() : null;
+        // Direct media links historically accepted ?token=; keep that only for safe methods so
+        // the session token cannot be replayed through logs/referrers on write operations.
+        if (StrUtil.isBlank(token)
+            && Set.of(HttpMethod.GET, HttpMethod.HEAD).contains(ctx.request().method())) {
+            token = ctx.request().getParam("token");
+        }
         if (StrUtil.isBlank(token)) {
             String authHeader = ctx.request().getHeader("Authorization");
             if (StrUtil.isNotBlank(authHeader) && authHeader.startsWith("Bearer ")) {
@@ -1944,6 +1950,9 @@ public class HttpVerticle extends AbstractVerticle {
     }
 
     private void handleFilePreview(RoutingContext ctx) {
+        if (!acquire(fileReadRateLimiter, "file:" + remoteHost(ctx), ctx)) {
+            return;
+        }
         TelegramVerticle telegramVerticle = getTelegramVerticleByPath(ctx);
         if (telegramVerticle == null) {
             return;
@@ -2068,6 +2077,18 @@ public class HttpVerticle extends AbstractVerticle {
         if (Files.isDirectory(sharedRoot)) {
             roots.add(sharedRoot);
         }
+        // Files archived/moved to a configured transfer destination stay streamable from the UI.
+        AutomationsHolder.INSTANCE.autoRecords().getTransferEnabledItems().forEach(auto -> {
+            String destination = auto.transfer == null || auto.transfer.rule == null
+                    ? null : auto.transfer.rule.destination;
+            if (StrUtil.isBlank(destination)) return;
+            try {
+                Path root = Path.of(destination);
+                if (Files.isDirectory(root)) roots.add(root);
+            } catch (RuntimeException ignored) {
+                // An invalid destination must never break preview for the other roots.
+            }
+        });
         return new SafePathResolver(roots).requireAllowedRegularFile(Path.of(rawPath));
     }
 

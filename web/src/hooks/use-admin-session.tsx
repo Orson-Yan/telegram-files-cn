@@ -9,7 +9,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { request, SESSION_TERMINAL_EVENT } from "@/lib/api";
+import { request, setAuthEnabled, SESSION_TERMINAL_EVENT } from "@/lib/api";
 
 export interface AdminSession {
   authenticated: true;
@@ -52,7 +52,9 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         required: boolean;
         authEnabled?: boolean;
       }>("/auth/bootstrap/status");
-      if (bootstrapState.authEnabled === false) {
+      const serverAuthEnabled = bootstrapState.authEnabled !== false;
+      setAuthEnabled(serverAuthEnabled);
+      if (!serverAuthEnabled) {
         const activeSession = await request<AdminSession>("/auth/session");
         setSession(activeSession);
         setSessionExpired(false);
@@ -96,6 +98,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
+    setAuthEnabled(activeSession.authEnabled !== false);
     setSession(activeSession);
     setSessionExpired(false);
     setStatus("authenticated");
@@ -107,6 +110,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         method: "POST",
         body: JSON.stringify({ bootstrapToken, username, password }),
       });
+      setAuthEnabled(activeSession.authEnabled !== false);
       setSession(activeSession);
       setSessionExpired(false);
       setStatus("authenticated");

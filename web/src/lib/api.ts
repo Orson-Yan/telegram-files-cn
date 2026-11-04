@@ -5,6 +5,14 @@ export const SESSION_TERMINAL_EVENT = "telegram-files:session-terminal";
 
 const CSRF_EXEMPT_PATHS = new Set(["/auth/bootstrap", "/auth/login"]);
 
+// The server never issues a CSRF cookie when administrator authentication is disabled, so the
+// browser must not require one in that mode (writes are intentionally unauthenticated on LAN).
+let authEnabled = true;
+
+export function setAuthEnabled(enabled: boolean): void {
+  authEnabled = enabled;
+}
+
 export function getApiUrl(): string {
   const url = env.NEXT_PUBLIC_API_URL;
   if (url.startsWith("http")) {
@@ -70,9 +78,10 @@ export async function request<T = any>(
 ): Promise<T> {
   const method = requestInit?.method ?? "GET";
   const csrfToken = readCookie("tf_csrf");
-  const csrfHeaders = CSRF_EXEMPT_PATHS.has(api)
-    ? {}
-    : browserWriteHeaders(method, csrfToken);
+  const csrfHeaders =
+    !authEnabled || CSRF_EXEMPT_PATHS.has(api)
+      ? {}
+      : browserWriteHeaders(method, csrfToken);
   const defaultHeaders = {
     "Content-Type": "application/json",
   };

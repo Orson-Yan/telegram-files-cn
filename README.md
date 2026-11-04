@@ -1,4 +1,4 @@
-# Telegram Files 中文增强版 (v1.4.0 正式版)
+# Telegram Files 中文增强版 (v1.4.9)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jarvis2f/telegram-files/main/web/public/logo.png" alt="Telegram Files" width="120" />
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/1.3.2"><img src="https://img.shields.io/badge/Release-v1.3.2-emerald.svg" alt="v1.3.2" /></a>
+  <a href="https://github.com/Orson-Yan/telegram-files-cn/releases/tag/v1.4.9"><img src="https://img.shields.io/badge/Release-v1.4.9-emerald.svg" alt="v1.4.9" /></a>
   <a href="https://github.com/Orson-Yan/telegram-files-cn/pkgs/container/telegram-files-cn"><img src="https://img.shields.io/badge/Docker-ghcr.io-blue.svg?logo=docker" alt="Docker" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License" /></a>
 </p>
@@ -67,7 +67,7 @@
 ```yaml
 services:
   telegram-files:
-    image: ghcr.io/orson-yan/telegram-files-cn:1.3.2
+    image: ghcr.io/orson-yan/telegram-files-cn:1.4.9
     container_name: telegram-files
     restart: unless-stopped
     ports:
@@ -97,7 +97,7 @@ docker compose up -d
 
 本项目提供预构建的多架构 Docker 镜像（支持 `linux/amd64` 与 `linux/arm64`）：
 
-- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.3.2`
+- **稳定发布版**：`ghcr.io/orson-yan/telegram-files-cn:1.4.9`
 - **最新版**：`ghcr.io/orson-yan/telegram-files-cn:latest`
 
 ---

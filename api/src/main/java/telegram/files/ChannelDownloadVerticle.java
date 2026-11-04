@@ -30,19 +30,26 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     private String lastAutoFingerprint;
     private long lastSyncTimestamp;
     private long lastReconcileCompletedTime;
-    private static final Set<Long> activeAccounts = Collections.synchronizedSet(new HashSet<>());
-
-    public static boolean hasActiveWork(long accountId) {
-        return activeAccounts.contains(accountId);
-    }
+    private long lastPausedReconcile;
+    private boolean reconcilingCompleted;
+    private Integer cachedLimit;
+    private SettingTimeLimitedDownload cachedTime;
+    private long settingsLoadedAt;
+    private final Map<Long,Long> wakeFailureLogAt = new HashMap<>();
 
     @Override public void start(Promise<Void> promise) {
         store = new ChannelDownloadStore(DataVerticle.pool);
+        lastReconcileCompletedTime = System.currentTimeMillis();
+        lastPausedReconcile = System.currentTimeMillis();
+        reconcilingCompleted = true;
         store.reconcileCompletedJobs()
             .onSuccess(count -> {
                 if (count > 0) cn.hutool.log.LogFactory.get().info("Channel download startup reconciled %d completed jobs".formatted(count));
             })
-            .onFailure(error -> log("Channel download startup reconciliation failed", error));
+            .onFailure(error -> log("Channel download startup reconciliation failed", error))
+            .onComplete(_ -> reconcilingCompleted = false);
+        vertx.eventBus().consumer(EventEnum.SETTING_UPDATE.address(SettingKey.autoDownloadLimit.name()), _ -> settingsLoadedAt = 0);
+        vertx.eventBus().consumer(EventEnum.SETTING_UPDATE.address(SettingKey.autoDownloadTimeLimited.name()), _ -> settingsLoadedAt = 0);
         vertx.eventBus().consumer(EventEnum.MESSAGE_RECEIVED.address(), event -> {
             JsonObject body = (JsonObject)event.body();
             String id = body.getLong("telegramId")+":"+body.getLong("chatId");
@@ -62,46 +69,46 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
     private void tick() {
         if (ticking) return;
         ticking=true;
-        sync().compose(_ -> reconcile()).compose(_ -> store.sources()).compose(sources -> {
-            Future<Void> scans=Future.succeededFuture();
-            Map<Long,List<JsonObject>> byAccount=new LinkedHashMap<>();
-            for (JsonObject source:sources) {
-                if(isFloodWait(source.getString("last_error",""))) accountCooldowns.merge(n(source,"account_id"),n(source,"next_scan_at"),Math::max);
-                if(active(source)) byAccount.computeIfAbsent(n(source,"account_id"),_ -> new ArrayList<>()).add(source);
+        sync().compose(_ -> store.running()).compose(active ->
+                reconcile(active).compose(_ -> store.sources()).compose(sources -> scanSources(sources, active)))
+            .onFailure(error -> log("Channel download tick failed",error))
+            .onComplete(_ -> ticking=false);
+    }
+    private Future<Void> scanSources(List<JsonObject> sources, List<JsonObject> activeJobs) {
+        Future<Void> scans=Future.succeededFuture();
+        Map<Long,List<JsonObject>> byAccount=new LinkedHashMap<>();
+        for (JsonObject source:sources) {
+            if(isFloodWait(source.getString("last_error",""))) accountCooldowns.merge(n(source,"account_id"),n(source,"next_scan_at"),Math::max);
+            if(active(source)) byAccount.computeIfAbsent(n(source,"account_id"),_ -> new ArrayList<>()).add(source);
+        }
+        for (var account:byAccount.entrySet()) {
+            long accountId=account.getKey();
+            TelegramVerticle telegram=TelegramVerticles.get(accountId).orElse(null);
+            if(telegram==null) continue;
+            if(!telegram.authorized) {
+                if(telegram.isSleepingOrWaking()) wakeAccount(telegram,accountId,"Failed to wake account for channel download");
+                continue;
             }
-            activeAccounts.clear();
-            activeAccounts.addAll(byAccount.keySet());
-            for (var account:byAccount.entrySet()) {
-                long accountId=account.getKey();
-                TelegramVerticle telegram=TelegramVerticles.get(accountId).orElse(null);
-                if(telegram==null) continue;
-                if(!telegram.authorized) {
-                    if(telegram.isSleepingOrWaking()) {
-                        telegram.wake().onFailure(error -> log("Failed to wake account for channel download", error));
-                    }
-                    continue;
-                }
-                if(!diskAvailable()) continue;
-                if(accountCooldowns.getOrDefault(accountId,0L)>System.currentTimeMillis()) continue;
-                List<JsonObject> candidates=account.getValue();
-                if(candidates.stream().anyMatch(s -> n(s,"next_scan_at")>System.currentTimeMillis()
-                    && isFloodWait(s.getString("last_error","")))) continue;
-                JsonObject source=candidates.stream().filter(s -> n(s,"next_scan_at")<=System.currentTimeMillis())
-                    .filter(s -> !s.getString("id").equals(lastSource.get(accountId)) || candidates.size()==1)
-                    .findFirst().orElse(null);
-                if(source!=null) {
-                    lastSource.put(accountId,source.getString("id"));
-                    scans=scans.compose(_ -> scan(telegram,source).recover(error -> {
-                        if(isFloodWait(Objects.toString(error.getMessage(),""))) accountCooldowns.put(accountId,System.currentTimeMillis()+retryDelay(error,1));
-                        return store.error(source.getString("id"),n(source,"rule_version"),
-                        error.getMessage()==null?error.getClass().getSimpleName():error.getMessage(),
-                        System.currentTimeMillis()+retryDelay(error,1));
-                    }));
-                }
-                dispatch(telegram,accountId);
+            if(!diskAvailable()) continue;
+            if(accountCooldowns.getOrDefault(accountId,0L)>System.currentTimeMillis()) continue;
+            List<JsonObject> candidates=account.getValue();
+            if(candidates.stream().anyMatch(s -> n(s,"next_scan_at")>System.currentTimeMillis()
+                && isFloodWait(s.getString("last_error","")))) continue;
+            JsonObject source=candidates.stream().filter(s -> n(s,"next_scan_at")<=System.currentTimeMillis())
+                .filter(s -> !s.getString("id").equals(lastSource.get(accountId)) || candidates.size()==1)
+                .findFirst().orElse(null);
+            if(source!=null) {
+                lastSource.put(accountId,source.getString("id"));
+                scans=scans.compose(_ -> scan(telegram,source).recover(error -> {
+                    if(isFloodWait(Objects.toString(error.getMessage(),""))) accountCooldowns.put(accountId,System.currentTimeMillis()+retryDelay(error,1));
+                    return store.error(source.getString("id"),n(source,"rule_version"),
+                    error.getMessage()==null?error.getClass().getSimpleName():error.getMessage(),
+                    System.currentTimeMillis()+retryDelay(error,1));
+                }));
             }
-            return scans.compose(_ -> scanComments());
-        }).onFailure(error -> log("Channel download tick failed",error)).onComplete(_ -> ticking=false);
+            dispatch(telegram,accountId,activeJobs);
+        }
+        return scans.compose(_ -> scanComments());
     }
     private Future<Void> sync() {
         var autos=AutomationsHolder.INSTANCE.autoRecords().getDownloadEnabledItems();
@@ -177,36 +184,44 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         return messages.stream().filter(message -> DownloadRules.matches(message,rule))
             .map(message -> TdApiHelp.getFileHandler(message).orElseThrow().convertFileRecord(n(source,"account_id"))).toList();
     }
-    private void dispatch(TelegramVerticle telegram,long account) {
+    private Future<Void> ensureSettings() {
+        long now = System.currentTimeMillis();
+        if (cachedLimit != null && now - settingsLoadedAt < 30_000L) return Future.succeededFuture();
+        return Future.all(DataVerticle.settingRepository.<Integer>getByKey(SettingKey.autoDownloadLimit),
+                DataVerticle.settingRepository.<SettingTimeLimitedDownload>getByKey(SettingKey.autoDownloadTimeLimited))
+            .map(settings -> {
+                cachedLimit = settings.resultAt(0);
+                cachedTime = settings.resultAt(1);
+                settingsLoadedAt = System.currentTimeMillis();
+                return (Void) null;
+            });
+    }
+    private void dispatch(TelegramVerticle telegram,long account,List<JsonObject> jobsInFlight) {
         if(!dispatching.add(account)) return;
-        Future.all(DataVerticle.settingRepository.<Integer>getByKey(SettingKey.autoDownloadLimit),
-            DataVerticle.settingRepository.<SettingTimeLimitedDownload>getByKey(SettingKey.autoDownloadTimeLimited),
-            DataVerticle.fileRepository.getByDownloadStatus(account,FileRecord.DownloadStatus.downloading),store.running())
-            .compose(settings -> {
-                SettingTimeLimitedDownload time=settings.resultAt(1);
-                if(!allowedTime(time) || !diskAvailable()) return Future.succeededFuture();
-                Integer configured=settings.resultAt(0);
-                int limit=Math.max(1,Math.min(10,configured==null?5:configured));
-                List<FileRecord> nativeDownloads=settings.resultAt(2);
-                List<JsonObject> jobsInFlight=settings.resultAt(3);
-                int count=occupiedSlots(account,nativeDownloads,jobsInFlight);
-                int available=Math.max(0,limit-count);
-                if(available==0) return Future.succeededFuture();
+        ensureSettings().compose(_ -> {
+                if(!allowedTime(cachedTime) || !diskAvailable()) return Future.succeededFuture();
                 return store.due(account,100,dispatchTurns.merge(account,1,Integer::sum)%4==0).compose(jobs -> {
-                    // Round-robin channels within the account; prioritize live files within each turn.
-                    LinkedHashMap<String,JsonObject> selected=new LinkedHashMap<>();
-                    for(JsonObject job:jobs) selected.putIfAbsent(job.getString("source_id"),job);
-                    List<JsonObject> picks=new ArrayList<>(selected.values());
-                    for(JsonObject job:jobs) if(picks.size()<available && !picks.contains(job)) picks.add(job);
-                    Future<Void> starts=Future.succeededFuture();
-                    long batchReserved = 0;
-                    for(JsonObject job:picks.subList(0,Math.min(available,picks.size()))) {
-                        long fileSize = Math.max(0, n(job, "file_size"));
-                        batchReserved += fileSize;
-                        long required = batchReserved;
-                        starts = starts.compose(_ -> start(telegram, job, required));
-                    }
-                    return starts;
+                    if(jobs.isEmpty()) return Future.succeededFuture();
+                    int limit=Math.max(1,Math.min(10,cachedLimit==null?5:cachedLimit));
+                    return DataVerticle.fileRepository.getByDownloadStatus(account,FileRecord.DownloadStatus.downloading)
+                        .compose(nativeDownloads -> {
+                            int available=Math.max(0,limit-occupiedSlots(account,nativeDownloads,jobsInFlight));
+                            if(available==0) return Future.succeededFuture();
+                            // Round-robin channels within the account; prioritize live files within each turn.
+                            LinkedHashMap<String,JsonObject> selected=new LinkedHashMap<>();
+                            for(JsonObject job:jobs) selected.putIfAbsent(job.getString("source_id"),job);
+                            List<JsonObject> picks=new ArrayList<>(selected.values());
+                            for(JsonObject job:jobs) if(picks.size()<available && !picks.contains(job)) picks.add(job);
+                            Future<Void> starts=Future.succeededFuture();
+                            long batchReserved = 0;
+                            for(JsonObject job:picks.subList(0,Math.min(available,picks.size()))) {
+                                long fileSize = Math.max(0, n(job, "file_size"));
+                                batchReserved += fileSize;
+                                long required = batchReserved;
+                                starts = starts.compose(_ -> start(telegram, job, required));
+                            }
+                            return starts;
+                        });
                 });
             }).onFailure(error -> log("Download dispatch failed",error)).onComplete(_ -> dispatching.remove(account));
     }
@@ -240,11 +255,12 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                     }).compose(file -> store.finish(job.getString("id"),
                             file.isDownloadStatus(FileRecord.DownloadStatus.completed) || file.isTransferStatus(FileRecord.TransferStatus.completed)
                             ?"COMPLETED":file.isDownloadStatus(FileRecord.DownloadStatus.paused)?"PAUSED":"RUNNING",null,0,file.localPath()));
-                })).recover(error -> fail(job,error));
+                })).recover(error -> fail(job,error,true));
         });
     }
-    private Future<Void> fail(JsonObject job,Throwable error) {
-        int attempt=(int)n(job,"attempts")+1;
+    private Future<Void> fail(JsonObject job,Throwable error,boolean attemptNotYetCounted) {
+        int attempt=(int)n(job,"attempts")+(attemptNotYetCounted?1:0);
+        if (attempt < 1) attempt = 1;
         String errMsg = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
         boolean storage = errMsg.startsWith("STORAGE_LOW:");
         boolean terminal=!storage && (permanent(error) || attempt>=8);
@@ -253,13 +269,6 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         Future<Void> wait=storage || isFloodWait(errMsg)
             ?store.error(job.getString("source_id"),n(job,"rule_version"),errMsg,retryAt):Future.succeededFuture();
         return wait.compose(_ -> store.finish(job.getString("id"),terminal?"FAILED":"RETRY",errMsg,retryAt,null));
-    }
-    private Future<Void> registerComments(TelegramVerticle telegram,JsonObject source,TdApi.Message message) {
-        if(!rule(source).downloadCommentFiles || message.chatId!=n(source,"chat_id")) return Future.succeededFuture();
-        return telegram.client.execute(new TdApi.GetMessageThread(message.chatId,message.id),true)
-            .timeout(15,TimeUnit.SECONDS).compose(thread -> thread==null || thread.chatId==message.chatId
-                ?Future.succeededFuture():store.thread(source,message.chatId,message.id))
-            .recover(_ -> store.thread(source,message.chatId,message.id));
     }
     private Future<Void> scanComments() {
         return store.threads().compose(threads -> {
@@ -294,51 +303,62 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
             });
         });
     }
-    private Future<Void> reconcile() {
+    private Future<Void> reconcile(List<JsonObject> activeJobs) {
         long now = System.currentTimeMillis();
-        Future<Void> batchReconcile = (now - lastReconcileCompletedTime > 60_000L)
-            ? store.reconcileCompletedJobs().onSuccess(_ -> lastReconcileCompletedTime = now).mapEmpty()
-            : Future.succeededFuture();
-        return batchReconcile.compose(_ -> store.running()).compose(jobs -> {
-            if (jobs.isEmpty()) return Future.succeededFuture();
-            Future<Void> work=Future.succeededFuture();
-            for(JsonObject job:jobs) work=work.compose(_ -> DataVerticle.fileRepository.getByUniqueId(job.getString("unique_id"))
-                .compose(file -> {
-                    if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.completed))
-                        return store.finish(job.getString("id"),"COMPLETED",null,0,file.localPath());
-                    if("STARTING".equals(job.getString("status"))) {
-                        if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading))
-                            return store.finish(job.getString("id"),"RUNNING",null,0,null);
-                        if(System.currentTimeMillis()-n(job,"updated_at")>60_000)
-                            return fail(job,new IllegalStateException("Start download timed out; queued for recovery"));
-                    }
-                    if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading)
-                        && System.currentTimeMillis()-n(job,"updated_at")>180_000) return refreshStale(job,file);
-                    return DataVerticle.torrentRepository.listByTelegramFileUniqueIds(List.of(job.getString("unique_id")))
-                        .compose(torrents -> {
-                            var seed=torrents.stream().filter(t -> Set.of("COMPLETED","SEEDING").contains(t.status())).findFirst();
-                            if(seed.isPresent()) return store.finish(job.getString("id"),"COMPLETED",null,0,seed.get().savePath());
-                            boolean paused=file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.paused)
-                                || torrents.stream().anyMatch(t -> "PAUSED".equals(t.status()));
-                            if(paused) return "PAUSED".equals(job.getString("status"))?Future.succeededFuture()
-                                :store.finish(job.getString("id"),"PAUSED","File paused by user",0,null);
-                            if("PAUSED".equals(job.getString("status"))) {
-                                if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading)
-                                    || torrents.stream().anyMatch(t -> "DOWNLOADING".equals(t.status())))
-                                    return store.finish(job.getString("id"),"RUNNING",null,0,null);
-                                return Future.succeededFuture();
-                            }
-                            if(torrents.stream().anyMatch(t -> "STOPPED".equals(t.status())))
-                                return store.finish(job.getString("id"),"SKIPPED","Download cancelled by user",0,null);
-                            boolean activeSeed=torrents.stream().anyMatch(t -> Set.of("PENDING","QUEUED","DOWNLOADING","CHECKING","PAUSED").contains(t.status()));
-                            if(!activeSeed && System.currentTimeMillis()-n(job,"updated_at")>180_000
-                                && (file==null || !file.isDownloadStatus(FileRecord.DownloadStatus.downloading)))
-                                return fail(job,new IllegalStateException("Interrupted download; queued for recovery"));
+        Future<Void> batchReconcile = Future.succeededFuture();
+        if (now - lastReconcileCompletedTime > 60_000L && !reconcilingCompleted) {
+            reconcilingCompleted = true;
+            lastReconcileCompletedTime = now;
+            batchReconcile = store.reconcileCompletedJobs()
+                .onComplete(_ -> reconcilingCompleted = false)
+                .mapEmpty();
+        }
+        List<JsonObject> jobs = new ArrayList<>(activeJobs);
+        boolean fetchPaused = now - lastPausedReconcile > 15_000L;
+        if (fetchPaused) lastPausedReconcile = now;
+        return batchReconcile
+            .compose(_ -> fetchPaused ? store.paused().onSuccess(jobs::addAll).mapEmpty() : Future.<Void>succeededFuture())
+            .compose(_ -> reconcileJobs(jobs));
+    }
+    private Future<Void> reconcileJobs(List<JsonObject> jobs) {
+        if (jobs.isEmpty()) return Future.succeededFuture();
+        Future<Void> work=Future.succeededFuture();
+        for(JsonObject job:jobs) work=work.compose(_ -> DataVerticle.fileRepository.getByUniqueId(job.getString("unique_id"))
+            .compose(file -> {
+                if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.completed))
+                    return store.finish(job.getString("id"),"COMPLETED",null,0,file.localPath());
+                if("STARTING".equals(job.getString("status"))) {
+                    if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading))
+                        return store.finish(job.getString("id"),"RUNNING",null,0,null);
+                    if(System.currentTimeMillis()-n(job,"updated_at")>60_000)
+                        return fail(job,new IllegalStateException("Start download timed out; queued for recovery"),false);
+                }
+                if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading)
+                    && System.currentTimeMillis()-n(job,"updated_at")>180_000) return refreshStale(job,file);
+                return DataVerticle.torrentRepository.listByTelegramFileUniqueIds(List.of(job.getString("unique_id")))
+                    .compose(torrents -> {
+                        var seed=torrents.stream().filter(t -> Set.of("COMPLETED","SEEDING").contains(t.status())).findFirst();
+                        if(seed.isPresent()) return store.finish(job.getString("id"),"COMPLETED",null,0,seed.get().savePath());
+                        boolean paused=file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.paused)
+                            || torrents.stream().anyMatch(t -> "PAUSED".equals(t.status()));
+                        if(paused) return "PAUSED".equals(job.getString("status"))?Future.succeededFuture()
+                            :store.finish(job.getString("id"),"PAUSED","File paused by user",0,null);
+                        if("PAUSED".equals(job.getString("status"))) {
+                            if(file!=null && file.isDownloadStatus(FileRecord.DownloadStatus.downloading)
+                                || torrents.stream().anyMatch(t -> "DOWNLOADING".equals(t.status())))
+                                return store.finish(job.getString("id"),"RUNNING",null,0,null);
                             return Future.succeededFuture();
-                        });
-                }));
-            return work;
-        });
+                        }
+                        if(torrents.stream().anyMatch(t -> "STOPPED".equals(t.status())))
+                            return store.finish(job.getString("id"),"SKIPPED","Download cancelled by user",0,null);
+                        boolean activeSeed=torrents.stream().anyMatch(t -> Set.of("PENDING","QUEUED","DOWNLOADING","CHECKING","PAUSED").contains(t.status()));
+                        if(!activeSeed && System.currentTimeMillis()-n(job,"updated_at")>180_000
+                            && (file==null || !file.isDownloadStatus(FileRecord.DownloadStatus.downloading)))
+                            return fail(job,new IllegalStateException("Interrupted download; queued for recovery"),false);
+                        return Future.succeededFuture();
+                    });
+            }));
+        return work;
     }
     private Future<Void> refreshStale(JsonObject job,FileRecord record) {
         TelegramVerticle telegram=TelegramVerticles.get(n(job,"account_id")).orElse(null);
@@ -358,7 +378,7 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
                         return DataVerticle.fileRepository.releaseStaleDownloadRetry(record.uniqueId(),record.startDate())
                             .compose(_ -> store.finish(job.getString("id"),"RETRY","Refreshed file identity after restart",0,null));
                     }));
-            }).recover(error -> fail(job,error));
+            }).recover(error -> fail(job,error,false));
     }
     static boolean permanent(Throwable error) {
         if(!(error instanceof TelegramRunException e)) return false;
@@ -412,4 +432,13 @@ public final class ChannelDownloadVerticle extends AbstractVerticle {
         return new JsonObject(source.getString("rule_json")).mapTo(SettingAutoRecords.DownloadRule.class);
     }
     private void log(String message,Throwable error) { cn.hutool.log.LogFactory.get().warn("{}: {}",message,error.getMessage()); }
+    private void wakeAccount(TelegramVerticle telegram,long accountId,String message) {
+        telegram.wake().onFailure(error -> {
+            long now=System.currentTimeMillis();
+            if(now-wakeFailureLogAt.getOrDefault(accountId,0L)>60_000L) {
+                wakeFailureLogAt.put(accountId,now);
+                log(message,error);
+            }
+        });
+    }
 }

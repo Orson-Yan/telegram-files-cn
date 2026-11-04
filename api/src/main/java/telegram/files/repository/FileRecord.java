@@ -90,6 +90,7 @@ public record FileRecord(int id, //file id will change
             indexSql("idx_file_chat_message_plain", "(chat_id, message_id)"),
             indexSql("idx_file_chat_message", "(chat_id, type, message_id)"),
             indexSql("idx_file_telegram_type_status", "(telegram_id, type, download_status)"),
+            indexSql("idx_file_telegram_status", "(telegram_id, download_status)"),
             indexSql("idx_file_telegram_completion", "(telegram_id, type, completion_date)"),
             indexSql("idx_file_album", "(media_album_id)"),
             indexSql("idx_file_thread", "(telegram_id, thread_chat_id, message_thread_id, type)"),

@@ -23,11 +23,10 @@ public final class ChannelDownloadRoutes {
                 tasks.forEach(value -> {
                     JsonObject task=(JsonObject)value;
                     TelegramVerticle telegram=TelegramVerticles.get(task.getString("account_id")).orElse(null);
-                    if (telegram != null && telegram.isSleepingOrWaking()) {
-                        telegram.wake().onFailure(_ -> {});
-                    }
+                    // Read-only status endpoint: waking the account here would reset idle sleep on
+                    // every UI poll. The download engine wakes accounts when there is actual work.
                     String blocked=telegram==null ? "账号离线，等待重新连接" :
-                        telegram.isSleepingOrWaking() ? "账号休眠中，正在唤醒连接..." :
+                        telegram.isSleepingOrWaking() ? "账号休眠中，有任务时会自动唤醒" :
                         !telegram.authorized ? "账号离线，等待重新连接" :
                         !ChannelDownloadVerticle.diskAvailable() ? "磁盘可用空间不足 1 GiB，等待释放空间" :
                         !ChannelDownloadVerticle.allowedTime(time) ? "不在下载时段，等待下一个时段" : null;

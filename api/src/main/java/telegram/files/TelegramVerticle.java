@@ -47,7 +47,7 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private TelegramChats telegramChats;
 
-    public boolean authorized = false;
+    public volatile boolean authorized = false;
 
     public TdApi.AuthorizationState lastAuthorizationState;
 
@@ -59,7 +59,7 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private boolean needDelete = false;
 
-    public TelegramRecord telegramRecord;
+    public volatile TelegramRecord telegramRecord;
 
     private AvgSpeed avgSpeed = new AvgSpeed();
 
@@ -1634,13 +1634,11 @@ public class TelegramVerticle extends AbstractVerticle {
 
     private boolean hasSleepBlockingAutomationEnabled() {
         if (telegramRecord == null) return false;
-        boolean autoEnabled = AutomationsHolder.INSTANCE.autoRecords().automations.stream()
+        return AutomationsHolder.INSTANCE.autoRecords().automations.stream()
                 .anyMatch(auto -> auto.telegramId == telegramRecord.id()
                                   && ((auto.download != null && auto.download.enabled)
                                       || (auto.preload != null && auto.preload.enabled)
                                       || auto.getArchiveConfigs().stream().anyMatch(config -> config.enabled)));
-        if (autoEnabled) return true;
-        return ChannelDownloadVerticle.hasActiveWork(telegramRecord.id());
     }
 
     private boolean canIdleSleepLocked() {
@@ -1692,6 +1690,8 @@ public class TelegramVerticle extends AbstractVerticle {
 
     public boolean isSleepingOrWaking() {
         synchronized (lifecycleLock) {
+            // An account that is still authorized must proceed: managed requests queue behind the
+            // in-flight close and execute after the automatic wake (wakeAfterClose).
             return !authorized
                    && telegramRecord != null
                    && (clientLifecycle == ClientLifecycle.SLEEPING
